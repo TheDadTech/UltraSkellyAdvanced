@@ -1,0 +1,79 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Python caches / test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+!*.env.example
+*.key
+*.pem
+
+# Local credentials / secrets
+credentials/
+secrets/
+
+# Local user configuration / runtime state
+user-config/
+user_config/
+state/
+runtime/
+*.local.json
+*.local.yaml
+*.local.yml
+
+# Raspberry Pi / Wi-Fi / Bluetooth local state
+wpa_supplicant.conf
+NetworkManager/system-connections/
+bluetooth/
+pairings/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# UltraSkellyAdvanced image build workspace
+.image-build/
+
+# Generated release archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Generated Raspberry Pi / disk images
+*.img
+*.img.xz
+*.iso
+
+# Container/build artifacts
+.docker/
+docker-build/
+container-build/
+build-container/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Windows / editor junk
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/

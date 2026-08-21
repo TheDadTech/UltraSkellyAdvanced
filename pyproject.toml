@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skelly-ai"
+version = "0.25.0"
+description = "Self-hosted Raspberry Pi controller for an interactive Ultra Skelly or Lethal Lily"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "bleak>=0.22,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "opencv-python-headless>=4.12,<5",
+  "pydantic-settings>=2.6,<3",
+  "uvicorn[standard]>=0.32,<1",
+  "vosk==0.3.45",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.24,<1",
+]
+
+[project.scripts]
+skelly-ai = "skelly_ai.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+skelly_ai = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

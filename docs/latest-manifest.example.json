@@ -1,0 +1,5 @@
+{
+  "version": "0.23.0",
+  "download_url": "https://github.com/OWNER/REPOSITORY/releases/download/v0.23.0/IMAGE-FILENAME.img.xz",
+  "release_notes_url": "https://github.com/OWNER/REPOSITORY/releases/tag/v0.23.0"
+}

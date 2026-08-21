@@ -1,0 +1,23 @@
+[Unit]
+Description=UltraSkellyAdvanced animatronic control system
+After=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service
+Wants=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service
+
+[Service]
+Type=simple
+User=@SKELLY_USER@
+Group=@SKELLY_GROUP@
+Environment=XDG_RUNTIME_DIR=/run/user/@SKELLY_UID@
+Environment=HOME=@SKELLY_HOME@
+EnvironmentFile=-/etc/skelly-ai/skelly-ai.env
+ExecStart=/opt/skelly-ai/venv/bin/skelly-ai
+Restart=on-failure
+RestartSec=3
+# The web process can only elevate through the exact root-owned helper command
+# allowlisted in /etc/sudoers.d/usa-system-helper. NoNewPrivileges would block
+# that helper and break WiFi enrollment, SSH support, and power controls.
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

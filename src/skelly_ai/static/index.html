@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>UltraSkellyAdvanced Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main>
+      <header class="product-header">
+        <div class="product-hero">
+          <img src="/static/ultra-skelly-banner.png" alt="Ultra Skelly Advanced — Build, Automate, Connect">
+          <h1 class="sr-only">UltraSkellyAdvanced</h1>
+        </div>
+        <div class="product-control-bar">
+          <div class="product-control-copy">
+            <p class="eyebrow">ULTRASKELLYADVANCED · A THEDADTECH PROJECT</p>
+            <p class="header-summary">Bring your animatronic to life with AI conversation and operator control from one Raspberry Pi, with optional DAC/xLights show integration.</p>
+          </div>
+          <div class="header-actions">
+            <div class="header-connection-group">
+              <p id="version-pill" class="connection-pill">Loading controller...</p>
+              <button id="update-available-badge" type="button" class="update-available-badge" hidden>Update available</button>
+              <button id="top-connect-skelly" type="button">Connect to Skelly</button>
+            </div>
+            <div class="header-volume-control">
+              <label for="speaker-volume"><span>Speaker volume</span><strong id="speaker-volume-value">50%</strong></label>
+              <input id="speaker-volume" type="range" min="0" max="255" value="128" aria-label="Skelly speaker volume">
+            </div>
+            <p id="speaker-volume-result" class="header-action-result" aria-live="polite"></p>
+            <p id="top-connect-result" class="header-action-result" aria-live="polite"></p>
+          </div>
+        </div>
+      </header>
+
+      <dialog id="onboarding-dialog" class="onboarding-dialog">
+        <div class="onboarding-content">
+          <p class="section-kicker">WELCOME TO ULTRASKELLYADVANCED</p>
+          <section id="onboarding-network-step">
+            <h2>Choose how this USA controller connects</h2>
+            <p>Connect it to your home WiFi for cloud voices and updates, or keep using the private USA setup hotspot for fully local operation.</p>
+            <div class="onboarding-network-form">
+              <label><span>WiFi network</span><select id="onboarding-wifi-select"><option value="">Scan for networks</option></select></label>
+              <label><span>Network name (hidden network)</span><input id="onboarding-wifi-manual" maxlength="64" autocomplete="off" placeholder="Optional manual network name"></label>
+              <label><span>WiFi password</span><input id="onboarding-wifi-password" type="password" autocomplete="new-password"></label>
+              <div class="controls"><button id="onboarding-connect-wifi" type="button">Connect to home WiFi</button><button id="onboarding-refresh-wifi" type="button" class="secondary">Refresh networks</button><button id="onboarding-stay-offline" type="button" class="secondary">Remain on USA hotspot</button></div>
+              <p id="onboarding-network-result" class="result" aria-live="polite"></p>
+            </div>
+          </section>
+          <section id="onboarding-disclaimer-step" hidden>
+            <h2>Safety and service disclosure</h2>
+            <p>UltraSkellyAdvanced is an independent enthusiast project by TheDadTech and is not affiliated with or endorsed by Home Depot, ElevenLabs, Groq, or the animatronic manufacturer.</p>
+            <ul><li>Keep people, clothing, and objects clear before enabling motors.</li><li>Camera and microphone processing may be local; selected cloud providers receive the text or audio needed for their service and may charge usage fees.</li><li>You are responsible for safe installation, supervision, network security, and any modification to the prop.</li></ul>
+            <label class="check-setting"><input id="onboarding-accept-check" type="checkbox"><span><strong>I understand and accept</strong><small>I have reviewed these safety and service terms.</small></span></label>
+            <div class="controls"><button id="onboarding-accept" type="button" disabled>Accept and pair my Skelly</button></div>
+            <p id="onboarding-disclaimer-result" class="result" aria-live="polite"></p>
+          </section>
+        </div>
+      </dialog>
+
+      <section class="status-card" aria-label="Live service status">
+        <div class="service-status"><span id="pi-status-light" class="status-light waiting"></span><span><small>PI SERVICE</small><strong id="connection">Connecting…</strong></span></div>
+        <div class="service-status"><span id="prop-status-light" class="status-light waiting"></span><span><small>PROP BLE</small><strong id="header-prop-status">checking</strong></span></div>
+        <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small>SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
+        <div class="service-status"><span id="dac-status-light" class="status-light waiting"></span><span><small>HEAD + JAW</small><strong id="header-dac-status">checking</strong></span></div>
+        <div class="service-status"><span id="ai-status-light" class="status-light waiting"></span><span><small>VISITOR MONITOR</small><strong id="header-ai-status">stopped</strong></span></div>
+        <div class="service-status"><span id="fpp-status-light" class="status-light off"></span><span><small>FPP OVERRIDE</small><strong id="header-fpp-status">disabled</strong></span></div>
+      </section>
+
+      <nav class="dashboard-tabs" role="tablist" aria-label="UltraSkellyAdvanced dashboard">
+        <button type="button" role="tab" id="tab-operate" aria-controls="panel-operate" aria-selected="true" data-dashboard-tab="operate">Operate</button>
+        <button type="button" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" data-dashboard-tab="setup">Setup</button>
+        <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false" data-dashboard-tab="voice">Voice Tuning</button>
+        <button type="button" role="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false" data-dashboard-tab="diagnostics">Diagnostics</button>
+      </nav>
+
+      <div id="panel-operate" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-operate" data-dashboard-panel="operate"></div>
+      <div id="panel-setup" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-setup" data-dashboard-panel="setup" hidden>
+        <section id="saved-skelly-section" class="setup-device-card">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">YOUR SKELLY</p>
+              <h2 id="setup-device-name">Checking saved Skelly…</h2>
+              <p id="setup-device-details" class="muted">Reading the control and speaker connections saved on this Pi.</p>
+            </div>
+            <span id="setup-device-status" class="driver-badge neutral">checking</span>
+          </div>
+          <div id="first-run-discovery" class="setup-discovery" hidden>
+            <div>
+              <strong>1. Find your animatronic</strong>
+              <p class="muted">Turn on Skelly or Lily and keep it nearby. This scan only identifies the controller; it does not move the prop.</p>
+            </div>
+            <label for="setup-device-select"><span>Nearby compatible props</span>
+              <select id="setup-device-select"><option value="">Scanning…</option></select>
+            </label>
+            <div class="controls">
+              <button id="setup-connect-device" type="button" disabled>Connect selected prop</button>
+              <button id="setup-rescan-device" type="button" class="secondary">Scan again</button>
+            </div>
+            <p id="setup-discovery-result" class="result" aria-live="polite">Waiting to scan…</p>
+          </div>
+          <div class="setup-start-row">
+            <div>
+              <strong>One-click startup</strong>
+              <p id="setup-start-description" class="muted">Connect control, prepare the speaker and motors, then begin the saved default mode.</p>
+            </div>
+            <button id="start-default-operation" type="button">Start default mode</button>
+          </div>
+          <p id="setup-start-result" class="result" aria-live="polite"></p>
+        </section>
+      </div>
+      <div id="panel-voice" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-voice" data-dashboard-panel="voice" hidden>
+        <section class="advanced-intro">
+          <p class="section-kicker">VOICE TUNING</p>
+          <h2>Choose the brain, voice, and talking behavior</h2>
+          <p class="muted">These settings are shared by AI Mode and Operator Mode.</p>
+        </section>
+      </div>
+      <div id="panel-diagnostics" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-diagnostics" data-dashboard-panel="diagnostics" hidden></div>
+
+      <section id="operation-preferences-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">STARTUP BEHAVIOR</p>
+            <h2>Default mode and installation</h2>
+            <p class="muted">These choices determine what the one-click Start action prepares.</p>
+          </div>
+          <span id="profile-state" class="driver-badge neutral">checking</span>
+        </div>
+        <form id="operation-settings-form" class="operation-settings-form">
+          <label><span>Hardware setup</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label>
+          <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">Classic Mode</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
+          <label class="check-setting"><input id="auto-start-operation" type="checkbox"><span><strong>Start automatically when this Pi boots</strong><small>Uses the saved default mode. Remain idle disables automatic startup.</small></span></label>
+          <label id="fpp-override-setting" class="check-setting" hidden><input id="allow-fpp-override" type="checkbox"><span><strong>Allow FPP/xLights override</strong><small>When enabled, a show can temporarily take priority and release local DAC output.</small></span></label>
+          <button type="submit">Save installation choices</button>
+        </form>
+        <p id="operation-settings-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <details id="replace-skelly-section" class="replace-skelly-section">
+        <summary>Replace or reset Skelly</summary>
+        <div class="replace-skelly-content">
+          <div>
+            <h2>Forget this Skelly</h2>
+            <p class="muted">Disconnect control and audio, remove the saved speaker pairing, and stop automatic startup. Media stored inside Skelly is not erased.</p>
+          </div>
+          <button id="forget-skelly" type="button" class="disconnect">Forget this Skelly</button>
+        </div>
+      </details>
+
+      <section id="software-update-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">SOFTWARE</p>
+            <h2>USA updates</h2>
+            <p class="muted">Check the configured release channel without changing the running installation.</p>
+          </div>
+          <span id="update-version" class="driver-badge neutral">checking</span>
+        </div>
+        <div class="controls">
+          <button id="check-for-updates" type="button" class="secondary">Check for updates</button>
+          <a id="download-update" class="button-link" target="_blank" rel="noopener noreferrer" hidden>Download update</a>
+        </div>
+        <p id="update-result" class="result" aria-live="polite">Reading update settings…</p>
+        <small class="muted">Installation remains manual until a verified release source and rollback process are configured.</small>
+      </section>
+
+      <dialog id="forget-skelly-dialog" class="confirmation-dialog">
+        <form method="dialog">
+          <h2>Forget this Skelly?</h2>
+          <p>This Pi will release the BLE controller and remove the Bluetooth speaker pairing. Skelly’s stored sounds and presets will remain untouched.</p>
+          <div class="controls dialog-actions">
+            <button value="cancel" type="submit" class="secondary">Cancel</button>
+            <button id="confirm-forget-skelly" value="confirm" type="button" class="disconnect">Forget Skelly</button>
+          </div>
+          <p id="forget-skelly-result" class="result" aria-live="polite"></p>
+        </form>
+      </dialog>
+
+      <section id="mode-launcher-section" class="mode-launcher">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">OPERATE</p>
+            <h2>Choose how Skelly runs</h2>
+            <p class="muted">One Start button performs the connection and safety steps in the correct order.</p>
+          </div>
+          <span id="operation-ready" class="driver-badge neutral">standby</span>
+        </div>
+        <div class="mode-card-grid">
+          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>Classic Mode</h3><p>Play Skelly’s saved media with its built-in animations.</p><button type="button" data-start-operation="classic">Start Classic</button></article>
+          <article class="mode-card featured" data-mode-card="ai"><span class="mode-icon">◎</span><h3>AI Mode <small>UNMANNED</small></h3><p>Detect visitors, listen, answer, track, and animate automatically.</p><button type="button" data-start-operation="ai">Start AI Mode</button></article>
+          <article class="mode-card" data-mode-card="manual"><span class="mode-icon">✦</span><h3>Operator Mode <small>MANNED</small></h3><p>Type Skelly’s dialogue and puppeteer gestures, eyes, lights, and movement live.</p><button type="button" data-start-operation="manual">Start Operator Mode</button></article>
+        </div>
+        <div class="operation-progress"><span class="label">Startup sequence</span><ol id="operation-steps"><li>Select a mode to begin.</li></ol></div>
+        <div class="controls"><button id="stop-operation" type="button" class="warning">Stop and release controls</button></div>
+        <p id="operation-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="classic-library-section">
+        <div class="section-heading"><div><h2>Classic media</h2><p class="muted">Sounds stored inside Skelly, including each file's saved eyes, lights, and movement.</p></div></div>
+        <div class="media-toolbar controls">
+          <button id="refresh-media" type="button" class="secondary">Refresh list</button>
+          <button id="add-media" type="button">Add audio file</button>
+          <input id="media-file-input" type="file" accept="audio/mpeg,.mp3" hidden>
+          <input id="media-filter" type="search" placeholder="Filter by name" aria-label="Filter media files">
+        </div>
+        <div id="media-library" class="media-library"><p class="muted">Start Classic, then refresh the list.</p></div>
+        <p id="media-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="local-brain-section">
+        <div class="section-heading">
+          <div>
+            <h2>Operator Console</h2>
+            <p class="muted">Type Skelly’s exact dialogue. The visitor microphone records a transcript for the operator but does not generate an AI response.</p>
+          </div>
+          <span id="brain-availability" class="driver-badge neutral">checking</span>
+        </div>
+        <div class="manual-sensor-bar">
+          <label class="sensor-toggle"><input id="manual-camera-enabled" type="checkbox" checked><span>Camera</span></label>
+          <label class="sensor-toggle"><input id="manual-microphone-enabled" type="checkbox" checked><span>Microphone</span></label>
+          <div id="manual-visitor-indicator" class="visitor-indicator clear"><span class="status-light off"></span><strong>No visitor detected</strong></div>
+        </div>
+        <form id="brain-test-form" class="brain-test-form">
+          <label class="sr-only" for="brain-test-input">Text for Skelly</label>
+          <input id="brain-test-input" type="text" maxlength="600" required placeholder="Type exactly what Skelly should say">
+          <button id="brain-test-button" type="submit">Speak</button>
+        </form>
+        <div class="controls">
+          <button id="brain-voice-button" type="button">Listen to visitor for 5 seconds</button>
+          <button id="brain-reset-button" type="button" class="secondary">Clear transcript</button>
+        </div>
+        <div class="operator-listen-results">
+          <div class="operator-snapshot">
+            <span class="label">Visitor snapshot</span>
+            <div class="camera-frame-wrap compact">
+              <img id="operator-camera-frame" alt="Camera snapshot captured when the operator listened" hidden>
+              <p id="operator-camera-placeholder" class="muted">Press Listen to Visitor to capture what the camera sees.</p>
+            </div>
+            <small id="operator-camera-result" class="muted">No snapshot captured yet.</small>
+          </div>
+          <div class="brain-heard">
+            <span class="label">Microphone transcript</span>
+            <strong id="brain-heard-text">No voice question recorded yet.</strong>
+          </div>
+        </div>
+        <p id="brain-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="sensor-lab-section">
+        <div class="section-heading">
+          <div>
+            <h2>Sensor diagnostics</h2>
+            <p class="muted">Test camera presence detection, microphone activity, and offline transcription.</p>
+          </div>
+          <span class="driver-badge neutral">no cloud</span>
+        </div>
+        <p class="security-note">
+          Frames and microphone samples stay in memory on this Pi. This lab does not connect to ElevenLabs or upload sensor data.
+        </p>
+        <div class="perception-monitor">
+          <div class="section-heading">
+            <div>
+              <h3>Automatic AI Mode</h3>
+              <p class="muted">Detects a visitor, listens, answers through Skelly, and continues the conversation while they remain in view.</p>
+            </div>
+            <span id="perception-state" class="driver-badge neutral">stopped</span>
+          </div>
+          <div id="interaction-cue" class="interaction-cue idle" role="status" aria-live="polite">
+            <span class="interaction-cue-light" aria-hidden="true"></span>
+            <div>
+              <strong id="interaction-cue-title">AI MODE STOPPED</strong>
+              <small id="interaction-cue-help">Start AI Mode when you are ready for visitors.</small>
+            </div>
+          </div>
+          <div class="sensor-readout perception-readout">
+            <div><span class="label">Phase</span><strong id="perception-phase">stopped</strong></div>
+            <div><span class="label">Session</span><strong id="perception-armed">waiting</strong></div>
+            <div><span class="label">Confirmation</span><strong id="perception-confirmation">0 / 2</strong></div>
+            <div><span class="label">Turns / events</span><strong id="perception-event-count">0 / 0</strong></div>
+          </div>
+          <div class="controls">
+            <button id="start-perception" type="button">Start AI Mode</button>
+            <button id="stop-perception" type="button" class="warning" disabled>Stop AI Mode</button>
+            <button id="clear-perception-events" type="button" class="secondary">Clear events</button>
+          </div>
+          <p id="perception-result" class="result" aria-live="polite"></p>
+          <div class="event-log">
+            <span class="label">Local interaction events</span>
+            <ol id="perception-events"><li class="muted">No visitor speech captured yet.</li></ol>
+          </div>
+        </div>
+        <div class="sensor-grid">
+          <article class="sensor-panel">
+            <div class="section-heading">
+              <div>
+                <h3>Camera recognition</h3>
+                <p id="camera-device" class="muted">Checking camera…</p>
+              </div>
+              <span id="camera-availability" class="driver-badge neutral">unknown</span>
+            </div>
+            <div class="sensor-readout">
+              <div><span class="label">Presence</span><strong id="camera-presence">not tested</strong></div>
+              <div><span class="label">Faces</span><strong id="camera-faces">0</strong></div>
+              <div><span class="label">People</span><strong id="camera-people">0</strong></div>
+              <div><span class="label">Motion</span><strong id="camera-motion">0%</strong></div>
+            </div>
+            <div class="camera-frame-wrap">
+              <img id="camera-frame" alt="Annotated local camera analysis" hidden>
+              <p id="camera-placeholder" class="muted">Analyze a frame to see local detection results.</p>
+            </div>
+            <button id="analyze-camera" type="button">Analyze camera frame</button>
+            <p id="camera-result" class="result" aria-live="polite"></p>
+          </article>
+
+          <article class="sensor-panel">
+            <div class="section-heading">
+              <div>
+                <h3>Microphone recognition</h3>
+                <p id="microphone-device" class="muted">Checking microphone…</p>
+              </div>
+              <span id="microphone-availability" class="driver-badge neutral">unknown</span>
+            </div>
+            <div class="sensor-readout microphone-readout">
+              <div><span class="label">Voice</span><strong id="microphone-voice">not tested</strong></div>
+              <div><span class="label">Level</span><strong id="microphone-level">—</strong></div>
+              <div><span class="label">Peak</span><strong id="microphone-peak">0%</strong></div>
+            </div>
+            <div class="level-meter" aria-hidden="true"><span id="microphone-meter"></span></div>
+            <div class="controls">
+              <button id="sample-microphone" type="button">Record one-second sample</button>
+              <button id="transcribe-microphone" type="button" class="secondary">Record 5s + transcribe offline</button>
+            </div>
+            <p id="speech-model-status" class="muted">Checking offline speech model…</p>
+            <div class="transcript-box">
+              <span class="label">Offline transcript</span>
+              <strong id="microphone-transcript">Not tested</strong>
+              <small id="transcription-time" class="muted"></small>
+            </div>
+            <audio id="microphone-playback" controls hidden></audio>
+            <p id="microphone-result" class="result" aria-live="polite"></p>
+          </article>
+        </div>
+      </section>
+
+      <section id="ai-services-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">BRAIN + SPEAKING VOICE</p>
+            <h2>AI service and voice</h2>
+            <p class="muted">Choose a simple preset or mix providers independently. Cloud use is always opt-in.</p>
+          </div>
+          <span id="provider-state" class="driver-badge neutral">checking</span>
+        </div>
+        <div class="provider-presets" aria-label="Provider presets">
+          <button type="button" data-provider-preset="offline" class="secondary">Fully Offline</button>
+          <button type="button" data-provider-preset="cloud">Cloud Starter</button>
+          <button type="button" data-provider-preset="best" class="secondary">Best Voice</button>
+          <button id="provider-custom-preset" type="button" class="secondary" disabled hidden>Custom</button>
+        </div>
+        <p id="provider-warning" class="security-note">Cloud voice previews and responses may consume provider quota.</p>
+        <form id="provider-settings-form" class="provider-form">
+          <div class="provider-grid">
+            <article class="provider-card">
+              <h3>AI brain</h3>
+              <label>
+                <span>Response provider</span>
+                <select id="brain-provider">
+                  <option value="local">Local Qwen — private/offline</option>
+                  <option value="groq">Groq GPT-OSS 20B — fast cloud</option>
+                </select>
+              </label>
+              <small id="brain-provider-help" class="muted"></small>
+            </article>
+            <article class="provider-card">
+              <h3>Speaking voice</h3>
+              <label>
+                <span>Voice provider</span>
+                <select id="voice-provider">
+                  <option value="local">Local eSpeak — free/offline</option>
+                  <option value="groq">Groq Orpheus — cloud voice</option>
+                  <option value="elevenlabs">ElevenLabs Flash — premium cloud</option>
+                </select>
+              </label>
+              <small id="voice-provider-help" class="muted"></small>
+            </article>
+          </div>
+
+          <details open class="provider-details">
+            <summary>Local voice character</summary>
+            <div class="provider-control-grid">
+              <label><span>Voice</span><select id="local-voice"></select></label>
+              <label><span>Speed <output id="local-speed-value">145</output></span><input id="local-speed" type="range" min="80" max="300" value="145"></label>
+              <label><span>Pitch <output id="local-pitch-value">30</output></span><input id="local-pitch" type="range" min="0" max="99" value="30"></label>
+              <label><span>Word gap <output id="local-gap-value">5</output></span><input id="local-gap" type="range" min="0" max="50" value="5"></label>
+            </div>
+          </details>
+
+          <details open class="provider-details">
+            <summary>Cloud voice choices</summary>
+            <div class="provider-control-grid">
+              <label><span>Groq Orpheus voice</span><select id="groq-voice"></select></label>
+              <label>
+                <span>Groq character style</span>
+                <select id="groq-voice-style">
+                  <option value="cartoon_skeleton_villain">Cartoon Skeleton Villain — delivery only (subtle)</option>
+                  <option value="natural">Natural</option>
+                  <option value="gravelly_whisper">Gravelly Whisper</option>
+                  <option value="deadpan">Deadpan</option>
+                </select>
+                <small>Groq styles change delivery but not the voice's basic identity. They will not create an exact character voice.</small>
+              </label>
+              <label>
+                <span>ElevenLabs Voice ID</span>
+                <input id="elevenlabs-voice-id" type="text" autocomplete="off" placeholder="Voice ID, not Agent ID">
+                <small>Required for ElevenLabs preview. Copy it from the ElevenLabs voice page.</small>
+              </label>
+              <label>
+                <span>ElevenLabs speaking model</span>
+                <select id="elevenlabs-model">
+                  <option value="eleven_v3">Eleven v3 — match Voice Design preview</option>
+                  <option value="eleven_flash_v2_5">Flash v2.5 — fastest response</option>
+                  <option value="eleven_multilingual_v2">Multilingual v2 — balanced quality</option>
+                </select>
+                <small>V3 is the closest match to the voice you approved; Flash responds faster but may change its performance.</small>
+              </label>
+              <label>
+                <span>ElevenLabs speaking speed <output id="elevenlabs-speed-value">0.85×</output></span>
+                <input id="elevenlabs-speed" type="range" min="0.7" max="1.2" step="0.05" value="0.85">
+                <small>Lower values slow the delivery without slowing audio playback incorrectly.</small>
+              </label>
+              <label>
+                <span>ElevenLabs output volume <output id="elevenlabs-volume-value">85%</output></span>
+                <input id="elevenlabs-volume" type="range" min="10" max="100" step="5" value="85">
+                <small>Reduces this voice before playback so loud character voices do not overwhelm the prop speaker.</small>
+              </label>
+            </div>
+          </details>
+
+          <details open class="provider-details">
+            <summary>Bluetooth speaker wake-up</summary>
+            <label>
+              <span>Wake-up signal <output id="speaker-preroll-value">650 ms</output></span>
+              <input id="speaker-preroll" type="range" min="0" max="1500" step="50" value="650">
+              <small>Sends a very quiet sound before speech so Bluetooth is active before the first word. It works with every voice provider.</small>
+            </label>
+          </details>
+
+          <details open class="provider-details">
+            <summary>Automatic jaw movement</summary>
+            <label>
+              <span>Jaw activity <output id="jaw-activity-value">35% · calm</output></span>
+              <input id="jaw-activity" type="range" min="0" max="100" step="5" value="35">
+              <small>Controls how often the jaw opens while Skelly speaks. Set to 0 to keep it closed; this does not affect head movement.</small>
+            </label>
+          </details>
+
+          <div class="controls">
+            <button type="submit">Save AI and voice choices</button>
+            <button id="preview-voice" type="button" class="secondary">Preview selected voice only</button>
+          </div>
+        </form>
+        <p id="provider-result" class="result" aria-live="polite"></p>
+
+        <div class="provider-key-grid provider-key-grid-stacked">
+          <article class="provider-card provider-key-section">
+            <div class="section-heading"><h3>Groq cloud key</h3><span id="groq-key-status" class="driver-badge neutral">not saved</span></div>
+            <p class="provider-signup-link">
+              Need an account?
+              <a href="https://console.groq.com/authenticate" target="_blank" rel="noopener noreferrer">Create a Groq account &nearr;</a>
+            </p>
+            <form id="groq-form" class="single-key-form">
+              <label><span>Groq API key</span><input id="groq-api-key" type="password" autocomplete="new-password" required placeholder="gsk_…"></label>
+              <button type="submit">Validate and save</button>
+            </form>
+            <p id="groq-result" class="result" aria-live="polite"></p>
+            <p class="provider-signup-link provider-terms-link">
+              First time using Groq speech?
+              <a href="https://console.groq.com/playground?model=canopylabs%2Forpheus-v1-english" target="_blank" rel="noopener noreferrer">Open Orpheus and accept its model terms &nearr;</a>
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="elevenlabs-section">
+        <div class="section-heading">
+          <div>
+            <h2>ElevenLabs setup</h2>
+            <p class="muted">Validates and stores the owner's key only on this Pi.</p>
+          </div>
+          <span id="elevenlabs-key-status" class="driver-badge neutral">not saved</span>
+        </div>
+        <p class="provider-signup-link">
+          Need an account?
+          <a href="https://try.elevenlabs.io/38yj9peuwrb7" target="_blank" rel="sponsored noopener noreferrer">Create an ElevenLabs account &nearr;</a>
+        </p>
+        <div class="security-note elevenlabs-permissions-note">
+          <strong>Required API key permissions</strong>
+          <p>When creating the key in ElevenLabs, enable only:</p>
+          <ul>
+            <li><strong>Text to Speech:</strong> Access</li>
+            <li><strong>Voices:</strong> Write</li>
+            <li><strong>Models:</strong> Access</li>
+          </ul>
+          <p>All other permissions can remain set to No Access.</p>
+        </div>
+        <p class="security-note">
+          Credential changes are accepted only from the USA controller's local network.
+          The key is never returned by the API or included in diagnostics.
+        </p>
+        <form id="elevenlabs-form">
+          <label>
+            <span>API key</span>
+            <input id="elevenlabs-api-key" type="password" autocomplete="new-password" required placeholder="Paste the key from ElevenLabs">
+          </label>
+          <button type="submit">Validate and save</button>
+        </form>
+        <p id="elevenlabs-result" class="result" aria-live="polite"></p>
+        <div class="provider-card voice-design-guide">
+          <h3>Design an original skeleton-villain voice</h3>
+          <p class="muted">In ElevenLabs, open Voices → My Voices → Add a new voice → Voice Design. Generate a voice, save your favorite, then paste its Voice ID above.</p>
+          <p><a href="https://elevenlabs.io/app/voice-lab" target="_blank" rel="noopener noreferrer">Open ElevenLabs Voice Design ↗</a></p>
+          <div class="copy-prompt-heading">
+            <strong>Recommended Voice Design prompt</strong>
+            <button id="copy-voice-prompt" type="button" class="secondary compact-button">Copy Prompt</button>
+          </div>
+          <textarea id="voice-design-prompt" readonly rows="5" aria-label="Recommended Voice Design prompt">Native English (US). Male, ageless fantasy character. High quality. Persona: theatrical cartoon skeleton villain. Emotion: arrogant, manic, gleefully menacing. A high-pitched nasal rasp with sharp projection, exaggerated royal diction, crisp consonants, quick energetic pacing, and an occasional wicked cackle. Original fictional voice; do not imitate an existing character or performer.</textarea>
+          <p id="copy-voice-prompt-result" class="result" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="prop-controller-section">
+        <div class="section-heading">
+          <div>
+            <h2>Skelly connections</h2>
+            <p class="muted">The header connects prop control. Prepare the speaker once to route every speaking voice through Skelly.</p>
+          </div>
+          <span id="hardware-connection" class="driver-badge">prop disconnected</span>
+        </div>
+        <h3>Bluetooth speaker</h3>
+        <p class="security-note">Prepare and connect enables Live Mode, discovers and pairs the Skelly(Live) speaker when needed, and selects it for Pi audio.</p>
+        <div class="controls">
+          <button id="speaker-connect" type="button">Prepare and connect speaker</button>
+          <button id="speaker-disconnect" type="button" class="secondary">Disconnect speaker</button>
+        </div>
+        <p id="speaker-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="wifi-settings-section">
+        <div class="section-heading">
+          <div>
+            <h2>WiFi settings</h2>
+            <p class="muted">Change the controller's network at any time or return to the private USA setup hotspot.</p>
+          </div>
+          <span id="wifi-mode-status" class="driver-badge neutral">checking</span>
+        </div>
+        <div class="onboarding-network-form">
+          <label><span>Nearby WiFi network</span><select id="setup-wifi-select"><option value="">Load nearby networks</option></select></label>
+          <label><span>Network name (for a hidden network)</span><input id="setup-wifi-manual" maxlength="64" autocomplete="off" placeholder="Optional manual network name"></label>
+          <label><span>WiFi password</span><input id="setup-wifi-password" type="password" minlength="8" autocomplete="new-password"></label>
+          <div class="controls">
+            <button id="setup-wifi-connect" type="button">Connect to home WiFi</button>
+            <button id="setup-wifi-refresh" type="button" class="secondary">Refresh network list</button>
+            <button id="setup-wifi-hotspot" type="button" class="secondary">Return to USA hotspot</button>
+          </div>
+          <p class="security-note">Refreshing while connected to the setup hotspot briefly restarts it. Reconnect to <strong>UltraSkellyAdvanced-Setup</strong>, then reopen <strong>192.168.4.1</strong>.</p>
+          <p id="setup-wifi-result" class="result" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="advanced-bluetooth-section">
+        <details class="provider-details">
+          <summary>Advanced Bluetooth diagnostics</summary>
+          <p class="muted">Low-level controller addresses and Live Mode commands for troubleshooting. Normal setup does not require these controls.</p>
+          <div class="simulator-readout">
+            <div><span class="label">Driver</span><strong id="hardware-driver">unknown</strong></div>
+            <div><span class="label">Device</span><strong id="hardware-device">unknown</strong></div>
+            <div><span class="label">Address</span><strong id="hardware-address-readout">unknown</strong></div>
+            <div><span class="label">Eyes</span><strong id="hardware-eye">unknown</strong></div>
+            <div><span class="label">Movement</span><strong id="hardware-movement">unknown</strong></div>
+            <div><span class="label">Movement safety</span><strong id="hardware-motor-safety">disabled</strong></div>
+            <div><span class="label">Live mode</span><strong id="hardware-live-mode">off</strong></div>
+            <div><span class="label">Speaker</span><strong id="speaker-connection">checking</strong></div>
+            <div><span class="label">Audio device</span><strong id="speaker-device">not selected</strong></div>
+            <div><span class="label">Audio address</span><strong id="speaker-address">not selected</strong></div>
+          </div>
+          <div class="hardware-connect controls">
+            <input id="hardware-address" aria-label="Skelly Bluetooth address" placeholder="BLE address, for example AA:BB:CC:DD:EE:01">
+            <button id="hardware-connect" type="button">Connect address</button>
+            <button id="hardware-discover" type="button" class="secondary">Scan</button>
+            <button id="hardware-disconnect" type="button" class="secondary">Disconnect control</button>
+          </div>
+          <p id="hardware-discovery" class="muted"></p>
+          <div class="controls">
+            <button data-live-mode-command data-hardware-action="/api/hardware/live-mode" data-body='{"enabled":true}' data-success="Live Mode enabled. Skelly is ready for Bluetooth speaker audio." class="secondary">Enable Live Mode only</button>
+            <button data-live-mode-command data-hardware-action="/api/hardware/live-mode" data-body='{"enabled":false}' data-success="Live Mode disabled." class="secondary">Disable Live Mode</button>
+          </div>
+        </details>
+      </section>
+
+      <section id="ssh-access-section">
+        <div class="section-heading"><div><h2>Support access (SSH)</h2><p class="muted">Disabled by default. Regular operation never requires SSH.</p></div><span id="ssh-status" class="driver-badge neutral">disabled</span></div>
+        <form id="ssh-enable-form" class="ssh-control-form">
+          <label><span>Private support password</span><input id="ssh-password" type="password" minlength="10" autocomplete="new-password" placeholder="Create a unique password"></label>
+          <label class="check-inline"><input id="ssh-persistent" type="checkbox"> Keep SSH enabled after 30 minutes</label>
+          <div class="controls"><button type="submit">Enable SSH</button><button id="ssh-disable" type="button" class="secondary">Disable SSH</button></div>
+        </form>
+        <p id="ssh-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="controller-power-section">
+        <div class="section-heading"><div><h2>Controller power</h2><p class="muted">Manage the USA service or safely restart and shut down the Raspberry Pi.</p></div></div>
+        <div class="controls"><button id="restart-usa-service" type="button" class="secondary">Restart USA service</button><button id="reboot-controller" type="button" class="warning">Reboot Raspberry Pi</button><button id="shutdown-controller" type="button" class="disconnect">Shut down Raspberry Pi</button></div>
+        <p id="controller-power-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <section id="manual-prop-controls">
+        <h2>Eyes</h2>
+        <div id="eye-index-controls" class="eye-grid-controls"></div>
+        <h2>Lights</h2>
+        <div class="light-control-grid">
+          <fieldset class="light-control" data-light-channel="1"><legend>Head light</legend><label>Color <input class="light-color" type="color" value="#00ff62"></label><label>Brightness <input class="light-brightness" type="range" min="0" max="255" value="255"></label><label>Effect <select class="light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="light-cycle" type="checkbox"> Color cycle</label><button type="button" class="apply-light">Apply head light</button></fieldset>
+          <fieldset class="light-control" data-light-channel="0"><legend>Torso light</legend><label>Color <input class="light-color" type="color" value="#3300ff"></label><label>Brightness <input class="light-brightness" type="range" min="0" max="255" value="255"></label><label>Effect <select class="light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="light-cycle" type="checkbox"> Color cycle</label><button type="button" class="apply-light">Apply torso light</button></fieldset>
+        </div>
+        <h2>Built-in Movement</h2>
+        <p class="security-note">These controls use Skelly’s stock BLE movement actions in both Standard and Advanced installations. Clear the prop first; disabling movement sends an immediate stop.</p>
+        <div class="controls">
+          <button data-hardware-action="/api/hardware/movement-arm" data-body='{"enabled":true}' class="warning">Enable movement</button>
+          <button data-hardware-action="/api/hardware/movement-arm" data-body='{"enabled":false}' class="secondary">Disable movement</button>
+        </div>
+        <div class="controls">
+          <button data-movement-command data-hardware-action="/api/hardware/movement" data-body='{"movement":"head_only"}'>Head only</button>
+          <button data-movement-command data-hardware-action="/api/hardware/movement" data-body='{"movement":"arms_only"}' class="secondary">Arm only</button>
+          <button data-movement-command data-hardware-action="/api/hardware/movement" data-body='{"movement":"torso_only"}' class="secondary">Torso only</button>
+          <button data-movement-command data-hardware-action="/api/hardware/movement" data-body='{"movement":"all"}' class="secondary">All</button>
+          <button data-hardware-action="/api/hardware/stop" class="warning">Stop</button>
+        </div>
+        <p id="hardware-result" class="result" aria-live="polite"></p>
+        <div id="operator-gestures">
+          <div class="section-heading">
+            <div><h2>Gestures</h2><p class="muted">Direct head positioning and animated reactions for live puppeteering.</p></div>
+            <span id="gesture-capability" class="driver-badge neutral">checking DAC</span>
+          </div>
+          <div class="gesture-console">
+            <div class="head-direction-pad" aria-label="Head direction controls">
+              <button type="button" data-operator-gesture="look_up" class="gesture-dac">Look Up</button>
+              <button type="button" data-operator-gesture="look_left" class="gesture-dac">Look Left</button>
+              <button type="button" data-operator-gesture="center" class="gesture-dac">Center</button>
+              <button type="button" data-operator-gesture="look_right" class="gesture-dac">Look Right</button>
+              <button type="button" data-operator-gesture="look_down" class="gesture-dac">Look Down</button>
+            </div>
+            <div class="gesture-button-grid">
+              <button type="button" data-operator-gesture="tilt_left" class="secondary gesture-dac">Tilt Left</button>
+              <button type="button" data-operator-gesture="tilt_right" class="secondary gesture-dac">Tilt Right</button>
+              <button type="button" data-operator-gesture="yes" class="gesture-dac">Yes · nod ×3</button>
+              <button type="button" data-operator-gesture="no" class="gesture-dac">No · shake ×3</button>
+              <button type="button" data-operator-gesture="listen" class="secondary gesture-dac">Listen</button>
+              <button type="button" data-operator-gesture="confused" class="secondary gesture-dac">Confused</button>
+              <button type="button" data-operator-gesture="laugh">Laugh</button>
+              <button id="stop-operator-gesture" type="button" class="warning">Stop Gesture</button>
+            </div>
+          </div>
+          <p class="security-note">Directional gestures use the configured full-safe DAC travel and restore the previous position after animated Yes, No, Confused, or Laugh actions. Laugh uses stored Laugh/Cackle media when available, otherwise the Pi’s offline voice.</p>
+          <p id="gesture-result" class="result" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="dac-controller-section">
+        <div class="section-heading">
+          <div>
+            <h2>Head and Jaw Diagnostics</h2>
+            <p class="muted">Raw DAC calibration and troubleshooting controls. Everyday operation uses the safe Gesture buttons.</p>
+          </div>
+          <span id="dac-state" class="driver-badge neutral">disarmed</span>
+        </div>
+        <p class="security-note">
+          Arming sends nothing. The first deliberate slider or center command starts output.
+          Disable xLights output first and keep the head clear while calibrating.
+        </p>
+        <div class="simulator-readout">
+          <div><span class="label">Controller</span><strong id="dac-target">unknown</strong></div>
+          <div><span class="label">Universe</span><strong id="dac-universe">unknown</strong></div>
+          <div><span class="label">Priority</span><strong id="dac-priority">unknown</strong></div>
+          <div><span class="label">Channels</span><strong id="dac-channels">unknown</strong></div>
+          <div><span class="label">Packets</span><strong id="dac-packets">0</strong></div>
+          <div><span class="label">Output</span><strong id="dac-output">stopped</strong></div>
+        </div>
+        <div class="controls">
+          <button id="dac-arm" type="button" class="warning">Arm DAC output</button>
+          <button id="dac-release" type="button" class="secondary">Release for xLights/FPP</button>
+          <button id="dac-center" type="button" class="secondary" disabled>Center head + close jaw</button>
+        </div>
+        <div class="dac-sliders">
+          <div class="dac-jaw-control">
+            <span class="label">Jaw — slot 1</span>
+            <strong id="dac-jaw-value">closed (0)</strong>
+            <div class="controls">
+              <button id="dac-jaw-close" type="button" class="secondary" disabled>Close jaw</button>
+              <button id="dac-jaw-open" type="button" class="secondary" disabled>Open jaw</button>
+            </div>
+          </div>
+          <label>
+            <span>Tilt / roll — slot 5 <output id="dac-tilt-value">127</output></span>
+            <input id="dac-tilt" type="range" min="1" max="255" value="127" disabled>
+          </label>
+          <label>
+            <span>No / yaw — slot 7 <output id="dac-yaw-value">127</output></span>
+            <input id="dac-yaw" type="range" min="1" max="255" value="127" disabled>
+          </label>
+          <label>
+            <span>Yes / pitch — slot 12 <output id="dac-pitch-value">127</output></span>
+            <input id="dac-pitch" type="range" min="1" max="255" value="127" disabled>
+          </label>
+        </div>
+        <p id="dac-result" class="result" aria-live="polite"></p>
+      </section>
+
+      <dialog id="media-editor" class="media-editor">
+        <form id="media-editor-form" method="dialog">
+          <div class="section-heading"><div><p class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
+          <input id="media-edit-serial" type="hidden">
+          <div class="preset-grid">
+            <label>Movement<select id="media-edit-action"><option value="0">None</option><option value="1">Head</option><option value="2">Arm</option><option value="4">Torso</option><option value="6">Torso + arm</option><option value="255">All</option></select></label>
+            <label>Eye<select id="media-edit-eye"></select></label>
+          </div>
+          <div class="light-control-grid">
+            <fieldset class="light-control" data-edit-light="head"><legend>Head light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
+            <fieldset class="light-control" data-edit-light="torso"><legend>Torso light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
+          </div>
+          <div class="controls"><button id="save-media-preset" type="submit">Save preset to Skelly</button></div>
+          <p id="media-editor-result" class="result" aria-live="polite"></p>
+        </form>
+      </dialog>
+
+      <section id="diagnostics-section">
+        <div class="section-heading">
+          <div>
+            <h2>Pi hardware diagnostics</h2>
+            <p class="muted">Checks Bluetooth, PipeWire, microphone, camera, and networking.</p>
+          </div>
+          <button id="run-diagnostics" class="secondary">Run checks</button>
+        </div>
+        <pre id="diagnostics">Checks have not run yet.</pre>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
