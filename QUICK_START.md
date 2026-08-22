@@ -1,4 +1,4 @@
-# UltraSkellyAdvanced 0.25.0 beta quick start
+# UltraSkellyAdvanced 0.25.3 beta quick start
 
 ## What you need
 
@@ -16,13 +16,14 @@ yet in the supported test matrix.
 1. In Raspberry Pi Imager, choose **Use Custom** and select the USA `.img.xz`.
 2. Flash the card, insert it into the Pi, and power it on. Imager WiFi settings
    are not required; first boot intentionally starts the setup hotspot.
-3. Join WiFi network **UltraSkellyAdvanced-Setup** using password `dadtech1`.
+3. Connect to the **UltraSkellyAdvanced-Setup** WiFi network using password
+   **`dadtech1`**.
 4. Open `http://192.168.4.1` if the setup page does not open automatically.
 5. Choose a home WiFi network or select **Remain on USA hotspot** for offline use.
 6. Review and accept the safety disclosure, then power on and pair the prop.
 
-After joining home WiFi, reopen `http://usa-controller.local`. If `.local`
-names are unavailable, use the address shown by the router. SSH is disabled and
+After joining home WiFi, reopen `http://usa-controller:8787`. If hostnames are
+unavailable, use the address shown by the router. SSH is disabled and
 is not needed for setup or operation. A private, temporary support login can be
 enabled later from Diagnostics.
 

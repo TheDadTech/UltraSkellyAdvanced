@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${EUID}" -eq 0 ]]; then
+if [[ "${EUID}" -eq 0 && "${USA_UPDATE_INSTALL:-0}" != "1" ]]; then
   echo "Run this script as the normal Pi user; it will use sudo when required." >&2
   exit 1
 fi
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALLING_USER="$(id -un)"
+INSTALLING_USER="${USA_INSTALLING_USER:-$(id -un)}"
 if id skelly-ai >/dev/null 2>&1; then
   # Preserve the dedicated service identity used by distributable USA images.
   SKELLY_USER="skelly-ai"
@@ -16,9 +16,9 @@ if id skelly-ai >/dev/null 2>&1; then
   SKELLY_HOME="$(getent passwd skelly-ai | cut -d: -f6)"
 else
   SKELLY_USER="${INSTALLING_USER}"
-  SKELLY_GROUP="$(id -gn)"
-  SKELLY_UID="$(id -u)"
-  SKELLY_HOME="${HOME}"
+  SKELLY_GROUP="$(id -gn "${INSTALLING_USER}")"
+  SKELLY_UID="$(id -u "${INSTALLING_USER}")"
+  SKELLY_HOME="$(getent passwd "${INSTALLING_USER}" | cut -d: -f6)"
 fi
 
 sudo apt-get update
@@ -102,6 +102,14 @@ sudo install -d -m 0750 -o root -g "${SKELLY_GROUP}" /etc/skelly-ai
 if [[ ! -f /etc/skelly-ai/skelly-ai.env ]]; then
   sudo install -m 0640 -o root -g "${SKELLY_GROUP}" \
     "${PROJECT_DIR}/deploy/skelly-ai.env.example" \
+    /etc/skelly-ai/skelly-ai.env
+fi
+# Version 0.25.0 accidentally shipped one developer's custom speaker PIN as
+# the product default. Migrate only that exact legacy value; preserve every
+# other owner-customized PIN and all unrelated settings during an update.
+if sudo grep -qx 'SKELLY_CLASSIC_AUDIO_PIN=0727' /etc/skelly-ai/skelly-ai.env; then
+  sudo sed -i \
+    's/^SKELLY_CLASSIC_AUDIO_PIN=0727$/SKELLY_CLASSIC_AUDIO_PIN=1234/' \
     /etc/skelly-ai/skelly-ai.env
 fi
 

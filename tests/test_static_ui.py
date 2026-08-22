@@ -127,6 +127,7 @@ def test_guided_operation_interface_is_present() -> None:
         'id="forget-skelly-dialog"',
         'id="software-update-section"',
         'id="check-for-updates"',
+        'id="install-update"',
         'id="advanced-bluetooth-section"',
         'id="onboarding-dialog"',
         'id="ssh-access-section"',
@@ -142,6 +143,8 @@ def test_guided_operation_interface_is_present() -> None:
     assert 'request("/api/media/refresh"' in script
     assert 'if (selectedMode === "classic") await refreshMediaFromSkelly()' in script
     assert 'request(check ? "/api/update/check" : "/api/update/status"' in script
+    assert 'request("/api/update/install", { method: "POST" })' in script
+    assert 'request("/api/update/install-status")' in script
     assert "Skelly ${skellyVersion} · USA ${body.version}" in script
     assert 'request("/api/onboarding/status")' in script
     assert '"/api/system/service/restart"' in script
@@ -261,7 +264,10 @@ def test_live_installer_configures_headless_bluetooth_audio_and_wifi_retries() -
     assert "def scan_and_cache(device: str, attempts: int = 5)" in helper
     assert "for _ in range(attempts):" in helper
     assert "SKELLY_CLASSIC_AUDIO_NAME=Skelly(Live)" in environment
-    assert "SKELLY_CLASSIC_AUDIO_PIN=0727" in environment
+    assert "SKELLY_CLASSIC_AUDIO_PIN=1234" in environment
+    assert "SKELLY_SIMULATION=false" in environment
+    assert "SKELLY_CLASSIC_AUDIO_PIN=0727" in installer
+    assert "SKELLY_CLASSIC_AUDIO_PIN=1234" in installer
 
 
 def test_setup_keeps_wifi_management_available_after_onboarding() -> None:
@@ -284,4 +290,5 @@ def test_setup_keeps_wifi_management_available_after_onboarding() -> None:
     assert 'request("/api/system/wifi/hotspot"' in script
     assert "ssh ${body.username}@${body.hostname}.local" in script
     assert 'hardwareConnection.textContent = body.hardware.connected ? "prop connected" : "prop disconnected"' in script
-    assert 'link.href = "http://usa-controller.local/"' in script
+    assert 'link.href = "http://usa-controller:8787"' in script
+    assert 'link.textContent = "Open usa-controller:8787"' in script

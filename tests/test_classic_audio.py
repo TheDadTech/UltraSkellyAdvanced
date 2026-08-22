@@ -73,6 +73,34 @@ async def test_routing_waits_for_sink_and_initializes_unity_gain(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_routing_allows_full_first_connection_publication_window(monkeypatch) -> None:
+    monkeypatch.setattr("skelly_ai.classic_audio.shutil.which", lambda _: "/usr/bin/wpctl")
+
+    async def completed_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("skelly_ai.classic_audio.asyncio.sleep", completed_sleep)
+    audio = BluetoothClassicAudio(name_filter="Skelly(Live)")
+    status_reads = 0
+
+    async def fake_run_program(executable: str, *arguments: str, input_text=None) -> _CommandResult:
+        nonlocal status_reads
+        del executable, input_text
+        if arguments == ("status",):
+            status_reads += 1
+        return _CommandResult(0, "Audio\n ├─ Sinks:\n │  *   77. Built-in Audio Stereo")
+
+    audio._run_program = fake_run_program  # type: ignore[method-assign]
+    snapshot = await audio._route_pipewire_sink()
+
+    assert status_reads == 60
+    assert snapshot.sink_ready is False
+    assert snapshot.last_error == (
+        "Bluetooth connected, but the Skelly PipeWire audio output did not appear"
+    )
+
+
+@pytest.mark.asyncio
 async def test_prepare_discovers_pairs_trusts_and_connects_first_use_speaker(monkeypatch) -> None:
     monkeypatch.setattr("skelly_ai.classic_audio.shutil.which", lambda _: "/usr/bin/bluetoothctl")
     audio = BluetoothClassicAudio(name_filter="Skelly(Live)")
@@ -121,14 +149,78 @@ async def test_prepare_discovers_pairs_trusts_and_connects_first_use_speaker(mon
         return audio._update(sink_ready=True, sink_id="91", last_error=None)
 
     audio._route_pipewire_sink = fake_route  # type: ignore[method-assign]
-    snapshot = await audio.prepare("0727")
+    snapshot = await audio.prepare("1234")
 
     assert snapshot.device_name == "Animated Skelly(Live)"
     assert snapshot.paired is True
     assert snapshot.trusted is True
     assert snapshot.connected is True
     assert snapshot.sink_ready is True
-    assert (("--agent", "KeyboardOnly", "pair", "AA:BB:CC:DD:EE:02"), "0727\n") in calls
+    assert (("--agent", "KeyboardOnly", "pair", "AA:BB:CC:DD:EE:02"), "1234\n") in calls
+
+
+@pytest.mark.asyncio
+async def test_prepare_recovers_from_stale_factory_reset_pairing(monkeypatch) -> None:
+    monkeypatch.setattr("skelly_ai.classic_audio.shutil.which", lambda _: "/usr/bin/bluetoothctl")
+
+    async def completed_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("skelly_ai.classic_audio.asyncio.sleep", completed_sleep)
+    audio = BluetoothClassicAudio(address="AA:BB:CC:DD:EE:02")
+    pair_attempts = 0
+    paired = False
+    connected = False
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(*arguments: str, input_text: str | None = None) -> _CommandResult:
+        nonlocal pair_attempts, paired, connected
+        del input_text
+        calls.append(arguments)
+        if arguments[0] == "info":
+            return _CommandResult(
+                0,
+                "\n".join(
+                    (
+                        "Device AA:BB:CC:DD:EE:02 (public)",
+                        "Name: Animated Skelly(Live)",
+                        f"Paired: {'yes' if paired else 'no'}",
+                        "Trusted: no",
+                        f"Connected: {'yes' if connected else 'no'}",
+                    )
+                ),
+            )
+        if arguments[:3] == ("--agent", "KeyboardOnly", "pair"):
+            pair_attempts += 1
+            if pair_attempts == 1:
+                return _CommandResult(1, "Failed to pair: org.bluez.Error.AuthenticationCanceled")
+            paired = True
+            return _CommandResult(0, "Pairing successful")
+        if arguments[0] == "remove":
+            return _CommandResult(0, "Device has been removed")
+        if arguments[:3] == ("--timeout", "12", "scan"):
+            return _CommandResult(0, "[NEW] Device AA:BB:CC:DD:EE:02 Animated Skelly(Live)")
+        if arguments[0] == "trust":
+            return _CommandResult(0, "trust succeeded")
+        if arguments[0] == "connect":
+            connected = True
+            return _CommandResult(0, "Connection successful")
+        raise AssertionError(arguments)
+
+    audio._run = fake_run  # type: ignore[method-assign]
+
+    async def fake_route() -> ClassicAudioSnapshot:
+        return audio._update(sink_ready=True, sink_id="91", last_error=None)
+
+    audio._route_pipewire_sink = fake_route  # type: ignore[method-assign]
+    snapshot = await audio.prepare("1234")
+
+    assert pair_attempts == 2
+    assert ("remove", "AA:BB:CC:DD:EE:02") in calls
+    assert ("--timeout", "12", "scan", "bredr") in calls
+    assert snapshot.paired is True
+    assert snapshot.connected is True
+    assert snapshot.sink_ready is True
 
 
 @pytest.mark.asyncio
@@ -258,3 +350,56 @@ def test_prepare_connect_enables_live_mode_before_connecting_speaker() -> None:
     assert connected.status_code == 200
     assert connected.json()["sink_ready"] is True
     assert status.json()["hardware"]["live_mode"] is True
+
+
+def test_prepare_connect_automatically_performs_second_pipewire_routing_pass() -> None:
+    class DelayedSinkAudio:
+        def __init__(self) -> None:
+            self.connected = False
+            self.routed = False
+            self.connect_calls = 0
+            self.refresh_calls = 0
+
+        def snapshot(self) -> ClassicAudioSnapshot:
+            return ClassicAudioSnapshot(
+                available=True,
+                connected=self.connected,
+                paired=True,
+                trusted=True,
+                sink_ready=self.routed,
+                sink_id="91" if self.routed else None,
+                address="AA:BB:CC:DD:EE:02",
+                device_name="Animated Skelly(Live)",
+                last_error=None if self.routed else "PipeWire output did not appear",
+                changed_at="2026-08-10T00:00:00+00:00",
+            )
+
+        async def prepare(self, pin: str) -> ClassicAudioSnapshot:
+            assert pin == "1234"
+            self.connected = True
+            return self.snapshot()
+
+        async def refresh(self) -> ClassicAudioSnapshot:
+            self.refresh_calls += 1
+            return self.snapshot()
+
+        async def connect(self) -> ClassicAudioSnapshot:
+            self.connect_calls += 1
+            self.routed = True
+            return self.snapshot()
+
+        async def disconnect(self) -> ClassicAudioSnapshot:
+            self.connected = False
+            self.routed = False
+            return self.snapshot()
+
+    audio = DelayedSinkAudio()
+    app = create_app(Settings(), classic_audio_client=audio)
+    with TestClient(app) as client:
+        client.post("/api/hardware/connect", json={})
+        connected = client.post("/api/audio/prepare-connect")
+
+    assert connected.status_code == 200
+    assert connected.json()["sink_ready"] is True
+    assert audio.refresh_calls == 1
+    assert audio.connect_calls == 1

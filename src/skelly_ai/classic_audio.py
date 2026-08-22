@@ -199,11 +199,18 @@ class BluetoothClassicAudio:
             address = await self._resolve_address(discover=True)
             snapshot = await self._read_info(address)
             if not snapshot.paired:
-                paired = await self._run(
-                    "--agent", "KeyboardOnly", "pair", address,
-                    input_text=f"{pin}\n",
-                )
+                paired = await self._pair(address, pin)
                 pair_detail = paired.output.casefold()
+                if paired.returncode != 0 and self._is_stale_pairing_error(pair_detail):
+                    # A physical factory reset invalidates Skelly's stored link
+                    # key while BlueZ can retain the old device record. Remove
+                    # only that Classic-audio record, rediscover it, and make
+                    # one clean pairing attempt with the factory PIN.
+                    await self._run("remove", address)
+                    await asyncio.sleep(1.0)
+                    await self._run("--timeout", "12", "scan", "bredr")
+                    paired = await self._pair(address, pin)
+                    pair_detail = paired.output.casefold()
                 if paired.returncode != 0 and "alreadyexists" not in pair_detail:
                     message = self._useful_output(paired.output) or "The Skelly speaker could not be paired"
                     self._update(last_error=message)
@@ -226,6 +233,23 @@ class BluetoothClassicAudio:
                     self._update(last_error=message)
                     raise ClassicAudioUnavailable(message)
             return await self._route_pipewire_sink()
+
+    async def _pair(self, address: str, pin: str) -> _CommandResult:
+        return await self._run(
+            "--agent", "KeyboardOnly", "pair", address,
+            input_text=f"{pin}\n",
+        )
+
+    @staticmethod
+    def _is_stale_pairing_error(output: str) -> bool:
+        return any(
+            marker in output
+            for marker in (
+                "authenticationcanceled",
+                "authenticationfailed",
+                "connectionattemptfailed",
+            )
+        )
 
     async def disconnect(self) -> ClassicAudioSnapshot:
         async with self._lock:
@@ -398,7 +422,12 @@ class BluetoothClassicAudio:
         # The Bluetooth connection can complete several seconds before
         # WirePlumber publishes the A2DP sink on a fresh boot.  Keep this
         # first button press alive long enough for that initial publication.
-        for _ in range(24):
+        # A freshly exposed Skelly Classic endpoint can take longer than the
+        # Bluetooth connection itself to become an A2DP sink.  Keep the first
+        # button press alive for up to 30 seconds so owners do not have to
+        # press Prepare and connect a second time.  The loop still returns as
+        # soon as WirePlumber publishes the sink.
+        for _ in range(60):
             result = await self._run_program(executable, "status")
             sink = self._find_sink(result.output)
             if sink is not None:

@@ -107,6 +107,8 @@ const updateVersion = document.querySelector("#update-version");
 const updateResult = document.querySelector("#update-result");
 const checkForUpdates = document.querySelector("#check-for-updates");
 const downloadUpdate = document.querySelector("#download-update");
+const installUpdate = document.querySelector("#install-update");
+let updateMonitorActive = false;
 const cameraAvailability = document.querySelector("#camera-availability");
 const cameraDevice = document.querySelector("#camera-device");
 const cameraPresence = document.querySelector("#camera-presence");
@@ -1949,13 +1951,24 @@ function renderUpdateStatus(body) {
   updateVersion.textContent = `version ${body.current_version}`;
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
-  downloadUpdate.hidden = !body.update_available || !body.download_url;
+  installUpdate.hidden = !body.update_available || !body.installable;
+  installUpdate.dataset.version = body.latest_version || "";
+  downloadUpdate.hidden = !body.update_available || !body.release_notes_url;
   if (!downloadUpdate.hidden) {
-    downloadUpdate.href = body.download_url;
-    downloadUpdate.textContent = `Download ${body.latest_version}`;
+    downloadUpdate.href = body.release_notes_url;
+    downloadUpdate.textContent = "View release notes";
   }
   updateAvailableBadge.hidden = !body.update_available;
   if (body.update_available) updateAvailableBadge.textContent = `USA ${body.latest_version} available`;
+  const installation = body.installation || {};
+  if (["downloading", "staged", "installing"].includes(installation.state)) {
+    updateResult.textContent = installation.message || "Installing update…";
+    installUpdate.disabled = true;
+    checkForUpdates.disabled = true;
+    monitorUpdateInstallation();
+  } else if (installation.state === "failed" || installation.state === "succeeded") {
+    updateResult.textContent = installation.message || body.message;
+  }
 }
 
 async function refreshUpdateStatus(check = false) {
@@ -1978,8 +1991,58 @@ checkForUpdates.addEventListener("click", async () => {
 });
 
 updateAvailableBadge.addEventListener("click", () => {
-  selectDashboardTab("setup");
+  selectDashboardTab("diagnostics");
   document.querySelector("#software-update-section").scrollIntoView({ behavior: "smooth" });
+});
+
+async function monitorUpdateInstallation() {
+  if (updateMonitorActive) return;
+  updateMonitorActive = true;
+  try {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        const status = await request("/api/update/install-status");
+        updateResult.textContent = status.message || "Installing update…";
+        if (status.state === "succeeded") {
+          installUpdate.disabled = true;
+          checkForUpdates.disabled = false;
+          updateAvailableBadge.hidden = true;
+          setTimeout(() => window.location.reload(), 1800);
+          return;
+        }
+        if (status.state === "failed") {
+          installUpdate.disabled = false;
+          checkForUpdates.disabled = false;
+          return;
+        }
+      } catch {
+        // The dashboard briefly disappears while the updated service restarts.
+        updateResult.textContent = "USA is restarting to finish the update…";
+      }
+    }
+    updateResult.textContent = "The update is still running. Reopen Diagnostics to check its status.";
+    checkForUpdates.disabled = false;
+  } finally {
+    updateMonitorActive = false;
+  }
+}
+
+installUpdate.addEventListener("click", async () => {
+  const version = installUpdate.dataset.version || "the new release";
+  if (!window.confirm(`Install USA ${version} now? The dashboard will restart automatically.`)) return;
+  installUpdate.disabled = true;
+  checkForUpdates.disabled = true;
+  updateResult.textContent = `Downloading and verifying USA ${version}…`;
+  try {
+    const status = await request("/api/update/install", { method: "POST" });
+    updateResult.textContent = status.message || "The verified update is starting…";
+    await monitorUpdateInstallation();
+  } catch (error) {
+    updateResult.textContent = error.message;
+    installUpdate.disabled = false;
+    checkForUpdates.disabled = false;
+  }
 });
 
 async function refreshSshStatus() {
@@ -2069,8 +2132,8 @@ function renderWifiNetworks(select, networks) {
 
 function showControllerLink(result, prefix, suffix = "") {
   const link = document.createElement("a");
-  link.href = "http://usa-controller.local/";
-  link.textContent = "Open usa-controller.local";
+  link.href = "http://usa-controller:8787";
+  link.textContent = "Open usa-controller:8787";
   result.replaceChildren(
     document.createTextNode(`${prefix} `),
     link,

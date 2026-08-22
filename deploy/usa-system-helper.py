@@ -6,9 +6,12 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
+import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 
 
 HOTSPOT = "USA-Setup"
@@ -21,6 +24,8 @@ STATE = DATA_DIR / "onboarding.json"
 WIFI_CACHE = DATA_DIR / "wifi-scan.json"
 WIFI_RESULT = DATA_DIR / "wifi-result.json"
 SELF = pathlib.Path(__file__).resolve()
+UPDATE_ROOT = DATA_DIR / "updates"
+UPDATE_STATUS = DATA_DIR / "update-status.json"
 
 
 def run(
@@ -353,6 +358,117 @@ def first_boot_reset_worker() -> None:
     run("systemctl", "reboot")
 
 
+def update_status(state: str, message: str, version: str) -> None:
+    write_json(UPDATE_STATUS, {"state": state, "message": message, "version": version})
+
+
+def update_install(version: str, source_text: str, current_version: str) -> None:
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version):
+        raise SystemExit("Invalid update version")
+    source = pathlib.Path(source_text).resolve()
+    expected_parent = (UPDATE_ROOT / version / "source").resolve()
+    if source != expected_parent and expected_parent not in source.parents:
+        raise SystemExit("The staged update path is not permitted")
+    if not (source / "pyproject.toml").is_file() or not (
+        source / "deploy" / "bootstrap-pi.sh"
+    ).is_file():
+        raise SystemExit("The staged USA installer is incomplete")
+    update_status("installing", f"Installing USA {version}. The dashboard will restart…", version)
+    unit_version = re.sub(r"[^A-Za-z0-9_-]", "-", version)
+    run(
+        "systemd-run", f"--unit=usa-update-{unit_version}", "--collect",
+        str(SELF), "update-install-worker", version, str(source), current_version,
+    )
+
+
+def update_install_worker(version: str, source_text: str, current_version: str) -> None:
+    source = pathlib.Path(source_text).resolve()
+    active_venv = pathlib.Path("/opt/skelly-ai/venv")
+    rollback_venv = pathlib.Path("/opt/skelly-ai/venv.usa-rollback")
+    backup_dir = DATA_DIR / "update-backup"
+    backup_files = (
+        pathlib.Path("/usr/local/libexec/usa-system-helper"),
+        pathlib.Path("/etc/systemd/system/skelly-ai.service"),
+        pathlib.Path("/etc/systemd/system/usa-network.service"),
+        pathlib.Path("/etc/nginx/sites-available/usa"),
+    )
+    backup_complete = False
+    try:
+        if rollback_venv.exists():
+            shutil.rmtree(rollback_venv)
+        shutil.copytree(active_venv, rollback_venv, symlinks=True)
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        backup_dir.mkdir(mode=0o700)
+        for path in backup_files:
+            if path.is_file():
+                target = backup_dir / path.relative_to("/")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+        backup_complete = True
+
+        environment = dict(os.environ)
+        environment["USA_UPDATE_INSTALL"] = "1"
+        service_user = run(
+            "systemctl", "show", "skelly-ai.service", "-p", "User", "--value",
+            check=False,
+        ).stdout.strip()
+        if service_user:
+            environment["USA_INSTALLING_USER"] = service_user
+        result = subprocess.run(
+            ["bash", str(source / "deploy" / "bootstrap-pi.sh")],
+            cwd=source,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=1800,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError((result.stderr or result.stdout)[-2000:].strip())
+
+        deadline = time.monotonic() + 60
+        observed = ""
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8787/api/health", timeout=3) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    observed = str(payload.get("version") or "")
+                    if observed == version:
+                        update_status(
+                            "succeeded",
+                            f"USA {version} installed successfully. Previous app files are retained for rollback.",
+                            version,
+                        )
+                        return
+            except (OSError, ValueError):
+                pass
+            time.sleep(2)
+        raise RuntimeError(f"The updated service did not report USA {version} (reported {observed or 'nothing'})")
+    except Exception as exc:
+        run("systemctl", "stop", "skelly-ai.service", check=False)
+        if backup_complete and rollback_venv.exists():
+            failed_venv = pathlib.Path("/opt/skelly-ai/venv.usa-failed")
+            if failed_venv.exists():
+                shutil.rmtree(failed_venv)
+            if active_venv.exists():
+                active_venv.rename(failed_venv)
+            rollback_venv.rename(active_venv)
+        for path in backup_files:
+            backup = backup_dir / path.relative_to("/")
+            if backup.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup, path)
+        run("systemctl", "daemon-reload", check=False)
+        run("systemctl", "restart", "nginx.service", check=False)
+        run("systemctl", "restart", "skelly-ai.service", check=False)
+        update_status(
+            "failed",
+            f"USA {version} failed to install; USA {current_version} was restored. {str(exc)[:500]}",
+            version,
+        )
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit("Missing action")
@@ -375,6 +491,10 @@ def main() -> None:
     elif action == "ssh-disable": ssh_disable()
     elif action == "first-boot-reset": first_boot_reset()
     elif action == "first-boot-reset-worker": first_boot_reset_worker()
+    elif action == "update-install" and len(sys.argv) == 5:
+        update_install(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif action == "update-install-worker" and len(sys.argv) == 5:
+        update_install_worker(sys.argv[2], sys.argv[3], sys.argv[4])
     elif action in {"service-restart", "reboot", "shutdown"}:
         command = {
             "service-restart": ["systemctl", "restart", "skelly-ai.service"],

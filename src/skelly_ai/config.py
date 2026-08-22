@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     classic_audio_address: str | None = None
     # Matches both known factory names: ServoSkelly(Live) and Animated Skelly(Live).
     classic_audio_name: str = "Skelly(Live)"
-    classic_audio_pin: str = Field(default="0727", min_length=4, max_length=16)
+    classic_audio_pin: str = Field(default="1234", min_length=4, max_length=16)
     classic_audio_connect_timeout_seconds: float = 20.0
     # Never target a LAN controller until an advanced user configures one.
     dac_target_ip: str = "127.0.0.1"

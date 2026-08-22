@@ -154,16 +154,17 @@
           <div>
             <p class="section-kicker">SOFTWARE</p>
             <h2>USA updates</h2>
-            <p class="muted">Check the configured release channel without changing the running installation.</p>
+            <p class="muted">Check, verify, and install a published USA update from this controller.</p>
           </div>
           <span id="update-version" class="driver-badge neutral">checking</span>
         </div>
         <div class="controls">
           <button id="check-for-updates" type="button" class="secondary">Check for updates</button>
-          <a id="download-update" class="button-link" target="_blank" rel="noopener noreferrer" hidden>Download update</a>
+          <button id="install-update" type="button" hidden>Install update</button>
+          <a id="download-update" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>View release</a>
         </div>
         <p id="update-result" class="result" aria-live="polite">Reading update settings…</p>
-        <small class="muted">Installation remains manual until a verified release source and rollback process are configured.</small>
+        <small class="muted">USA verifies the release checksum before installation and restores the previous app if the updated service fails its health check.</small>
       </section>
 
       <dialog id="forget-skelly-dialog" class="confirmation-dialog">

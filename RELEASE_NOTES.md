@@ -1,4 +1,14 @@
-# UltraSkellyAdvanced 0.25.0 Beta
+# UltraSkellyAdvanced 0.25.3 Beta
+
+## Release-blocker corrections
+
+- Real Skelly hardware is now the deployment default; manual upgrades no
+  longer fall back to the simulator.
+- Speaker preparation now waits up to 30 seconds for the PipeWire Bluetooth
+  output, allowing first-boot setup to complete with one button press.
+- If the Bluetooth transport completes before its PipeWire output exists,
+  USA automatically performs the routing pass that previously required a
+  second button click.
 
 This beta incorporates the completed first-boot QA work and the fresh-card
 speaker/jaw corrections verified on the Raspberry Pi 4 development hardware.
@@ -13,10 +23,16 @@ speaker/jaw corrections verified on the Raspberry Pi 4 development hardware.
   available for listening-level adjustment.
 - Labels the BLE status explicitly as **prop connected** or
   **prop disconnected**, separate from speaker status.
-- Adds a clickable `usa-controller.local` continuation link after home WiFi is
+- Adds a clickable `usa-controller:8787` continuation link after home WiFi is
   saved.
 - Documents the minimum ElevenLabs key permissions: Text to Speech Access,
   Voices Write, and Models Access.
+- Restores the factory Live Mode PIN default (`1234`) and retries speaker
+  pairing once after removing a stale BlueZ bond.
+- Adds a complete in-dashboard updater: HTTPS release download, required
+  SHA-256 verification, archive/path and version validation, installation
+  progress across the service restart, a post-install health check, and
+  automatic application rollback on failure.
 
 # UltraSkellyAdvanced 0.23.4 First-Boot QA Candidate
 
@@ -71,7 +87,8 @@ other Ultra Skelly owners.
 - Bluetooth speaker pairing may require Live Mode to be enabled first.
 - Cloud keys are never included. Credential enrollment is available only from
   the USA controller's local network.
-- Automatic update installation and rollback are not enabled yet.
+- Installing an update requires internet access and a release manifest with a
+  direct USA package URL and matching SHA-256 checksum.
 
 ## Beta test request
 

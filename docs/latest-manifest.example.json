@@ -1,5 +1,7 @@
 {
-  "version": "0.23.0",
-  "download_url": "https://github.com/OWNER/REPOSITORY/releases/download/v0.23.0/IMAGE-FILENAME.img.xz",
-  "release_notes_url": "https://github.com/OWNER/REPOSITORY/releases/tag/v0.23.0"
+  "version": "0.25.3",
+  "package_url": "https://github.com/OWNER/REPOSITORY/releases/download/v0.25.3/UltraSkellyAdvanced-0.25.3-beta.zip",
+  "sha256": "64_LOWERCASE_HEXADECIMAL_CHARACTERS_FROM_THE_PACKAGE_CHECKSUM",
+  "download_url": "https://github.com/OWNER/REPOSITORY/releases/tag/v0.25.3",
+  "release_notes_url": "https://github.com/OWNER/REPOSITORY/releases/tag/v0.25.3"
 }

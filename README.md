@@ -8,6 +8,24 @@ The Raspberry Pi keeps the prop connection, Bluetooth speaker routing, camera,
 microphone, safety state, and owner settings local. Cloud AI and voice services
 are optional and use API keys supplied by the owner.
 
+## First-time setup
+
+After writing the supplied USA image to a microSD card, inserting it into the
+Pi, and allowing about two minutes for the first boot:
+
+1. Connect to the **UltraSkellyAdvanced-Setup** WiFi network using password
+   **`dadtech1`**.
+2. The setup page should open automatically. If it does not, open
+   `http://192.168.4.1` in a browser.
+3. Select a home WiFi network, or choose **Remain on USA hotspot** for fully
+   local operation.
+4. After joining home WiFi, open `http://usa-controller:8787`.
+5. Accept the safety agreement, scan for the prop, connect it, then use
+   **Prepare and connect speaker**.
+
+Raspberry Pi Imager WiFi customization is not required. The USA image provides
+its own first-boot hotspot and guided setup.
+
 ## Operating modes
 
 - **Classic Mode** plays and edits the media already stored inside Skelly.
@@ -143,15 +161,18 @@ Set `SKELLY_UPDATE_MANIFEST_URL` to an HTTPS JSON document shaped like:
 
 ```json
 {
-  "version": "0.25.0",
-  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.0",
-  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.0"
+  "version": "0.25.1",
+  "package_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.25.1/UltraSkellyAdvanced-0.25.1-beta.zip",
+  "sha256": "the_64_character_lowercase_sha256_of_the_release_zip",
+  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.1",
+  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.1"
 }
 ```
 
-The dashboard can then check and link to the release. Installation remains
-manual until signed-package verification, settings preservation, restart
-feedback, and rollback have been completed and tested.
+The dashboard offers installation only when the direct package URL and valid
+checksum are present. It verifies the package and version before invoking the
+allowlisted system installer, preserves owner settings, follows the service
+restart, and restores the previous application if the new health check fails.
 
 ## Development
 

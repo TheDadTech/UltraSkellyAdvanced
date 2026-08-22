@@ -33,10 +33,13 @@ Bluetooth bonds, logs, packet captures, `.env` files, or router-specific data.
 
 ## Update manifest
 
-After the final download URL exists, publish an HTTPS JSON file following
-`docs/latest-manifest.example.json` and set `SKELLY_UPDATE_MANIFEST_URL` in a
-future image. The current dashboard checks and links only; it does not install
-updates automatically.
+After the final release-package URL exists, publish an HTTPS JSON file following
+`docs/latest-manifest.example.json`. `package_url` must point directly to the USA
+release ZIP and `sha256` must be that ZIP's lowercase SHA-256 digest. The
+dashboard will offer **Install update** only when both fields are present. It
+downloads the ZIP, verifies the checksum, validates the packaged version, and
+keeps the previous application environment for automatic rollback if the new
+service fails its health check.
 
 ## Licensing decision before a public source repository
 

@@ -8,7 +8,7 @@ ULTRASKELLYADVANCED (USA) - FIRST BOOT
 5. Choose home WiFi or remain on the USA hotspot, accept the disclosure, and
    pair the animatronic.
 
-When connected to home WiFi, use http://usa-controller.local or the address
+When connected to home WiFi, use http://usa-controller:8787 or the address
 shown by the router. SSH is disabled and is not required. It can be enabled
 with a private password from the dashboard's Diagnostics tab.
 

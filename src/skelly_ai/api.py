@@ -51,6 +51,7 @@ from .sacn import DacUnavailable, SacnDacController
 from .sensors import SensorLab, SensorUnavailable
 from .speech import LocalSpeech, SpeechUnavailable
 from .state import InvalidTransition, Mode, StateController
+from .updates import UpdateError, UpdateManager
 
 
 class ShowRequest(BaseModel):
@@ -309,6 +310,7 @@ def create_app(
         app_settings.system_helper,
         enabled=app_settings.onboarding_required,
     )
+    updates = UpdateManager(app_settings.data_dir, app_settings.system_helper)
     saved_operation_settings = operation_store.load()
     if not saved_operation_settings.device_configured:
         clear_hardware_target = getattr(hardware, "clear_saved_target", None)
@@ -602,6 +604,7 @@ def create_app(
     app.state.provider_store = provider_store
     app.state.operation_store = operation_store
     app.state.onboarding = onboarding
+    app.state.updates = updates
 
     def require_fpp_token(x_skelly_token: str | None) -> None:
         if not operation_store.load().allow_fpp_override:
@@ -1069,6 +1072,7 @@ def create_app(
         latest_version: str | None = None,
         download_url: str | None = None,
         release_notes_url: str | None = None,
+        installable: bool = False,
         message: str | None = None,
     ) -> dict[str, object]:
         def version_parts(value: str) -> tuple[int, ...]:
@@ -1086,6 +1090,8 @@ def create_app(
             "latest_version": latest_version,
             "download_url": download_url if available else None,
             "release_notes_url": release_notes_url,
+            "installable": bool(available and installable),
+            "installation": updates.status(),
             "message": message
             or (
                 "USA release channel ready. Check for updates when this Pi is online."
@@ -1098,11 +1104,10 @@ def create_app(
     async def update_status() -> dict[str, object]:
         return update_status_payload()
 
-    @app.post("/api/update/check")
-    async def check_for_update() -> dict[str, object]:
+    async def read_update_manifest() -> dict[str, object]:
         manifest_url = app_settings.update_manifest_url
         if not manifest_url:
-            return update_status_payload()
+            raise HTTPException(status_code=409, detail="No USA release channel is configured")
         try:
             async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
                 response = await client.get(manifest_url)
@@ -1115,6 +1120,13 @@ def create_app(
             ) from exc
         if not isinstance(manifest, dict):
             raise HTTPException(status_code=502, detail="The update manifest is invalid")
+        return manifest
+
+    @app.post("/api/update/check")
+    async def check_for_update() -> dict[str, object]:
+        if not app_settings.update_manifest_url:
+            return update_status_payload()
+        manifest = await read_update_manifest()
         latest = str(manifest.get("version", "")).strip()
         if not latest:
             raise HTTPException(status_code=502, detail="The update manifest has no version")
@@ -1124,12 +1136,30 @@ def create_app(
             release_notes_url=(
                 str(manifest.get("release_notes_url") or "").strip() or None
             ),
+            installable=bool(manifest.get("package_url") and manifest.get("sha256")),
         )
         if payload["update_available"]:
             payload["message"] = f"USA {latest} is available."
         else:
             payload["message"] = "This Pi is running the latest published version."
         return payload
+
+    @app.get("/api/update/install-status")
+    async def update_install_status() -> dict[str, object]:
+        return updates.status()
+
+    @app.post("/api/update/install")
+    async def install_update(request: Request) -> dict[str, object]:
+        require_local_setup(request)
+        manifest = await read_update_manifest()
+        latest = str(manifest.get("version") or "").strip()
+        availability = update_status_payload(latest_version=latest)
+        if not availability["update_available"]:
+            raise HTTPException(status_code=409, detail="This Pi is already up to date")
+        try:
+            return await updates.stage_and_start(manifest, current_version=__version__)
+        except UpdateError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/status")
     async def get_status() -> dict[str, object]:
@@ -1415,6 +1445,15 @@ def create_app(
                 if prepare is not None
                 else await classic_audio.connect()
             )
+            if snapshot.connected and not snapshot.sink_ready:
+                # On a fresh Classic connection BlueZ can report connected
+                # before WirePlumber publishes the A2DP sink.  Releasing the
+                # prepare lock and beginning a second routing pass is the same
+                # transition owners previously achieved with a second button
+                # click, so keep it inside this one request.
+                snapshot = await classic_audio.refresh()
+                if not snapshot.sink_ready:
+                    snapshot = await classic_audio.connect()
             remember_speaker_connection()
             return snapshot.to_dict()
         except (HardwareUnavailable, ClassicAudioUnavailable) as exc:
