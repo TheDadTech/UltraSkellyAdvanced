@@ -27,6 +27,7 @@ class UpdateManager:
         self.helper = helper
         self.update_dir = data_dir / "updates"
         self.status_path = data_dir / "update-status.json"
+        self.rollback_path = data_dir / "update-rollback.json"
 
     def status(self) -> dict[str, object]:
         try:
@@ -34,6 +35,43 @@ class UpdateManager:
         except (OSError, ValueError):
             return {"state": "idle", "message": "No update is being installed."}
         return payload if isinstance(payload, dict) else {"state": "idle"}
+
+    def rollback_status(self, *, current_version: str) -> dict[str, object]:
+        try:
+            payload = json.loads(self.rollback_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return {"available": False, "previous_version": None}
+        if not isinstance(payload, dict):
+            return {"available": False, "previous_version": None}
+        previous = str(payload.get("previous_version") or "").strip()
+        installed = str(payload.get("installed_version") or "").strip()
+        available = bool(payload.get("available") and previous and installed == current_version)
+        return {
+            "available": available,
+            "previous_version": previous if available else None,
+        }
+
+    def start_rollback(self, *, current_version: str) -> dict[str, object]:
+        rollback = self.rollback_status(current_version=current_version)
+        if not rollback["available"]:
+            raise UpdateError("No previous USA version is available for rollback")
+        if self.status().get("state") in {"downloading", "staged", "installing", "rolling_back"}:
+            raise UpdateError("An update or rollback is already in progress")
+        previous = str(rollback["previous_version"])
+        self._write_status(
+            "rolling_back",
+            f"Rolling back USA {current_version} to {previous}. The dashboard will restart…",
+            previous,
+        )
+        result = subprocess.run(
+            ["sudo", "-n", str(self.helper), "update-rollback", current_version],
+            text=True, capture_output=True, timeout=45, check=False,
+        )
+        if result.returncode:
+            message = (result.stderr or result.stdout or "The rollback could not start").strip()
+            self._write_status("failed", message, previous)
+            raise UpdateError(message)
+        return self.status()
 
     async def stage_and_start(
         self,

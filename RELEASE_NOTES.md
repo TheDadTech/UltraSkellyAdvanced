@@ -1,3 +1,41 @@
+# UltraSkellyAdvanced 0.25.5 Beta
+
+## Interface and setup cleanup
+
+- Adds a persistent **Help Mode** toggle under Diagnostics. Help Mode can hide explanatory setup text while leaving live status, warnings, and errors visible.
+- Makes Local, Groq, and ElevenLabs voice controls reactive to the selected voice provider so only the applicable controls are shown while inactive-provider settings remain saved.
+- Collapses configured API-key, Skelly connection, and WiFi setup areas into compact summaries while keeping them available for changes and troubleshooting.
+- Moves **Built-in Movement** into the Operator Console, removes the redundant Sensor Diagnostics `no cloud` pill, and clarifies the Standard-mode gesture capability as **No DAC · Laugh Available**.
+- Adds versioned frontend asset URLs so browsers, including mobile browsers, fetch updated JavaScript/CSS after an in-app upgrade instead of reusing stale cached assets.
+
+## ElevenLabs voice management
+
+- Loads the saved ElevenLabs account's available voice library into a friendly selector while retaining manual Voice ID entry as a fallback.
+- Caches the last successfully loaded ElevenLabs voice list locally so previously discovered voices remain selectable during a temporary provider outage.
+- Adds an **ElevenLabs credits remaining** meter to Voice Tuning with green/yellow/red thresholds based on remaining percentage.
+- Adds a small, non-intrusive ElevenLabs fuel indicator on Operate when ElevenLabs is the active voice provider.
+- Shows an unavailable state instead of falsely displaying zero when ElevenLabs usage cannot be read.
+- Updates restricted-key guidance to require Text to Speech Access, Voices Read, Models Access, and User Access for voice-list and remaining-credit features.
+
+## Voice and gesture behavior
+
+- Makes Operator Console **Laugh** use the active Groq or ElevenLabs cloud voice when available, while retaining stored/local audio as the offline or provider-failure fallback.
+- Keeps the full ElevenLabs usage meter on Voice Tuning and intentionally does not expose a Groq credit/quota meter.
+
+## Updater safety
+
+- Adds a manual **Roll back to previous version** option when the updater has a verified previous-version backup matching the currently running release.
+- Preserves owner configuration, credentials, WiFi settings, character preferences, and other data under `/var/lib/skelly-ai` during rollback.
+- Health-checks the restored release before declaring rollback successful.
+- Automatically restores the newer working release if the requested rollback fails its health check.
+- Does not offer rollback for stale or mismatched backup metadata.
+
+## Validation
+
+- Updater/API/UI focused suite: **47 passed**.
+- Browser JavaScript syntax validation is included in the release check after the Stage 2B test checkpoint exposed malformed frontend JavaScript.
+- Full project suite: **86 passed, 1 pre-existing Classic Audio test failure**. The same Classic Audio failure predates 0.25.5.
+
 # UltraSkellyAdvanced 0.25.4 Beta
 
 ## AI personality and motion

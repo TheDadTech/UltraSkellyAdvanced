@@ -26,6 +26,7 @@ WIFI_RESULT = DATA_DIR / "wifi-result.json"
 SELF = pathlib.Path(__file__).resolve()
 UPDATE_ROOT = DATA_DIR / "updates"
 UPDATE_STATUS = DATA_DIR / "update-status.json"
+ROLLBACK_STATE = DATA_DIR / "update-rollback.json"
 
 
 def run(
@@ -435,6 +436,12 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
                     payload = json.loads(response.read().decode("utf-8"))
                     observed = str(payload.get("version") or "")
                     if observed == version:
+                        write_json(ROLLBACK_STATE, {
+                            "available": True,
+                            "previous_version": current_version,
+                            "installed_version": version,
+                            "created_at": int(time.time()),
+                        })
                         update_status(
                             "succeeded",
                             f"USA {version} installed successfully. Previous app files are retained for rollback.",
@@ -469,6 +476,120 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
         )
 
 
+def update_rollback(current_version: str) -> None:
+    try:
+        payload = json.loads(ROLLBACK_STATE.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("No rollback information is available") from exc
+    previous = str(payload.get("previous_version") or "").strip()
+    installed = str(payload.get("installed_version") or "").strip()
+    if not payload.get("available") or installed != current_version or not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", previous):
+        raise SystemExit("No previous USA version is available for rollback")
+    rollback_venv = pathlib.Path("/opt/skelly-ai/venv.usa-rollback")
+    backup_dir = DATA_DIR / "update-backup"
+    if not rollback_venv.is_dir() or not backup_dir.is_dir():
+        raise SystemExit("The retained rollback files are incomplete")
+    update_status("rolling_back", f"Rolling back USA {current_version} to {previous}. The dashboard will restart…", previous)
+    unit_version = re.sub(r"[^A-Za-z0-9_-]", "-", previous)
+    run(
+        "systemd-run", f"--unit=usa-rollback-{unit_version}", "--collect",
+        str(SELF), "update-rollback-worker", current_version, previous,
+    )
+
+
+def update_rollback_worker(current_version: str, previous_version: str) -> None:
+    active_venv = pathlib.Path("/opt/skelly-ai/venv")
+    rollback_venv = pathlib.Path("/opt/skelly-ai/venv.usa-rollback")
+    forward_venv = pathlib.Path("/opt/skelly-ai/venv.usa-forward")
+    backup_dir = DATA_DIR / "update-backup"
+    forward_backup = DATA_DIR / "update-forward-backup"
+    backup_files = (
+        pathlib.Path("/usr/local/libexec/usa-system-helper"),
+        pathlib.Path("/etc/systemd/system/skelly-ai.service"),
+        pathlib.Path("/etc/systemd/system/usa-network.service"),
+        pathlib.Path("/etc/nginx/sites-available/usa"),
+    )
+    swapped = False
+    try:
+        if forward_venv.exists():
+            shutil.rmtree(forward_venv)
+        if forward_backup.exists():
+            shutil.rmtree(forward_backup)
+        forward_backup.mkdir(mode=0o700)
+        for path in backup_files:
+            if path.is_file():
+                target = forward_backup / path.relative_to("/")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+
+        run("systemctl", "stop", "skelly-ai.service", check=False)
+        active_venv.rename(forward_venv)
+        rollback_venv.rename(active_venv)
+        swapped = True
+        for path in backup_files:
+            backup = backup_dir / path.relative_to("/")
+            if backup.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup, path)
+        run("systemctl", "daemon-reload", check=False)
+        run("systemctl", "restart", "nginx.service", check=False)
+        run("systemctl", "restart", "skelly-ai.service", check=False)
+
+        deadline = time.monotonic() + 60
+        observed = ""
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:8787/api/health", timeout=3) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    observed = str(payload.get("version") or "")
+                    if observed == previous_version:
+                        write_json(ROLLBACK_STATE, {
+                            "available": False,
+                            "previous_version": None,
+                            "installed_version": previous_version,
+                            "rolled_back_from": current_version,
+                            "rolled_back_at": int(time.time()),
+                        })
+                        update_status(
+                            "rolled_back",
+                            f"USA rolled back successfully from {current_version} to {previous_version}. Saved settings and credentials were preserved.",
+                            previous_version,
+                        )
+                        shutil.rmtree(forward_venv, ignore_errors=True)
+                        shutil.rmtree(forward_backup, ignore_errors=True)
+                        return
+            except (OSError, ValueError):
+                pass
+            time.sleep(2)
+        raise RuntimeError(f"The restored service did not report USA {previous_version} (reported {observed or 'nothing'})")
+    except Exception as exc:
+        run("systemctl", "stop", "skelly-ai.service", check=False)
+        if swapped:
+            failed_rollback = pathlib.Path("/opt/skelly-ai/venv.usa-rollback-failed")
+            if failed_rollback.exists():
+                shutil.rmtree(failed_rollback)
+            if active_venv.exists():
+                active_venv.rename(failed_rollback)
+            if forward_venv.exists():
+                forward_venv.rename(active_venv)
+            if failed_rollback.exists() and not rollback_venv.exists():
+                failed_rollback.rename(rollback_venv)
+        for path in backup_files:
+            forward = forward_backup / path.relative_to("/")
+            if forward.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(forward, path)
+        run("systemctl", "daemon-reload", check=False)
+        run("systemctl", "restart", "nginx.service", check=False)
+        run("systemctl", "restart", "skelly-ai.service", check=False)
+        update_status(
+            "failed",
+            f"Rollback to USA {previous_version} failed; USA {current_version} was restored. {str(exc)[:500]}",
+            current_version,
+        )
+
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit("Missing action")
@@ -495,6 +616,10 @@ def main() -> None:
         update_install(sys.argv[2], sys.argv[3], sys.argv[4])
     elif action == "update-install-worker" and len(sys.argv) == 5:
         update_install_worker(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif action == "update-rollback" and len(sys.argv) == 3:
+        update_rollback(sys.argv[2])
+    elif action == "update-rollback-worker" and len(sys.argv) == 4:
+        update_rollback_worker(sys.argv[2], sys.argv[3])
     elif action in {"service-restart", "reboot", "shutdown"}:
         command = {
             "service-restart": ["systemctl", "restart", "skelly-ai.service"],

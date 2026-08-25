@@ -199,3 +199,83 @@ async def validate_groq_key(api_key: SecretStr) -> None:
         raise CredentialValidationError(
             f"Groq validation failed with status {response.status_code}"
         )
+
+
+async def fetch_elevenlabs_account(api_key: SecretStr) -> dict[str, object]:
+    """Return the owner's selectable voices and remaining ElevenLabs character credits."""
+    headers = {"xi-api-key": api_key.get_secret_value()}
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            subscription_response, voices_response = await __import__("asyncio").gather(
+                client.get("https://api.elevenlabs.io/v1/user/subscription", headers=headers),
+                client.get("https://api.elevenlabs.io/v2/voices", headers=headers, params={"page_size": 100}),
+            )
+    except httpx.HTTPError as exc:
+        raise CredentialValidationError(
+            "The Pi could not reach ElevenLabs; check its internet connection"
+        ) from exc
+
+    for response, label in ((subscription_response, "subscription"), (voices_response, "voices")):
+        if response.status_code in {401, 403}:
+            raise CredentialValidationError(
+                f"ElevenLabs rejected access to {label}; update the API key permissions"
+            )
+        if not response.is_success:
+            raise CredentialValidationError(
+                f"ElevenLabs {label} request failed with status {response.status_code}"
+            )
+
+    subscription = subscription_response.json()
+    voices_payload = voices_response.json()
+    used = int(subscription.get("character_count") or 0)
+    limit = int(subscription.get("character_limit") or 0)
+    remaining = max(limit - used, 0)
+    voices = []
+    for item in voices_payload.get("voices", []):
+        if not isinstance(item, dict):
+            continue
+        voice_id = str(item.get("voice_id") or "").strip()
+        name = str(item.get("name") or voice_id).strip()
+        if voice_id:
+            voices.append({"voice_id": voice_id, "name": name})
+    voices.sort(key=lambda item: str(item["name"]).casefold())
+    return {
+        "voices": voices,
+        "remaining": remaining,
+        "limit": limit,
+        "remaining_percent": round((remaining / limit) * 100, 1) if limit else None,
+    }
+
+async def fetch_groq_quota(api_key: SecretStr) -> dict[str, object]:
+    """Read Groq's daily-request rate-limit headers without generating content."""
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            response = await client.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {api_key.get_secret_value()}"},
+            )
+    except httpx.HTTPError as exc:
+        raise CredentialValidationError(
+            "The Pi could not reach Groq; check its internet connection"
+        ) from exc
+    if response.status_code in {401, 403}:
+        raise CredentialValidationError("Groq rejected the API key")
+    if not response.is_success:
+        raise CredentialValidationError(
+            f"Groq quota request failed with status {response.status_code}"
+        )
+    def number(name: str) -> int | None:
+        raw = response.headers.get(name)
+        try:
+            return int(raw) if raw is not None else None
+        except ValueError:
+            return None
+    limit = number("x-ratelimit-limit-requests")
+    remaining = number("x-ratelimit-remaining-requests")
+    return {
+        "limit": limit,
+        "remaining": remaining,
+        "remaining_percent": round((remaining / limit) * 100, 1)
+        if isinstance(limit, int) and limit > 0 and isinstance(remaining, int)
+        else None,
+    }

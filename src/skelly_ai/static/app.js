@@ -109,6 +109,7 @@ const updateResult = document.querySelector("#update-result");
 const checkForUpdates = document.querySelector("#check-for-updates");
 const downloadUpdate = document.querySelector("#download-update");
 const installUpdate = document.querySelector("#install-update");
+const rollbackUpdate = document.querySelector("#rollback-update");
 let updateMonitorActive = false;
 const cameraAvailability = document.querySelector("#camera-availability");
 const cameraDevice = document.querySelector("#camera-device");
@@ -155,6 +156,18 @@ const operatorCameraFrame = document.querySelector("#operator-camera-frame");
 const operatorCameraPlaceholder = document.querySelector("#operator-camera-placeholder");
 const operatorCameraResult = document.querySelector("#operator-camera-result");
 const gestureCapability = document.querySelector("#gesture-capability");
+const helpModeToggle = document.querySelector("#help-mode-toggle");
+const localVoiceDetails = document.querySelector("#local-voice-details");
+const cloudVoiceDetails = document.querySelector("#cloud-voice-details");
+const groqVoiceControls = document.querySelector("#groq-voice-controls");
+const elevenlabsVoiceControls = document.querySelector("#elevenlabs-voice-controls");
+const localCloudVoiceNote = document.querySelector("#local-cloud-voice-note");
+const groqKeyDetails = document.querySelector("#groq-key-details");
+const elevenlabsKeyDetails = document.querySelector("#elevenlabs-key-details");
+const skellyConnectionsDetails = document.querySelector("#skelly-connections-details");
+const skellyConnectionsSummary = document.querySelector("#skelly-connections-summary");
+const wifiSettingsDetails = document.querySelector("#wifi-settings-details");
+const wifiSummary = document.querySelector("#wifi-summary");
 const gestureResult = document.querySelector("#gesture-result");
 const operatorGestureButtons = [...document.querySelectorAll("[data-operator-gesture]")];
 const stopOperatorGesture = document.querySelector("#stop-operator-gesture");
@@ -177,6 +190,12 @@ const speakerPreroll = document.querySelector("#speaker-preroll");
 const groqVoice = document.querySelector("#groq-voice");
 const groqVoiceStyle = document.querySelector("#groq-voice-style");
 const elevenlabsVoiceId = document.querySelector("#elevenlabs-voice-id");
+const elevenlabsVoiceSelect = document.querySelector("#elevenlabs-voice-select");
+const refreshElevenlabsAccount = document.querySelector("#refresh-elevenlabs-account");
+const elevenlabsCreditBar = document.querySelector("#elevenlabs-credit-bar");
+const elevenlabsCreditLabel = document.querySelector("#elevenlabs-credit-label");
+const operateElevenlabsFuel = document.querySelector("#operate-elevenlabs-fuel");
+const operateElevenlabsFuelValue = document.querySelector("#operate-elevenlabs-fuel-value");
 const elevenlabsModel = document.querySelector("#elevenlabs-model");
 const elevenlabsSpeed = document.querySelector("#elevenlabs-speed");
 const elevenlabsVolume = document.querySelector("#elevenlabs-volume");
@@ -220,6 +239,36 @@ let gestureRequestId = 0;
 let operatorListenGestureAvailable = false;
 let firstRunDiscoveryStarted = false;
 let selectDashboardTab = () => {};
+
+function applyHelpMode(enabled) {
+  document.body.classList.toggle("help-mode-off", !enabled);
+  if (helpModeToggle) {
+    helpModeToggle.checked = enabled;
+    const label = helpModeToggle.nextElementSibling;
+    if (label) label.textContent = enabled ? "On" : "Off";
+  }
+}
+
+function setupHelpMode() {
+  let enabled = true;
+  try { enabled = localStorage.getItem("skelly-help-mode") !== "off"; } catch {}
+  applyHelpMode(enabled);
+  helpModeToggle?.addEventListener("change", () => {
+    enabled = helpModeToggle.checked;
+    applyHelpMode(enabled);
+    try { localStorage.setItem("skelly-help-mode", enabled ? "on" : "off"); } catch {}
+  });
+}
+
+function renderVoiceProviderControls() {
+  const provider = voiceProvider?.value || "local";
+  if (localVoiceDetails) localVoiceDetails.hidden = provider !== "local";
+  if (cloudVoiceDetails) cloudVoiceDetails.hidden = provider === "local";
+  if (groqVoiceControls) groqVoiceControls.hidden = provider !== "groq";
+  if (elevenlabsVoiceControls) elevenlabsVoiceControls.hidden = provider !== "elevenlabs";
+  if (localCloudVoiceNote) localCloudVoiceNote.hidden = true;
+  if (operateElevenlabsFuel) operateElevenlabsFuel.hidden = provider !== "elevenlabs";
+}
 
 function initializeDashboardTabs() {
   const panels = Object.fromEntries(
@@ -297,6 +346,7 @@ function initializeDashboardTabs() {
   selectDashboardTab(panels[saved] ? saved : "operate");
 }
 
+setupHelpMode();
 initializeDashboardTabs();
 
 async function request(path, options = {}) {
@@ -402,6 +452,9 @@ function renderStatus(body) {
   headerPropStatus.textContent = body.hardware.connected ? "connected" : "disconnected";
   setStatusLight(statusLights.prop, body.hardware.connected ? "ok" : "error");
   const speakerReady = Boolean(body.audio.connected && body.audio.sink_ready);
+  const propReady = Boolean(body.hardware?.connected);
+  if (skellyConnectionsSummary) skellyConnectionsSummary.textContent = `${propReady ? "Prop connected" : "Prop disconnected"} · ${speakerReady ? "Speaker ready" : "Speaker not ready"}`;
+  if (skellyConnectionsDetails && propReady && speakerReady && !skellyConnectionsDetails.dataset.userOpened) skellyConnectionsDetails.open = false;
   headerSpeakerStatus.textContent = speakerReady ? "connected" : "disconnected";
   setStatusLight(statusLights.speaker, speakerReady ? "ok" : "off");
   const profile = body.operation?.settings?.hardware_profile ?? "stock";
@@ -477,7 +530,7 @@ function renderStatus(body) {
   operatorListenGestureAvailable = advancedGestures && dac.armed && currentOperationMode === "manual";
   gestureCapability.textContent = advancedGestures
     ? dac.armed ? "advanced puppeteering ready" : "DAC profile · start Operator Mode"
-    : "standard controls · Laugh available";
+    : "No DAC · Laugh Available";
   gestureCapability.classList.toggle("neutral", !advancedGestures || !dac.armed);
   document.querySelectorAll(".gesture-dac").forEach((button) => {
     button.disabled = !advancedGestures || !dac.armed || currentOperationMode !== "manual";
@@ -716,6 +769,69 @@ function renderBrainStatus(body) {
   if (!voiceReady) brainResult.textContent = "Choose a working voice in Voice Tuning.";
 }
 
+function renderQuotaBar(bar, label, remaining, percent, noun) {
+  if (!bar || !label) return;
+  bar.classList.remove("good", "warn", "low", "unknown");
+  const fill = bar.querySelector(".quota-fill");
+  if (!Number.isFinite(Number(remaining)) || !Number.isFinite(Number(percent))) {
+    bar.classList.add("unknown");
+    if (fill) fill.style.width = "0%";
+    label.textContent = "Not available";
+    bar.removeAttribute("aria-valuenow");
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Number(percent)));
+  bar.classList.add(pct > 50 ? "good" : pct >= 10 ? "warn" : "low");
+  if (fill) fill.style.width = `${pct}%`;
+  label.textContent = `${Number(remaining).toLocaleString()} ${noun} remaining`;
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+}
+
+function renderOperateElevenLabsFuel(remaining, percent) {
+  if (!operateElevenlabsFuel || !operateElevenlabsFuelValue) return;
+  operateElevenlabsFuel.classList.remove("good", "warn", "low", "unknown");
+  const fill = operateElevenlabsFuel.querySelector(".mini-fuel-fill");
+  if (!Number.isFinite(Number(remaining)) || !Number.isFinite(Number(percent))) {
+    operateElevenlabsFuel.classList.add("unknown");
+    if (fill) fill.style.width = "0%";
+    operateElevenlabsFuelValue.textContent = "—";
+    operateElevenlabsFuel.title = "ElevenLabs credits unavailable";
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Number(percent)));
+  operateElevenlabsFuel.classList.add(pct > 50 ? "good" : pct >= 10 ? "warn" : "low");
+  if (fill) fill.style.width = `${pct}%`;
+  const amount = Number(remaining);
+  operateElevenlabsFuelValue.textContent = amount >= 1000 ? `${(amount / 1000).toFixed(amount >= 100000 ? 0 : 1)}k` : amount.toLocaleString();
+  operateElevenlabsFuel.title = `${amount.toLocaleString()} ElevenLabs credits remaining`;
+}
+
+async function refreshElevenLabsAccount() {
+  if (!elevenlabsVoiceSelect) return;
+  const previous = elevenlabsVoiceId.value.trim();
+  try {
+    const body = await request("/api/providers/elevenlabs/account");
+    const voices = Array.isArray(body.voices) ? body.voices : [];
+    const options = voices.map((voice) => new Option(voice.name || voice.voice_id, voice.voice_id));
+    if (previous && !voices.some((voice) => voice.voice_id === previous)) {
+      options.unshift(new Option(`Current / manual (${previous.slice(0, 8)}…)`, previous));
+    }
+    if (!options.length) options.push(new Option("No voices available", ""));
+    elevenlabsVoiceSelect.replaceChildren(...options);
+    elevenlabsVoiceSelect.value = previous || options[0].value;
+    if (!previous && elevenlabsVoiceSelect.value) elevenlabsVoiceId.value = elevenlabsVoiceSelect.value;
+    renderQuotaBar(elevenlabsCreditBar, elevenlabsCreditLabel, body.remaining, body.remaining_percent, "credits");
+    renderOperateElevenLabsFuel(body.remaining, body.remaining_percent);
+    if (body.cached && body.error) providerResult.textContent = `Using cached ElevenLabs voices: ${body.error}`;
+  } catch (error) {
+    renderQuotaBar(elevenlabsCreditBar, elevenlabsCreditLabel, null, null, "credits");
+    renderOperateElevenLabsFuel(null, null);
+  }
+}
+
+
 function providerPayload() {
   return {
     brain_provider: brainProvider.value,
@@ -736,6 +852,7 @@ function providerPayload() {
 }
 
 function updateProviderHelp() {
+  renderVoiceProviderControls();
   brainProviderHelp.textContent = brainProvider.value === "groq"
     ? "Fast cloud responses using the owner's Groq quota."
     : "Private and offline, but slower on a Raspberry Pi 4.";
@@ -800,9 +917,16 @@ function renderProviderStatus(body) {
   renderJawActivity();
   groqKeyStatus.textContent = body.groq.key_configured ? "key saved" : "not saved";
   elevenlabsKeyStatus.textContent = body.elevenlabs.key_configured ? "key saved" : "not saved";
+  if (groqKeyDetails && body.groq.key_configured && !groqKeyDetails.dataset.userOpened) groqKeyDetails.open = false;
+  if (elevenlabsKeyDetails && body.elevenlabs.key_configured && !elevenlabsKeyDetails.dataset.userOpened) elevenlabsKeyDetails.open = false;
   providerWarning.textContent = body.cloud_usage_warning;
   updateProviderHelp();
+  if (body.elevenlabs.key_configured) refreshElevenLabsAccount();
 }
+
+[groqKeyDetails, elevenlabsKeyDetails].filter(Boolean).forEach((details) => {
+  details.addEventListener("toggle", () => { if (details.open) details.dataset.userOpened = "true"; });
+});
 
 async function refreshProviderStatus() {
   renderProviderStatus(await request("/api/providers/status"));
@@ -1208,7 +1332,7 @@ operatorGestureButtons.forEach((button) => {
     const gesture = button.dataset.operatorGesture;
     operatorGestureButtons.forEach((control) => { control.disabled = true; });
     gestureResult.textContent = gesture === "laugh"
-      ? "Performing the local Laugh preset..."
+      ? `Performing Laugh with ${voiceProvider.value === "local" ? "local audio" : `${voiceProvider.value} voice`}...`
       : `Performing ${button.textContent.trim()}...`;
     try {
       const body = await request("/api/operator/gesture", {
@@ -1218,10 +1342,16 @@ operatorGestureButtons.forEach((button) => {
       });
       if (requestId !== gestureRequestId) return;
       if (gesture === "laugh") {
-        const source = body.audio?.source === "skelly_media"
+        const sourceKey = body.audio?.source || "offline_local";
+        const source = sourceKey === "skelly_media"
           ? body.audio.name
-          : "the Pi's offline voice";
+          : sourceKey === "cloud_elevenlabs"
+            ? "ElevenLabs"
+            : sourceKey === "cloud_groq"
+              ? "Groq"
+              : "the Pi's offline voice";
         gestureResult.textContent = `Laugh completed using ${source}${body.dac_used ? " with jaw animation" : ""}.`;
+        if (sourceKey === "cloud_elevenlabs") await refreshElevenLabsAccount();
       } else {
         gestureResult.textContent = `${button.textContent.trim()} completed.`;
       }
@@ -1592,6 +1722,7 @@ document.querySelector("#elevenlabs-form").addEventListener("submit", async (eve
     apiKeyInput.value = "";
     await refreshStatus();
     await refreshProviderStatus();
+    await refreshElevenLabsAccount();
     elevenlabsResult.textContent = "Key validated and saved locally for text-to-speech.";
   } catch (error) {
     elevenlabsResult.textContent = error.message;
@@ -1636,8 +1767,20 @@ copyVoicePrompt.addEventListener("click", async () => {
 });
 
 [brainProvider, voiceProvider, elevenlabsModel].forEach((control) => {
-  control.addEventListener("change", updateProviderHelp);
+  control.addEventListener("change", () => {
+    updateProviderHelp();
+    if (control === voiceProvider && voiceProvider.value === "elevenlabs") refreshElevenLabsAccount();
+  });
 });
+
+elevenlabsVoiceSelect?.addEventListener("change", () => {
+  elevenlabsVoiceId.value = elevenlabsVoiceSelect.value;
+});
+elevenlabsVoiceId?.addEventListener("input", () => {
+  const match = [...(elevenlabsVoiceSelect?.options || [])].find((option) => option.value === elevenlabsVoiceId.value.trim());
+  if (match) elevenlabsVoiceSelect.value = match.value;
+});
+refreshElevenlabsAccount?.addEventListener("click", refreshElevenLabsAccount);
 
 [
   [localSpeed, "#local-speed-value", ""],
@@ -1705,6 +1848,7 @@ previewVoice.addEventListener("click", async () => {
       ? `; speed ${body.voice_speed}×; volume ${body.voice_volume_percent}%`
       : "";
     providerResult.textContent = `Confirmed ${body.voice_provider} voice: ${body.engine}${tuning}; Bluetooth wake-up ${body.speaker_preroll_ms} ms.`;
+    if (voiceProvider.value === "elevenlabs") await refreshElevenLabsAccount();
   } catch (error) {
     providerResult.textContent = `Selected voice could not play: ${error.message}`;
   } finally {
@@ -1727,7 +1871,7 @@ document.querySelector("#groq-form").addEventListener("submit", async (event) =>
     key.value = "";
     await refreshStatus();
     await refreshProviderStatus();
-    groqResult.textContent = "Groq key validated and saved only on this Pi.";
+        groqResult.textContent = "Groq key validated and saved only on this Pi.";
   } catch (error) {
     groqResult.textContent = error.message;
   } finally {
@@ -1956,6 +2100,10 @@ function renderUpdateStatus(body) {
   updateResult.textContent = body.message;
   installUpdate.hidden = !body.update_available || !body.installable;
   installUpdate.dataset.version = body.latest_version || "";
+  const rollback = body.rollback || {};
+  rollbackUpdate.hidden = !rollback.available;
+  rollbackUpdate.dataset.version = rollback.previous_version || "";
+  if (rollback.available) rollbackUpdate.textContent = `Roll back to ${rollback.previous_version}`;
   downloadUpdate.hidden = !body.update_available || !body.release_notes_url;
   if (!downloadUpdate.hidden) {
     downloadUpdate.href = body.release_notes_url;
@@ -1964,12 +2112,13 @@ function renderUpdateStatus(body) {
   updateAvailableBadge.hidden = !body.update_available;
   if (body.update_available) updateAvailableBadge.textContent = `USA ${body.latest_version} available`;
   const installation = body.installation || {};
-  if (["downloading", "staged", "installing"].includes(installation.state)) {
+  if (["downloading", "staged", "installing", "rolling_back"].includes(installation.state)) {
     updateResult.textContent = installation.message || "Installing update…";
     installUpdate.disabled = true;
+    rollbackUpdate.disabled = true;
     checkForUpdates.disabled = true;
     monitorUpdateInstallation();
-  } else if (installation.state === "failed" || installation.state === "succeeded") {
+  } else if (["failed", "succeeded", "rolled_back"].includes(installation.state)) {
     updateResult.textContent = installation.message || body.message;
   }
 }
@@ -2007,15 +2156,17 @@ async function monitorUpdateInstallation() {
       try {
         const status = await request("/api/update/install-status");
         updateResult.textContent = status.message || "Installing update…";
-        if (status.state === "succeeded") {
+        if (["succeeded", "rolled_back"].includes(status.state)) {
           installUpdate.disabled = true;
+          rollbackUpdate.disabled = true;
           checkForUpdates.disabled = false;
-          updateAvailableBadge.hidden = true;
+          if (status.state === "succeeded") updateAvailableBadge.hidden = true;
           setTimeout(() => window.location.reload(), 1800);
           return;
         }
         if (status.state === "failed") {
           installUpdate.disabled = false;
+          rollbackUpdate.disabled = false;
           checkForUpdates.disabled = false;
           return;
         }
@@ -2043,6 +2194,28 @@ installUpdate.addEventListener("click", async () => {
     await monitorUpdateInstallation();
   } catch (error) {
     updateResult.textContent = error.message;
+    installUpdate.disabled = false;
+    checkForUpdates.disabled = false;
+  }
+});
+
+rollbackUpdate.addEventListener("click", async () => {
+  const version = rollbackUpdate.dataset.version || "the previous release";
+  const confirmed = window.confirm(
+    `Roll back to USA ${version}? Saved settings, API keys, WiFi, and character preferences will be preserved. The dashboard will restart automatically.`
+  );
+  if (!confirmed) return;
+  rollbackUpdate.disabled = true;
+  installUpdate.disabled = true;
+  checkForUpdates.disabled = true;
+  updateResult.textContent = `Preparing rollback to USA ${version}…`;
+  try {
+    const status = await request("/api/update/rollback", { method: "POST" });
+    updateResult.textContent = status.message || `Rolling back to USA ${version}…`;
+    await monitorUpdateInstallation();
+  } catch (error) {
+    updateResult.textContent = error.message;
+    rollbackUpdate.disabled = false;
     installUpdate.disabled = false;
     checkForUpdates.disabled = false;
   }
@@ -2155,11 +2328,17 @@ async function refreshWifiStatus() {
   try {
     const body = await request("/api/system/wifi");
     wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home WiFi";
+    if (wifiSummary) wifiSummary.textContent = body.mode === "hotspot" ? "Setup hotspot active" : "Connected to home WiFi";
+    if (wifiSettingsDetails && body.mode !== "hotspot" && !wifiSettingsDetails.dataset.userOpened) wifiSettingsDetails.open = false;
     if (body.last_result?.message) setupWifiResult.textContent = body.last_result.message;
   } catch {
     wifiModeStatus.textContent = "image only";
   }
 }
+
+[skellyConnectionsDetails, wifiSettingsDetails].filter(Boolean).forEach((details) => {
+  details.addEventListener("toggle", () => { if (details.open) details.dataset.userOpened = "true"; });
+});
 
 async function refreshOnboarding() {
   const body = await request("/api/onboarding/status");

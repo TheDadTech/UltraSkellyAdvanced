@@ -34,6 +34,8 @@ from .credentials import (
     ElevenLabsCredentials,
     validate_groq_key,
     validate_elevenlabs_key,
+    fetch_elevenlabs_account,
+    fetch_groq_quota,
 )
 from .diagnostics import collect_diagnostics
 from .hardware import (
@@ -304,6 +306,27 @@ def create_app(
             ),
         ),
     )
+    elevenlabs_cache_path = app_settings.data_dir / "elevenlabs-voices-cache.json"
+
+    def load_elevenlabs_cache() -> dict[str, object]:
+        if not elevenlabs_cache_path.exists():
+            return {"voices": [], "remaining": None, "limit": None, "remaining_percent": None}
+        try:
+            import json
+            payload = json.loads(elevenlabs_cache_path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {"voices": []}
+        except (OSError, ValueError):
+            return {"voices": [], "remaining": None, "limit": None, "remaining_percent": None}
+
+    def save_elevenlabs_cache(payload: dict[str, object]) -> None:
+        import json
+        app_settings.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = app_settings.data_dir / ".elevenlabs-voices-cache.json.tmp"
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(elevenlabs_cache_path)
+        elevenlabs_cache_path.chmod(0o600)
+
     operation_store = OperationSettingsStore(app_settings.data_dir)
     onboarding = OnboardingStore(
         app_settings.data_dir,
@@ -797,6 +820,7 @@ def create_app(
         if gesture != "laugh":
             return await _run_dac_gesture(gesture)
 
+        settings = provider_store.load()
         media = hardware.media_status()
         files = media.get("files", [])
         laugh_file = next(
@@ -808,21 +832,29 @@ def create_app(
             ),
             None,
         )
-        dac_task = (
-            asyncio.create_task(_run_dac_gesture("laugh"))
-            if laugh_file is not None and dac.snapshot().armed
-            else None
-        )
+        dac_task = asyncio.create_task(_run_dac_gesture("laugh")) if dac.snapshot().armed else None
         audio_result: dict[str, object]
         try:
-            if laugh_file is not None:
+            if settings.voice_provider != "local":
+                try:
+                    audio_result = await speak_selected("Ha! Ha! Ha! Ha!", allow_fallback=False)
+                    audio_result["source"] = f"cloud_{settings.voice_provider}"
+                except SpeechUnavailable:
+                    if laugh_file is not None:
+                        await hardware.play_media(int(laugh_file["serial"]), True)
+                        audio_result = {"source": "skelly_media", "name": str(laugh_file.get("name") or "Laugh")}
+                    else:
+                        apply_local_voice_settings(settings)
+                        audio_result = await local_speech.speak("Ha! Ha! Ha! Ha!", dac)
+                        audio_result["source"] = "offline_local"
+            elif laugh_file is not None:
                 await hardware.play_media(int(laugh_file["serial"]), True)
                 audio_result = {
                     "source": "skelly_media",
                     "name": str(laugh_file.get("name") or "Laugh"),
                 }
             else:
-                apply_local_voice_settings(provider_store.load())
+                apply_local_voice_settings(settings)
                 audio_result = await local_speech.speak("Ha! Ha! Ha! Ha!", dac)
                 audio_result["source"] = "offline_local"
             if dac_task is not None:
@@ -1099,6 +1131,7 @@ def create_app(
             "release_notes_url": release_notes_url,
             "installable": bool(available and installable),
             "installation": updates.status(),
+            "rollback": updates.rollback_status(current_version=__version__),
             "message": message
             or (
                 "USA release channel ready. Check for updates when this Pi is online."
@@ -1165,6 +1198,14 @@ def create_app(
             raise HTTPException(status_code=409, detail="This Pi is already up to date")
         try:
             return await updates.stage_and_start(manifest, current_version=__version__)
+        except UpdateError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/update/rollback")
+    async def rollback_update(request: Request) -> dict[str, object]:
+        require_local_setup(request)
+        try:
+            return updates.start_rollback(current_version=__version__)
         except UpdateError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1332,6 +1373,30 @@ def create_app(
     @app.get("/api/setup/elevenlabs/status")
     async def elevenlabs_status() -> dict[str, object]:
         return credential_store.status().to_dict()
+
+    @app.get("/api/providers/elevenlabs/account")
+    async def elevenlabs_account() -> dict[str, object]:
+        credentials = credential_store.load()
+        cached = load_elevenlabs_cache()
+        if credentials.api_key is None:
+            return {**cached, "available": False, "cached": bool(cached.get("voices")), "error": "ElevenLabs key not saved"}
+        try:
+            payload = await fetch_elevenlabs_account(credentials.api_key)
+            save_elevenlabs_cache(payload)
+            return {**payload, "available": True, "cached": False}
+        except CredentialValidationError as exc:
+            return {**cached, "available": False, "cached": bool(cached.get("voices")), "error": str(exc)}
+
+    @app.get("/api/providers/groq/quota")
+    async def groq_quota() -> dict[str, object]:
+        credentials = credential_store.load()
+        if credentials.groq_api_key is None:
+            return {"limit": None, "remaining": None, "remaining_percent": None, "available": False, "error": "Groq key not saved"}
+        try:
+            payload = await fetch_groq_quota(credentials.groq_api_key)
+            return {**payload, "available": True}
+        except CredentialValidationError as exc:
+            return {"limit": None, "remaining": None, "remaining_percent": None, "available": False, "error": str(exc)}
 
     @app.post("/api/setup/elevenlabs")
     async def configure_elevenlabs(

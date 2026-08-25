@@ -149,3 +149,39 @@ async def test_bad_checksum_never_starts_helper(
             },
             current_version="0.25.0",
         )
+
+
+def test_rollback_status_requires_matching_installed_version(tmp_path: Path) -> None:
+    manager = UpdateManager(tmp_path / "data", tmp_path / "helper")
+    manager.data_dir.mkdir(parents=True)
+    manager.rollback_path.write_text(
+        '{"available":true,"previous_version":"0.25.4","installed_version":"0.25.5"}',
+        encoding="utf-8",
+    )
+
+    assert manager.rollback_status(current_version="0.25.5") == {
+        "available": True,
+        "previous_version": "0.25.4",
+    }
+    assert manager.rollback_status(current_version="0.25.6")["available"] is False
+
+
+def test_manual_rollback_starts_allowlisted_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    helper_calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        helper_calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("skelly_ai.updates.subprocess.run", fake_run)
+    manager = UpdateManager(tmp_path / "data", tmp_path / "helper")
+    manager.data_dir.mkdir(parents=True)
+    manager.rollback_path.write_text(
+        '{"available":true,"previous_version":"0.25.4","installed_version":"0.25.5"}',
+        encoding="utf-8",
+    )
+
+    status = manager.start_rollback(current_version="0.25.5")
+
+    assert status["state"] == "rolling_back"
+    assert helper_calls == [["sudo", "-n", str(tmp_path / "helper"), "update-rollback", "0.25.5"]]

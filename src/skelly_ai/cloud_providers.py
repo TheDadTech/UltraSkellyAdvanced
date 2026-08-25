@@ -24,6 +24,20 @@ class CloudSpeechUnavailable(RuntimeError):
     pass
 
 
+def _groq_rate_limit_headers(response: httpx.Response) -> dict[str, int | None]:
+    def number(name: str) -> int | None:
+        raw = response.headers.get(name)
+        try:
+            return int(raw) if raw is not None else None
+        except ValueError:
+            return None
+
+    return {
+        "limit_requests": number("x-ratelimit-limit-requests"),
+        "remaining_requests": number("x-ratelimit-remaining-requests"),
+    }
+
+
 def _normalized_choice(value: object) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value).casefold()).strip("_")
     return normalized.removesuffix("_eyes").removesuffix("_eye")
@@ -228,6 +242,10 @@ class GroqVoice:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._transport = transport
+        self._rate_limit: dict[str, int | None] = {"limit_requests": None, "remaining_requests": None}
+
+    def rate_limit_status(self) -> dict[str, int | None]:
+        return dict(self._rate_limit)
 
     async def generate(
         self,
@@ -262,6 +280,7 @@ class GroqVoice:
                         "response_format": "wav",
                     },
                 )
+                self._rate_limit = _groq_rate_limit_headers(response)
                 response.raise_for_status()
                 return response.content
         except httpx.HTTPStatusError as exc:

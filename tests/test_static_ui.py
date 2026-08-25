@@ -86,8 +86,9 @@ def test_provider_controls_and_safe_head_axis_minimums_are_present() -> None:
     assert 'href="https://try.elevenlabs.io/38yj9peuwrb7"' in html
     assert "Required API key permissions" in html
     assert "<strong>Text to Speech:</strong> Access" in html
-    assert "<strong>Voices:</strong> Write" in html
+    assert "<strong>Voices:</strong> Read" in html
     assert "<strong>Models:</strong> Access" in html
+    assert "<strong>User:</strong> Access" in html
     assert "project affiliate link" not in html
     assert 'href="https://elevenlabs.io/affiliates"' not in html
     assert "Preview selected voice only" in html
@@ -128,6 +129,7 @@ def test_guided_operation_interface_is_present() -> None:
         'id="software-update-section"',
         'id="check-for-updates"',
         'id="install-update"',
+        'id="rollback-update"',
         'id="advanced-bluetooth-section"',
         'id="onboarding-dialog"',
         'id="ssh-access-section"',
@@ -144,6 +146,7 @@ def test_guided_operation_interface_is_present() -> None:
     assert 'if (selectedMode === "classic") await refreshMediaFromSkelly()' in script
     assert 'request(check ? "/api/update/check" : "/api/update/status"' in script
     assert 'request("/api/update/install", { method: "POST" })' in script
+    assert 'request("/api/update/rollback", { method: "POST" })' in script
     assert 'request("/api/update/install-status")' in script
     assert "Skelly ${skellyVersion} · USA ${body.version}" in script
     assert 'request("/api/onboarding/status")' in script
