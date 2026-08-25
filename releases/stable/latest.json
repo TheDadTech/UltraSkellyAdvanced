@@ -1,8 +1,8 @@
 {
-  "version": "0.25.4",
+  "version": "0.25.5",
   "channel": "stable",
-  "package_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.25.4/UltraSkellyAdvanced-0.25.4-beta.zip",
-  "sha256": "9940e83625e5948996560761ab903e5db7c0b56d90468892f6db61c7f8cd4399",
-  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.4",
-  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.4"
+  "package_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.25.5/UltraSkellyAdvanced-0.25.5-beta.zip",
+  "sha256": "08fc263c7ffbbe13a8f262941f05aa902599a693be6d2467bd1d5dc91a853b89",
+  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.5",
+  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.25.5"
 }
