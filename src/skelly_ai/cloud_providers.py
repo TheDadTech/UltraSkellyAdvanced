@@ -10,7 +10,7 @@ import httpx
 from pydantic import SecretStr, ValidationError
 
 from .brain import (
-    SYSTEM_PROMPT,
+    build_system_prompt,
     BrainReply,
     BrainResponseError,
     BrainUnavailable,
@@ -128,6 +128,10 @@ class GroqBrain:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._transport = transport
+        self._skelly_name = "Skelly"
+
+    def set_skelly_name(self, name: str) -> None:
+        self._skelly_name = name.strip() or "Skelly"
 
     def status(self, api_key: SecretStr | None) -> dict[str, object]:
         return {
@@ -148,7 +152,7 @@ class GroqBrain:
             {
                 "role": "system",
                 "content": (
-                    SYSTEM_PROMPT
+                    build_system_prompt(self._skelly_name)
                     + '\nThe exact JSON keys are "spoken_response", "eye_icon", and '
                     '"movement". eye_icon must be one of: '
                     + ", ".join(icon.value for icon in EyeIcon)

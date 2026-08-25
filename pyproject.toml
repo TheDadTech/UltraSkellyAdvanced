@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skelly-ai"
-version = "0.25.3"
+version = "0.25.4"
 description = "Self-hosted Raspberry Pi controller for an interactive Ultra Skelly or Lethal Lily"
 readme = "README.md"
 requires-python = ">=3.11"

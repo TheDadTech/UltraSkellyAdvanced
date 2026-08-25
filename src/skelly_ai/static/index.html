@@ -129,6 +129,7 @@
           <span id="profile-state" class="driver-badge neutral">checking</span>
         </div>
         <form id="operation-settings-form" class="operation-settings-form">
+          <label><span>Skelly Name</span><input id="skelly-name" type="text" minlength="1" maxlength="30" value="Skelly" autocomplete="off"><small>The name the AI uses for itself during conversations.</small></label>
           <label><span>Hardware setup</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label>
           <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">Classic Mode</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
           <label class="check-setting"><input id="auto-start-operation" type="checkbox"><span><strong>Start automatically when this Pi boots</strong><small>Uses the saved default mode. Remain idle disables automatic startup.</small></span></label>

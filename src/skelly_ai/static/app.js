@@ -17,6 +17,7 @@ const statusLights = {
   fpp: document.querySelector("#fpp-status-light"),
 };
 const operationSettingsForm = document.querySelector("#operation-settings-form");
+const skellyName = document.querySelector("#skelly-name");
 const hardwareProfile = document.querySelector("#hardware-profile");
 const defaultOperationMode = document.querySelector("#default-operation-mode");
 const autoStartOperation = document.querySelector("#auto-start-operation");
@@ -348,6 +349,7 @@ function renderOperation(operation) {
   const settings = operation.settings;
   currentOperationSettings = settings;
   currentOperationMode = operation.active_mode;
+  if (document.activeElement !== skellyName) skellyName.value = settings.skelly_name || "Skelly";
   if (document.activeElement !== hardwareProfile) hardwareProfile.value = settings.hardware_profile;
   if (document.activeElement !== defaultOperationMode) defaultOperationMode.value = settings.default_mode;
   autoStartOperation.checked = settings.auto_start === true && settings.default_mode !== "idle";
@@ -656,7 +658,7 @@ function renderPerceptionStatus(body) {
       if (event.ai_response) {
         const reply = document.createElement("div");
         reply.className = "ai-event-response";
-        reply.textContent = `Skelly: ${event.ai_response}`;
+        reply.textContent = `${currentOperationSettings?.skelly_name || "Skelly"}: ${event.ai_response}`;
         const actions = document.createElement("small");
         actions.className = "muted";
         const voice = event.speech_spoken ? "spoken through Skelly" : "text only";
@@ -819,6 +821,7 @@ function renderManualResult(body) {
 
 function operationSettingsPayload() {
   return {
+    skelly_name: skellyName.value.trim() || "Skelly",
     hardware_profile: hardwareProfile.value,
     default_mode: defaultOperationMode.value,
     auto_start: autoStartOperation.checked && defaultOperationMode.value !== "idle",

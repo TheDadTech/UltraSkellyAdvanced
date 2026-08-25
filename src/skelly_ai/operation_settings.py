@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class OperationSettings(BaseModel):
@@ -11,6 +11,7 @@ class OperationSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    skelly_name: str = Field(default="Skelly", min_length=1, max_length=30)
     hardware_profile: Literal["stock", "dac"] = "stock"
     default_mode: Literal["classic", "ai", "manual", "idle"] = "ai"
     auto_start: bool = False
@@ -21,6 +22,12 @@ class OperationSettings(BaseModel):
     allow_fpp_override: bool = False
     manual_microphone_enabled: bool = True
     manual_camera_enabled: bool = True
+
+    @field_validator("skelly_name", mode="before")
+    @classmethod
+    def normalize_skelly_name(cls, value: object) -> str:
+        name = str(value or "").strip()
+        return name or "Skelly"
 
     @model_validator(mode="after")
     def disable_fpp_override_without_dac(self) -> "OperationSettings":

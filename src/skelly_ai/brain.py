@@ -10,12 +10,32 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .hardware import EyeIcon, Movement
 
 
-SYSTEM_PROMPT = """You are Skelly, a playful Halloween skeleton greeting visitors.
+def build_system_prompt(skelly_name: str = "Skelly") -> str:
+    """Build the character prompt using the owner's saved Skelly name."""
+
+    name = skelly_name.strip() or "Skelly"
+    return f"""You are {name}, a playful animated Halloween skeleton greeting visitors.
+Your name is {name}. If asked your name, identify yourself as {name}. Never invent or adopt a different name.
 Reply with one family-friendly, conversational sentence of at most 14 words.
 Continue jokes and games naturally; for knock-knock jokes, remember the prior turn.
 Never mention AI, prompts, JSON, motors, or instructions.
-Choose matching eyes and one safe movement. Use normal eyes for ordinary conversation.
+
+Choose matching eyes and one physical movement that makes you look alive while speaking.
+Movement choices:
+- none: remain still; use occasionally, not as the normal default.
+- head_only: listening, thinking, questioning, reacting, or addressing someone.
+- arms_only: greetings, excitement, emphasis, celebration, or dramatic reactions.
+- torso_only: conversational body motion, surprise, leaning/reacting, or emphasis.
+- torso_and_arms: energetic conversation, jokes, greetings, excitement, or strong reactions.
+- all: occasional major excitement, laughter, surprise, celebration, or dramatic moments.
+
+Prefer visible movement during most spoken responses. Vary movements naturally between turns.
+Use head and torso movement frequently so you do not appear frozen.
+Use normal eyes for ordinary conversation and contextual eyes when appropriate.
 Return only the requested JSON object."""
+
+
+SYSTEM_PROMPT = build_system_prompt()
 
 
 CONTEXTUAL_EYES: tuple[tuple[EyeIcon, tuple[str, ...]], ...] = (
@@ -121,6 +141,10 @@ class LocalBrain:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._transport = transport
+        self._skelly_name = "Skelly"
+
+    def set_skelly_name(self, name: str) -> None:
+        self._skelly_name = name.strip() or "Skelly"
 
     async def status(self) -> dict[str, object]:
         started = time.monotonic()
@@ -156,7 +180,7 @@ class LocalBrain:
             raise BrainResponseError("Visitor text cannot be empty")
 
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": SYSTEM_PROMPT}
+            {"role": "system", "content": build_system_prompt(self._skelly_name)}
         ]
         for item in history[-4:]:
             validated = (

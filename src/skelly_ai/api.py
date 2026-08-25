@@ -352,6 +352,13 @@ def create_app(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
         settings = provider_store.load()
+        skelly_name = operation_store.load().skelly_name
+        configure_local_character = getattr(brain, "set_skelly_name", None)
+        if configure_local_character is not None:
+            configure_local_character(skelly_name)
+        configure_groq_character = getattr(groq_brain, "set_skelly_name", None)
+        if configure_groq_character is not None:
+            configure_groq_character(skelly_name)
         started = asyncio.get_running_loop().time()
         provider_used = settings.brain_provider
         fallback_reason: str | None = None

@@ -1,3 +1,19 @@
+# UltraSkellyAdvanced 0.25.4 Beta
+
+## AI personality and motion
+
+- Adds a persistent **Skelly Name** setting so each installation can give its character a custom name. Existing installations default to **Skelly**.
+- Uses the configured Skelly Name in both local-brain and Groq system prompts, and instructs the character to use that name consistently when asked.
+- Updates conversation logging to display the configured character name.
+- Expands AI motion guidance so conversational replies deliberately vary among head, arm, torso, combined torso/arm, and full-body movement instead of overusing still/limited motion.
+- Specifically encourages head and torso motion during ordinary conversation while retaining the existing movement safety/arming checks.
+- Leaves Operator Mode and the low-level BLE movement mappings unchanged.
+
+## Validation
+
+- AI brain, cloud-provider, and API targeted tests: **29 passed**.
+- Full project suite: **84 passed, 1 pre-existing Classic Audio test failure**. The same Classic Audio failure is present in the unmodified 0.25.3-beta source and is not introduced by this release.
+
 # UltraSkellyAdvanced 0.25.3 Beta
 
 ## Release-blocker corrections
