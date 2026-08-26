@@ -1,4 +1,4 @@
-# UltraSkellyAdvanced 0.25.5 beta quick start
+# UltraSkellyAdvanced 0.25.4 beta quick start
 
 ## What you need
 

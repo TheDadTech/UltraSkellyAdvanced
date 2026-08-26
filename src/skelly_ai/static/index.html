@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.25.5">
+    <link rel="stylesheet" href="/static/styles.css?v=0.25.6">
   </head>
   <body>
     <main>
@@ -311,6 +311,25 @@
             <div><span class="label">Confirmation</span><strong id="perception-confirmation">0 / 2</strong></div>
             <div><span class="label">Turns / events</span><strong id="perception-event-count">0 / 0</strong></div>
           </div>
+          <div class="ai-trigger-strip" aria-label="AI mode trigger sources">
+            <span class="label">Trigger on</span>
+            <label class="trigger-choice"><input id="trigger-on-audio" type="checkbox" checked><span class="trigger-live-dot" id="trigger-audio-dot" aria-hidden="true"></span><strong>Audio</strong></label>
+            <label class="trigger-choice"><input id="trigger-on-face" type="checkbox" checked><span class="trigger-live-dot" id="trigger-face-dot" aria-hidden="true"></span><strong>Face</strong></label>
+            <label class="trigger-choice"><input id="trigger-on-motion" type="checkbox" checked><span class="trigger-live-dot" id="trigger-motion-dot" aria-hidden="true"></span><strong>Motion</strong></label>
+            <small id="trigger-source-result" class="muted" aria-live="polite"></small>
+          </div>
+          <details class="provider-details visitor-engagement-details">
+            <summary>Lure Visitors</summary>
+            <div class="provider-control-grid">
+              <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Media — Classic clips</option><option value="ai">AI — generated line</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
+              <label><span>Delay before first lure <output id="nag-delay-value">5s</output></span><input id="nag-delay" type="range" min="2" max="30" step="1" value="5"></label>
+              <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
+              <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
+            </div>
+            <label class="check-setting"><input id="nag-require-presence" type="checkbox" checked><span><strong>Require visitor presence</strong><small class="help-copy">Luring stops as soon as the visitor session ends.</small></span></label>
+            <div class="controls"><button id="save-visitor-engagement" type="button" class="secondary">Save lure settings</button></div>
+            <p id="visitor-engagement-result" class="result" aria-live="polite"></p>
+          </details>
           <div class="controls">
             <button id="start-perception" type="button">Start AI Mode</button>
             <button id="stop-perception" type="button" class="warning" disabled>Stop AI Mode</button>
@@ -353,12 +372,19 @@
               </div>
               <span id="microphone-availability" class="driver-badge neutral">unknown</span>
             </div>
+            <label class="listening-sensitivity-control">
+              <span><strong>Listening sensitivity</strong><output id="listening-sensitivity-value">45</output></span>
+              <input id="listening-sensitivity" type="range" min="1" max="100" step="1" value="45">
+              <small class="help-copy">Higher values make normal or quieter speech easier to trigger. Raise it until normal speech reliably triggers, then back it down if room noise causes false triggers.</small>
+            </label>
             <div class="sensor-readout microphone-readout">
               <div><span class="label">Voice</span><strong id="microphone-voice">not tested</strong></div>
               <div><span class="label">Level</span><strong id="microphone-level">—</strong></div>
-              <div><span class="label">Peak</span><strong id="microphone-peak">0%</strong></div>
+              <div><span class="label">Trigger</span><strong id="microphone-threshold">—</strong></div>
+              <div><span class="label">Would trigger</span><strong id="microphone-would-trigger">NOT TESTED</strong></div>
             </div>
-            <div class="level-meter" aria-hidden="true"><span id="microphone-meter"></span></div>
+            <div class="level-meter microphone-db-meter" aria-hidden="true"><span id="microphone-meter"></span><i id="microphone-threshold-marker"></i></div>
+            <div class="meter-scale help-copy"><span>-60 dB</span><span>0 dB</span></div>
             <div class="controls">
               <button id="sample-microphone" type="button">Record one-second sample</button>
               <button id="transcribe-microphone" type="button" class="secondary">Record 5s + transcribe offline</button>
@@ -729,9 +755,10 @@
           <div class="section-heading"><div><p class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
           <input id="media-edit-serial" type="hidden">
           <div class="preset-grid">
-            <label>Movement<select id="media-edit-action"><option value="0">None</option><option value="1">Head</option><option value="2">Arm</option><option value="4">Torso</option><option value="6">Torso + arm</option><option value="255">All</option></select></label>
+            <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label></fieldset>
             <label>Eye<select id="media-edit-eye"></select></label>
           </div>
+          <label class="check-setting"><input id="media-edit-nag-response" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes this Classic clip eligible when Lure Visitors is set to Media.</small></span></label>
           <div class="light-control-grid">
             <fieldset class="light-control" data-edit-light="head"><legend>Head light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
             <fieldset class="light-control" data-edit-light="torso"><legend>Torso light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
@@ -752,6 +779,6 @@
         <pre id="diagnostics">Checks have not run yet.</pre>
       </section>
     </main>
-    <script src="/static/app.js?v=0.25.5-stage3"></script>
+    <script src="/static/app.js?v=0.25.6"></script>
   </body>
 </html>

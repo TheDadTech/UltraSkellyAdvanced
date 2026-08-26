@@ -1,42 +1,40 @@
-# UltraSkellyAdvanced 0.25.5 Beta
+## 0.25.6 Beta — Interaction tuning, Lure Visitors, snapshots, and multi-trigger AI
 
-## Interface and setup cleanup
+- Adds persistent Listening Sensitivity tuning with live microphone threshold diagnostics and a clear would-trigger indicator.
+- Improves Automatic AI Mode so Audio, Face, and Motion can be enabled independently as visitor triggers directly from the Operate tab.
+- Audio can acquire a visitor without requiring camera motion; active conversations tolerate temporary visual misses before confirming departure.
+- Rebalances AI response movement toward natural conversation: head movement is favored heavily, torso movement is secondary, and noisy arm motion is less frequent.
+- Reduces repetitive self-introductions while preserving the configured Skelly name when it is relevant or directly requested.
+- Adds Lure Visitors behavior with Disabled, Media, and AI modes, delay, cooldown, visitor-presence gating, and a 1–5 max-lures control.
+- Classic media presets can be flagged for Lure responses and now use independent Head, Arm, Torso, and All movement controls instead of fixed movement combinations.
+- Captures a local camera snapshot when visitor speech is accepted, retains the newest 100 images, and shows clickable thumbnails alongside interaction events.
+- Keeps all 0.25.5 voice-provider, ElevenLabs voice-library/remaining-credit, Help Mode, updater, and UI improvements.
 
-- Adds a persistent **Help Mode** toggle under Diagnostics. Help Mode can hide explanatory setup text while leaving live status, warnings, and errors visible.
-- Makes Local, Groq, and ElevenLabs voice controls reactive to the selected voice provider so only the applicable controls are shown while inactive-provider settings remain saved.
-- Collapses configured API-key, Skelly connection, and WiFi setup areas into compact summaries while keeping them available for changes and troubleshooting.
-- Moves **Built-in Movement** into the Operator Console, removes the redundant Sensor Diagnostics `no cloud` pill, and clarifies the Standard-mode gesture capability as **No DAC · Laugh Available**.
-- Adds versioned frontend asset URLs so browsers, including mobile browsers, fetch updated JavaScript/CSS after an in-app upgrade instead of reusing stale cached assets.
+## 0.25.5 Stage 2 test checkpoint
 
-## ElevenLabs voice management
-
-- Loads the saved ElevenLabs account's available voice library into a friendly selector while retaining manual Voice ID entry as a fallback.
-- Caches the last successfully loaded ElevenLabs voice list locally so previously discovered voices remain selectable during a temporary provider outage.
-- Adds an **ElevenLabs credits remaining** meter to Voice Tuning with green/yellow/red thresholds based on remaining percentage.
-- Adds a small, non-intrusive ElevenLabs fuel indicator on Operate when ElevenLabs is the active voice provider.
-- Shows an unavailable state instead of falsely displaying zero when ElevenLabs usage cannot be read.
-- Updates restricted-key guidance to require Text to Speech Access, Voices Read, Models Access, and User Access for voice-list and remaining-credit features.
-
-## Voice and gesture behavior
-
-- Makes Operator Console **Laugh** use the active Groq or ElevenLabs cloud voice when available, while retaining stored/local audio as the offline or provider-failure fallback.
-- Keeps the full ElevenLabs usage meter on Voice Tuning and intentionally does not expose a Groq credit/quota meter.
-
-## Updater safety
-
-- Adds a manual **Roll back to previous version** option when the updater has a verified previous-version backup matching the currently running release.
-- Preserves owner configuration, credentials, WiFi settings, character preferences, and other data under `/var/lib/skelly-ai` during rollback.
-- Health-checks the restored release before declaring rollback successful.
-- Automatically restores the newer working release if the requested rollback fails its health check.
-- Does not offer rollback for stale or mismatched backup metadata.
-
-## Validation
-
-- Updater/API/UI focused suite: **47 passed**.
-- Browser JavaScript syntax validation is included in the release check after the Stage 2B test checkpoint exposed malformed frontend JavaScript.
-- Full project suite: **86 passed, 1 pre-existing Classic Audio test failure**. The same Classic Audio failure predates 0.25.5.
+- Adds ElevenLabs account voice-library selection with the selected Voice ID saved in provider settings.
+- Caches the last successfully loaded ElevenLabs voice list on the Pi for later selection if the account endpoint is temporarily unavailable.
+- Adds an ElevenLabs credits-remaining progress bar: green above 50%, yellow from 10% through 50%, red below 10%.
+- Adds a Groq daily-requests-remaining progress bar using Groq rate-limit response headers.
+- Makes Operator Console Laugh use the currently selected cloud voice when Groq or ElevenLabs is active, with stored/offline audio retained as fallback.
+- Keeps manual ElevenLabs Voice ID entry under an Advanced-style expander for voices not returned by the account library.
 
 # UltraSkellyAdvanced 0.25.4 Beta
+
+### Stage 2B UI refinement
+- Removed the Groq remaining-request meter from Voice Tuning.
+- Kept the full ElevenLabs credits-remaining meter on Voice Tuning.
+- Added a compact ElevenLabs fuel indicator to Operate when ElevenLabs is the selected voice provider.
+- The Operate indicator uses the same green/yellow/red remaining-credit thresholds without duplicating the full Voice Tuning meter.
+
+## 0.25.5 Stage 3 test checkpoint
+
+- Adds one-click manual rollback to the previous known-good USA version from Diagnostics → USA updates.
+- Rollback preserves owner settings, API credentials, WiFi configuration, media state, and other data under `/var/lib/skelly-ai`.
+- Restored versions are health-checked before rollback is declared successful.
+- If the restored version fails its health check, USA automatically returns to the newer working version.
+- Rollback is offered only when retained backup metadata matches the currently running version.
+- ElevenLabs permission guidance now reflects Stage 2 requirements: Text to Speech Access, Voices Read, Models Access, and User Access for the credit balance.
 
 ## AI personality and motion
 
@@ -150,3 +148,9 @@ Please report the Pi model/RAM, prop model, camera/microphone, Standard or
 Advanced profile, time to first response, and the exact dashboard error text.
 Never post API keys, passwords, Bluetooth snoop captures containing personal
 devices, or private network details.
+
+### Lure Visitors and interaction snapshots
+- Renames visitor attention controls to **Lure Visitors** throughout the UI.
+- Saves one local JPEG snapshot for each accepted visitor interaction/AI response.
+- Interaction event logs provide a **View snapshot** link when capture succeeds.
+- Keeps only the latest 100 interaction snapshots to cap storage use.

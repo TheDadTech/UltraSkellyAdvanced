@@ -602,3 +602,65 @@ def test_local_sensor_lab_endpoints_return_camera_and_microphone_results() -> No
     )
     assert audio_response.status_code == 200
     assert audio_response.headers["content-type"] == "audio/wav"
+
+
+def test_listening_sensitivity_persists_and_updates_microphone_threshold(tmp_path) -> None:
+    from skelly_ai.sensors import SensorLab
+    from skelly_ai.operation_settings import OperationSettingsStore
+
+    sensors = SensorLab(voice_threshold_dbfs=-38.0)
+    app = create_app(Settings(data_dir=tmp_path), sensor_lab=sensors)
+
+    with TestClient(app) as client:
+        initial = client.get("/api/operation/status")
+        settings = initial.json()["settings"]
+        settings["listening_sensitivity"] = 80
+        saved = client.post("/api/operation/settings", json=settings)
+        sensor_status = client.get("/api/sensors/status")
+
+    assert saved.status_code == 200
+    assert saved.json()["listening_sensitivity"] == 80
+    assert sensor_status.json()["microphone"]["voice_threshold_dbfs"] < -45.0
+    assert OperationSettingsStore(tmp_path).load().listening_sensitivity == 80
+
+
+def test_ai_response_movement_weighting_boundaries() -> None:
+    from skelly_ai.api import choose_ai_response_movement
+    from skelly_ai.hardware import Movement
+
+    assert choose_ai_response_movement(0.00) == Movement.HEAD_ONLY
+    assert choose_ai_response_movement(0.49) == Movement.HEAD_ONLY
+    assert choose_ai_response_movement(0.50) == Movement.HEAD_AND_TORSO
+    assert choose_ai_response_movement(0.69) == Movement.HEAD_AND_TORSO
+    assert choose_ai_response_movement(0.70) == Movement.TORSO_AND_ARMS
+    assert choose_ai_response_movement(0.79) == Movement.TORSO_AND_ARMS
+    assert choose_ai_response_movement(0.80) == Movement.ALL
+    assert choose_ai_response_movement(0.99) == Movement.ALL
+
+
+def test_visitor_nag_settings_persist(tmp_path) -> None:
+    from skelly_ai.operation_settings import OperationSettingsStore
+
+    app = create_app(Settings(data_dir=tmp_path))
+    with TestClient(app) as client:
+        settings = client.get("/api/operation/status").json()["settings"]
+        settings.update(
+            {
+                "nag_mode": "media",
+                "nag_delay_seconds": 7,
+                "nag_cooldown_seconds": 45,
+                "nag_max_per_visitor": 4,
+                "nag_require_presence": True,
+            }
+        )
+        saved = client.post("/api/operation/settings", json=settings)
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["nag_mode"] == "media"
+    assert body["nag_delay_seconds"] == 7
+    assert body["nag_cooldown_seconds"] == 45
+    assert body["nag_max_per_visitor"] == 4
+    persisted = OperationSettingsStore(tmp_path).load()
+    assert persisted.nag_mode == "media"
+    assert persisted.nag_max_per_visitor == 4

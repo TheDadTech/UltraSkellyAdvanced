@@ -15,6 +15,9 @@ def _now() -> str:
 Responder = Callable[[str, list[dict[str, str]]], Awaitable[dict[str, object]]]
 SessionEnded = Callable[[], Awaitable[None]]
 PhaseCue = Callable[[str], Awaitable[None]]
+Nagger = Callable[[int, float, float | None], Awaitable[dict[str, object] | None]]
+Snapshotter = Callable[[int, int, int], Awaitable[str | None]]
+TriggerSettings = Callable[[], dict[str, bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,7 @@ class PerceptionEvent:
     speech_spoken: bool = False
     speech_error: str | None = None
     ai_error: str | None = None
+    snapshot_url: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -62,6 +66,9 @@ class PerceptionEngine:
         responder: Responder | None = None,
         session_ended: SessionEnded | None = None,
         phase_cue: PhaseCue | None = None,
+        nagger: Nagger | None = None,
+        snapshotter: Snapshotter | None = None,
+        trigger_settings: TriggerSettings | None = None,
         camera_interval_seconds: float = 2.5,
         presence_confirmations: int = 2,
         clear_confirmations: int = 4,
@@ -77,6 +84,9 @@ class PerceptionEngine:
         self._responder = responder
         self._session_ended = session_ended
         self._phase_cue = phase_cue
+        self._nagger = nagger
+        self._snapshotter = snapshotter
+        self._trigger_settings = trigger_settings
         self._camera_interval_seconds = camera_interval_seconds
         self._presence_confirmations = presence_confirmations
         self._clear_confirmations = clear_confirmations
@@ -103,6 +113,10 @@ class PerceptionEngine:
         self._started_at: str | None = None
         self._next_event_id = 1
         self._next_listen_at = 0.0
+        self._session_started_at = 0.0
+        self._last_nag_at = 0.0
+        self._nag_count = 0
+        self._trigger_states = {"audio": False, "face": False, "motion": False}
 
     def status(self) -> dict[str, object]:
         events = [event.to_dict() for event in reversed(self._events)]
@@ -125,6 +139,8 @@ class PerceptionEngine:
             "started_at": self._started_at,
             "local_only": True,
             "ai_enabled": self._responder is not None,
+            "nag_count": self._nag_count,
+            "trigger_states": dict(self._trigger_states),
         }
 
     async def start(self) -> dict[str, object]:
@@ -185,6 +201,9 @@ class PerceptionEngine:
         self._history.clear()
         self._presence_streak = 0
         self._clear_streak = 0
+        self._session_started_at = 0.0
+        self._last_nag_at = 0.0
+        self._nag_count = 0
 
     def _begin_session(self) -> None:
         self._session_id += 1
@@ -193,6 +212,9 @@ class PerceptionEngine:
         self._turn_count = 0
         self._history.clear()
         self._clear_streak = 0
+        self._session_started_at = time.monotonic()
+        self._last_nag_at = 0.0
+        self._nag_count = 0
 
     async def _notify_session_ended(self) -> None:
         if self._session_ended is None:
@@ -210,6 +232,26 @@ class PerceptionEngine:
         except RuntimeError as exc:
             self._last_error = str(exc)
 
+
+    async def _maybe_nag(self) -> None:
+        if self._nagger is None or not self._session_active:
+            return
+        now = time.monotonic()
+        try:
+            result = await self._nagger(
+                self._nag_count,
+                max(0.0, now - self._session_started_at),
+                (None if self._last_nag_at <= 0 else max(0.0, now - self._last_nag_at)),
+            )
+        except RuntimeError as exc:
+            self._last_error = str(exc)
+            return
+        if not result or not bool(result.get("performed")):
+            return
+        self._nag_count += 1
+        self._last_nag_at = now
+        self._phase = "nagging"
+
     async def _run(self) -> None:
         try:
             while self._enabled:
@@ -224,8 +266,45 @@ class PerceptionEngine:
                 try:
                     self._phase = "scanning"
                     await self._sensors.analyze_camera()
-                    camera = self._sensors.status()["camera"]
-                    presence = bool(camera["presence_detected"])
+                    sensor_status = self._sensors.status()
+                    camera = sensor_status["camera"]
+                    trigger_settings = (
+                        self._trigger_settings()
+                        if self._trigger_settings is not None
+                        else {"audio": False, "face": True, "motion": False}
+                    )
+                    face_active = bool(camera.get("face_count"))
+                    motion_active = float(camera.get("motion_percent") or 0.0) >= self._departure_motion_threshold
+                    audio_active = False
+                    if trigger_settings.get("audio", False):
+                        if self._session_active:
+                            # Do not add an extra one-second microphone sample before every
+                            # conversation turn. Accepted speech below resets departure
+                            # confirmation, so Audio can keep an active session alive without
+                            # making the green-listening cue feel sluggish.
+                            microphone = sensor_status.get("microphone", {})
+                            audio_active = bool(
+                                isinstance(microphone, dict) and microphone.get("voice_active")
+                            )
+                        else:
+                            try:
+                                microphone_sample = await self._sensors.sample_microphone(1)
+                                microphone = microphone_sample.get("microphone", {})
+                                audio_active = bool(
+                                    isinstance(microphone, dict) and microphone.get("voice_active")
+                                )
+                            except SensorUnavailable:
+                                audio_active = False
+                    self._trigger_states = {
+                        "audio": audio_active,
+                        "face": face_active,
+                        "motion": motion_active,
+                    }
+                    presence = bool(
+                        (trigger_settings.get("audio", False) and audio_active)
+                        or (trigger_settings.get("face", False) and face_active)
+                        or (trigger_settings.get("motion", False) and motion_active)
+                    )
 
                     if not presence:
                         self._presence_streak = 0
@@ -236,17 +315,25 @@ class PerceptionEngine:
                                 await self._notify_session_ended()
                                 self._reset_session()
                                 self._phase = "rearmed"
+                                await asyncio.sleep(self._camera_interval_seconds)
+                                continue
+                            # Do not stop listening merely because one camera frame
+                            # missed a stationary visitor. The active conversation
+                            # remains present until departure is fully confirmed.
                         else:
                             self._clear_streak = 0
-                        await asyncio.sleep(self._camera_interval_seconds)
-                        continue
-
-                    self._clear_streak = 0
+                            await asyncio.sleep(self._camera_interval_seconds)
+                            continue
+                    else:
+                        self._clear_streak = 0
                     if not self._session_active:
-                        self._presence_streak = min(
-                            self._presence_streak + 1,
-                            self._presence_confirmations,
-                        )
+                        if trigger_settings.get("audio", False) and audio_active:
+                            self._presence_streak = self._presence_confirmations
+                        else:
+                            self._presence_streak = min(
+                                self._presence_streak + 1,
+                                self._presence_confirmations,
+                            )
                         if self._presence_streak < self._presence_confirmations:
                             self._phase = "confirming_presence"
                             await asyncio.sleep(self._camera_interval_seconds)
@@ -284,12 +371,22 @@ class PerceptionEngine:
                     if not microphone.get("voice_active") or not transcript:
                         self._phase = "no_speech"
                         await self._notify_phase_cue("no_speech")
+                        await self._maybe_nag()
                         self._next_listen_at = (
                             time.monotonic() + self._listen_retry_seconds
                         )
                         await asyncio.sleep(self._camera_interval_seconds)
                         continue
 
+                    self._clear_streak = 0
+                    snapshot_url: str | None = None
+                    if self._snapshotter is not None:
+                        try:
+                            snapshot_url = await self._snapshotter(
+                                self._next_event_id, self._session_id, self._turn_count + 1
+                            )
+                        except RuntimeError:
+                            snapshot_url = None
                     ai_result: dict[str, object] = {}
                     ai_error: str | None = None
                     response_started = time.monotonic()
@@ -383,6 +480,7 @@ class PerceptionEngine:
                             else None
                         ),
                         ai_error=ai_error,
+                        snapshot_url=snapshot_url,
                     )
                     self._next_event_id += 1
                     self._events.append(event)

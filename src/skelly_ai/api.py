@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import re
+import random
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -46,7 +47,12 @@ from .hardware import (
     SimulatedSkelly,
 )
 from .perception import PerceptionEngine
-from .operation_settings import OperationSettings, OperationSettingsStore
+from .operation_settings import (
+    OperationSettings,
+    OperationSettingsStore,
+    dbfs_to_listening_sensitivity,
+    listening_sensitivity_to_dbfs,
+)
 from .onboarding import OnboardingStore
 from .provider_settings import ProviderSettings, ProviderSettingsStore
 from .sacn import DacUnavailable, SacnDacController
@@ -188,6 +194,7 @@ class MediaEditRequest(BaseModel):
     eye: int = Field(default=1, ge=1, le=18)
     head_light: LightSettings = Field(default_factory=LightSettings)
     torso_light: LightSettings = Field(default_factory=LightSettings)
+    nag_response: bool = False
 
 
 class MediaEnabledRequest(BaseModel):
@@ -222,6 +229,23 @@ def _listening_head_pose(
         "yaw": max(1, min(255, yaw_center + yaw_offset)),
         "tilt": max(1, min(255, tilt_center + tilt_offset)),
     }
+
+
+def choose_ai_response_movement(roll: float | None = None) -> Movement:
+    """Choose response motion with 90% head, 50% torso, and 30% arm usage.
+
+    The supported stock movement groups are weighted so those marginal rates
+    hold over time while keeping the loud arms comparatively rare.
+    """
+
+    value = random.random() if roll is None else max(0.0, min(0.999999, roll))
+    if value < 0.50:
+        return Movement.HEAD_ONLY
+    if value < 0.70:
+        return Movement.HEAD_AND_TORSO
+    if value < 0.80:
+        return Movement.TORSO_AND_ARMS
+    return Movement.ALL
 
 
 def create_app(
@@ -327,7 +351,50 @@ def create_app(
         temporary.replace(elevenlabs_cache_path)
         elevenlabs_cache_path.chmod(0o600)
 
-    operation_store = OperationSettingsStore(app_settings.data_dir)
+    operation_store = OperationSettingsStore(
+        app_settings.data_dir,
+        defaults=OperationSettings(
+            listening_sensitivity=dbfs_to_listening_sensitivity(
+                app_settings.voice_threshold_dbfs
+            )
+        ),
+    )
+    nag_media_path = app_settings.data_dir / "nag-media.json"
+
+    def load_nag_media_serials() -> set[int]:
+        if not nag_media_path.exists():
+            return set()
+        try:
+            import json
+            payload = json.loads(nag_media_path.read_text(encoding="utf-8"))
+            values = payload.get("serials", []) if isinstance(payload, dict) else []
+            return {int(value) for value in values}
+        except (OSError, ValueError, TypeError):
+            return set()
+
+    def save_nag_media_serials(serials: set[int]) -> None:
+        import json
+        app_settings.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = app_settings.data_dir / ".nag-media.json.tmp"
+        temporary.write_text(
+            json.dumps({"serials": sorted(serials)}, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        temporary.replace(nag_media_path)
+        nag_media_path.chmod(0o600)
+
+    def enrich_media_status(status: dict[str, object]) -> dict[str, object]:
+        serials = load_nag_media_serials()
+        result = dict(status)
+        files = []
+        for item in status.get("files", []):
+            if isinstance(item, dict):
+                entry = dict(item)
+                entry["nag_response"] = int(entry.get("serial", -1)) in serials
+                files.append(entry)
+        result["files"] = files
+        return result
     onboarding = OnboardingStore(
         app_settings.data_dir,
         app_settings.system_helper,
@@ -335,6 +402,9 @@ def create_app(
     )
     updates = UpdateManager(app_settings.data_dir, app_settings.system_helper)
     saved_operation_settings = operation_store.load()
+    sensors.voice_threshold_dbfs = listening_sensitivity_to_dbfs(
+        saved_operation_settings.listening_sensitivity
+    )
     if not saved_operation_settings.device_configured:
         clear_hardware_target = getattr(hardware, "clear_saved_target", None)
         if clear_hardware_target is not None:
@@ -371,6 +441,7 @@ def create_app(
 
     apply_local_voice_settings(provider_store.load())
 
+
     async def respond_locally(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
@@ -405,9 +476,11 @@ def create_app(
             asyncio.get_running_loop().time() - started, 2
         )
         await hardware.set_eye(reply.eye_icon)
+        selected_movement = choose_ai_response_movement()
         if hardware.snapshot().movement_armed:
-            await hardware.set_movement(reply.movement)
+            await hardware.set_movement(selected_movement)
         result = reply.to_dict()
+        result["movement"] = selected_movement.value
         result["generation_seconds"] = generation_seconds
         result["brain_provider"] = provider_used
         result["brain_provider_selected"] = settings.brain_provider
@@ -558,12 +631,101 @@ def create_app(
         except DacUnavailable:
             pass
 
+    interaction_snapshot_dir = app_settings.data_dir / "interaction-snapshots"
+    interaction_snapshot_limit = 100
+
+    async def save_interaction_snapshot(
+        event_id: int, session_id: int, turn_number: int
+    ) -> str | None:
+        try:
+            jpeg = await sensors.analyze_camera()
+        except SensorUnavailable:
+            return None
+        interaction_snapshot_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        filename = f"event-{event_id:06d}-session-{session_id:04d}-turn-{turn_number:03d}.jpg"
+        path = interaction_snapshot_dir / filename
+        path.write_bytes(jpeg)
+        path.chmod(0o600)
+        snapshots = sorted(
+            interaction_snapshot_dir.glob("event-*.jpg"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in snapshots[interaction_snapshot_limit:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+        return f"/api/perception/snapshots/{filename}"
+
+    async def perform_visitor_nag(
+        nag_count: int, session_elapsed: float, since_last_nag: float | None
+    ) -> dict[str, object] | None:
+        settings = operation_store.load()
+        if settings.nag_mode == "disabled":
+            return None
+        if nag_count >= settings.nag_max_per_visitor:
+            return None
+        if nag_count == 0 and session_elapsed < settings.nag_delay_seconds:
+            return None
+        if nag_count > 0 and (
+            since_last_nag is None or since_last_nag < settings.nag_cooldown_seconds
+        ):
+            return None
+        if settings.nag_require_presence:
+            camera = sensors.status().get("camera", {})
+            if not isinstance(camera, dict) or not bool(camera.get("presence_detected")):
+                return None
+
+        if settings.nag_mode == "media":
+            media_status = hardware.media_status()
+            if not media_status.get("files"):
+                try:
+                    media_status = await hardware.refresh_media_files()
+                except HardwareUnavailable:
+                    return None
+            eligible = [
+                item
+                for item in enrich_media_status(media_status).get("files", [])
+                if isinstance(item, dict)
+                and item.get("nag_response") is True
+                and item.get("enabled", True) is not False
+            ]
+            if not eligible:
+                return None
+            previous = getattr(perform_visitor_nag, "_last_media_serial", None)
+            alternatives = [item for item in eligible if int(item.get("serial", -1)) != previous]
+            selected = random.choice(alternatives or eligible)
+            serial = int(selected["serial"])
+            await hardware.play_media(serial, True)
+            setattr(perform_visitor_nag, "_last_media_serial", serial)
+            return {"performed": True, "mode": "media", "serial": serial}
+
+        prompt = (
+            "A visitor is standing nearby but has not spoken to you. "
+            "Get their attention with one playful Halloween line of at most 8 words. "
+            "Do not introduce yourself or say your name."
+        )
+        result = await respond_automatically(prompt, [])
+        return {"performed": True, "mode": "ai", "response": result.get("spoken_response")}
+
+    def perception_trigger_settings() -> dict[str, bool]:
+        settings = operation_store.load()
+        return {
+            "audio": settings.trigger_on_audio,
+            "face": settings.trigger_on_face,
+            "motion": settings.trigger_on_motion,
+        }
+
     perception = PerceptionEngine(
         sensors,
         show_locked=lambda: controller.snapshot().mode == Mode.SHOW_LOCKED,
         responder=respond_automatically,
         session_ended=end_local_session,
         phase_cue=show_local_phase_cue,
+        nagger=perform_visitor_nag,
+        snapshotter=save_interaction_snapshot,
+        trigger_settings=perception_trigger_settings,
         camera_interval_seconds=app_settings.perception_camera_interval_seconds,
         presence_confirmations=app_settings.perception_presence_confirmations,
         clear_confirmations=app_settings.perception_clear_confirmations,
@@ -1269,6 +1431,9 @@ def create_app(
         setup: OperationSettings,
     ) -> dict[str, object]:
         saved = operation_store.save(setup)
+        sensors.voice_threshold_dbfs = listening_sensitivity_to_dbfs(
+            saved.listening_sensitivity
+        )
         return saved.model_dump()
 
     @app.post("/api/operation/start")
@@ -1603,6 +1768,19 @@ def create_app(
     async def perception_clear_events() -> dict[str, object]:
         return perception.clear_events()
 
+    @app.get("/api/perception/snapshots/{filename}")
+    async def perception_snapshot(filename: str) -> FileResponse:
+        if not re.fullmatch(r"event-\d{6}-session-\d{4}-turn-\d{3}\.jpg", filename):
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        path = interaction_snapshot_dir / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
     @app.get("/api/sensors/camera/frame.jpg")
     async def camera_frame() -> Response:
         try:
@@ -1648,13 +1826,13 @@ def create_app(
 
     @app.get("/api/media/status")
     async def media_status() -> dict[str, object]:
-        return hardware.media_status()
+        return enrich_media_status(hardware.media_status())
 
     @app.post("/api/media/refresh")
     async def media_refresh() -> dict[str, object]:
         require_manual_hardware_access()
         try:
-            return await hardware.refresh_media_files()
+            return enrich_media_status(await hardware.refresh_media_files())
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1662,7 +1840,7 @@ def create_app(
     async def media_play(request: MediaPlayRequest) -> dict[str, object]:
         require_manual_hardware_access()
         try:
-            return await hardware.play_media(request.serial, request.enabled)
+            return enrich_media_status(await hardware.play_media(request.serial, request.enabled))
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1694,13 +1872,20 @@ def create_app(
     async def media_edit(request: MediaEditRequest) -> dict[str, object]:
         require_manual_hardware_access()
         try:
-            return await hardware.edit_media(
+            status = await hardware.edit_media(
                 request.serial,
                 request.action,
                 request.eye,
                 request.head_light.model_dump(),
                 request.torso_light.model_dump(),
             )
+            serials = load_nag_media_serials()
+            if request.nag_response:
+                serials.add(request.serial)
+            else:
+                serials.discard(request.serial)
+            save_nag_media_serials(serials)
+            return enrich_media_status(status)
         except (HardwareUnavailable, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1708,7 +1893,7 @@ def create_app(
     async def media_enabled(request: MediaEnabledRequest) -> dict[str, object]:
         require_manual_hardware_access()
         try:
-            return await hardware.set_media_enabled(request.serial, request.enabled)
+            return enrich_media_status(await hardware.set_media_enabled(request.serial, request.enabled))
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

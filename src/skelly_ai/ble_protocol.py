@@ -35,7 +35,7 @@ def set_eye_icon(index: int) -> bytes:
 
 
 def set_movement(action: int) -> bytes:
-    if action not in {0, 1, 2, 4, 6, 7, 255}:
+    if action not in {0, 1, 2, 4, 5, 6, 7, 255}:
         raise ValueError("Unsupported Ultra Skelly movement bitfield")
     # action bitfield, reserved byte, live cluster (zero), empty filename
     return build_command("AACA", f"{action:02X}00" + "00000000" + "00")
@@ -139,7 +139,7 @@ def set_media_eye(index: int, cluster: int, name: str) -> bytes:
 
 
 def set_media_movement(action: int, cluster: int, name: str) -> bytes:
-    if action not in {0, 1, 2, 4, 6, 7, 255}:
+    if action not in {0, 1, 2, 4, 5, 6, 7, 255}:
         raise ValueError("Unsupported Ultra Skelly movement bitfield")
     return build_command("AACA", media_target_payload(f"{action:02X}00", cluster, name))
 

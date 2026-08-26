@@ -126,6 +126,28 @@ const microphoneVoice = document.querySelector("#microphone-voice");
 const microphoneLevel = document.querySelector("#microphone-level");
 const microphonePeak = document.querySelector("#microphone-peak");
 const microphoneMeter = document.querySelector("#microphone-meter");
+const microphoneThreshold = document.querySelector("#microphone-threshold");
+const microphoneWouldTrigger = document.querySelector("#microphone-would-trigger");
+const microphoneThresholdMarker = document.querySelector("#microphone-threshold-marker");
+const listeningSensitivity = document.querySelector("#listening-sensitivity");
+const listeningSensitivityValue = document.querySelector("#listening-sensitivity-value");
+const nagMode = document.querySelector("#nag-mode");
+const nagDelay = document.querySelector("#nag-delay");
+const nagDelayValue = document.querySelector("#nag-delay-value");
+const nagCooldown = document.querySelector("#nag-cooldown");
+const nagCooldownValue = document.querySelector("#nag-cooldown-value");
+const nagMax = document.querySelector("#nag-max");
+const nagMaxValue = document.querySelector("#nag-max-value");
+const nagRequirePresence = document.querySelector("#nag-require-presence");
+const triggerOnAudio = document.querySelector("#trigger-on-audio");
+const triggerOnFace = document.querySelector("#trigger-on-face");
+const triggerOnMotion = document.querySelector("#trigger-on-motion");
+const triggerAudioDot = document.querySelector("#trigger-audio-dot");
+const triggerFaceDot = document.querySelector("#trigger-face-dot");
+const triggerMotionDot = document.querySelector("#trigger-motion-dot");
+const triggerSourceResult = document.querySelector("#trigger-source-result");
+const saveVisitorEngagement = document.querySelector("#save-visitor-engagement");
+const visitorEngagementResult = document.querySelector("#visitor-engagement-result");
 const microphonePlayback = document.querySelector("#microphone-playback");
 const microphoneResult = document.querySelector("#microphone-result");
 const speechModelStatus = document.querySelector("#speech-model-status");
@@ -408,6 +430,19 @@ function renderOperation(operation) {
   renderFppOverrideAvailability(settings.hardware_profile);
   manualCameraEnabled.checked = settings.manual_camera_enabled !== false;
   manualMicrophoneEnabled.checked = settings.manual_microphone_enabled !== false;
+  if (document.activeElement !== listeningSensitivity) listeningSensitivity.value = settings.listening_sensitivity ?? 45;
+  listeningSensitivityValue.textContent = listeningSensitivity.value;
+  if (document.activeElement !== nagMode) nagMode.value = settings.nag_mode || "disabled";
+  if (document.activeElement !== nagDelay) nagDelay.value = settings.nag_delay_seconds ?? 5;
+  if (document.activeElement !== nagCooldown) nagCooldown.value = settings.nag_cooldown_seconds ?? 30;
+  if (document.activeElement !== nagMax) nagMax.value = settings.nag_max_per_visitor ?? 2;
+  nagRequirePresence.checked = settings.nag_require_presence !== false;
+  triggerOnAudio.checked = settings.trigger_on_audio !== false;
+  triggerOnFace.checked = settings.trigger_on_face !== false;
+  triggerOnMotion.checked = settings.trigger_on_motion !== false;
+  nagDelayValue.textContent = `${nagDelay.value}s`;
+  nagCooldownValue.textContent = `${nagCooldown.value}s`;
+  nagMaxValue.textContent = nagMax.value;
   brainVoiceButton.disabled = !manualMicrophoneEnabled.checked;
   operationProfileState.textContent = settings.hardware_profile === "dac"
     ? "Advanced: DAC + ESP32"
@@ -623,8 +658,17 @@ function renderSensorStatus(body) {
   microphoneLevel.textContent = microphone.level_dbfs === null
     ? "—"
     : `${microphone.level_dbfs} dBFS`;
-  microphonePeak.textContent = `${microphone.peak_percent}%`;
-  microphoneMeter.style.width = `${Math.max(0, Math.min(100, microphone.peak_percent))}%`;
+  const thresholdDbfs = Number(microphone.voice_threshold_dbfs);
+  microphoneThreshold.textContent = Number.isFinite(thresholdDbfs) ? `${thresholdDbfs.toFixed(1)} dBFS` : "—";
+  const levelDbfs = Number(microphone.level_dbfs);
+  const tested = microphone.sampled && Number.isFinite(levelDbfs) && Number.isFinite(thresholdDbfs);
+  microphoneWouldTrigger.textContent = tested ? (levelDbfs >= thresholdDbfs ? "YES" : "NO") : "NOT TESTED";
+  microphoneWouldTrigger.classList.toggle("trigger-yes", tested && levelDbfs >= thresholdDbfs);
+  microphoneWouldTrigger.classList.toggle("trigger-no", tested && levelDbfs < thresholdDbfs);
+  const dbMeterPercent = Number.isFinite(levelDbfs) ? Math.max(0, Math.min(100, ((levelDbfs + 60) / 60) * 100)) : 0;
+  const thresholdPercent = Number.isFinite(thresholdDbfs) ? Math.max(0, Math.min(100, ((thresholdDbfs + 60) / 60) * 100)) : 0;
+  microphoneMeter.style.width = `${dbMeterPercent}%`;
+  microphoneThresholdMarker.style.left = `${thresholdPercent}%`;
   speechModelStatus.textContent = microphone.offline_transcription_available
     ? `Offline model ready: ${microphone.speech_model}`
     : `Offline model not installed: ${microphone.speech_model}`;
@@ -691,6 +735,11 @@ function renderPerceptionStatus(body) {
   perceptionEventCount.textContent = `${body.turn_count} / ${body.event_count}`;
   startPerception.disabled = body.enabled;
   stopPerception.disabled = !body.enabled;
+  const triggerStates = body.trigger_states || {};
+  [[triggerAudioDot, triggerStates.audio], [triggerFaceDot, triggerStates.face], [triggerMotionDot, triggerStates.motion]].forEach(([dot, active]) => {
+    if (!dot) return;
+    dot.classList.toggle("active", Boolean(active));
+  });
 
   perceptionEvents.replaceChildren();
   if (!body.events.length) {
@@ -731,6 +780,21 @@ function renderPerceptionStatus(body) {
         }
         actions.textContent = `${event.eye_icon} eyes | ${event.movement.replaceAll("_", " ")} | ${voice} | ${timings.join(" | ")}`;
         item.append(reply, actions);
+        if (event.snapshot_url) {
+          const snapshotLink = document.createElement("a");
+          snapshotLink.className = "interaction-snapshot-thumb";
+          snapshotLink.href = `${event.snapshot_url}?t=${encodeURIComponent(event.event_id)}`;
+          snapshotLink.target = "_blank";
+          snapshotLink.rel = "noopener";
+          snapshotLink.title = "Open interaction snapshot";
+          const snapshotImage = document.createElement("img");
+          snapshotImage.src = `${event.snapshot_url}?thumb=1&t=${encodeURIComponent(event.event_id)}`;
+          snapshotImage.alt = `Interaction snapshot for: ${event.transcript}`;
+          snapshotImage.loading = "lazy";
+          snapshotLink.append(snapshotImage);
+          item.classList.add("has-snapshot");
+          item.append(snapshotLink);
+        }
         if (event.brain_fallback_reason || event.voice_fallback_reason) {
           const fallback = document.createElement("div");
           fallback.className = "result";
@@ -955,6 +1019,15 @@ function operationSettingsPayload() {
     allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
+    listening_sensitivity: Number(listeningSensitivity.value),
+    trigger_on_audio: triggerOnAudio.checked,
+    trigger_on_face: triggerOnFace.checked,
+    trigger_on_motion: triggerOnMotion.checked,
+    nag_mode: nagMode.value,
+    nag_delay_seconds: Number(nagDelay.value),
+    nag_cooldown_seconds: Number(nagCooldown.value),
+    nag_max_per_visitor: Number(nagMax.value),
+    nag_require_presence: nagRequirePresence.checked,
   };
 }
 
@@ -965,6 +1038,46 @@ async function saveOperationSettings() {
     body: JSON.stringify(operationSettingsPayload()),
   });
 }
+
+[
+  [nagDelay, nagDelayValue, (value) => `${value}s`],
+  [nagCooldown, nagCooldownValue, (value) => `${value}s`],
+  [nagMax, nagMaxValue, (value) => value],
+].forEach(([input, output, format]) => {
+  input.addEventListener("input", () => { output.textContent = format(input.value); });
+});
+
+[triggerOnAudio, triggerOnFace, triggerOnMotion].forEach((input) => {
+  input.addEventListener("change", async () => {
+    if (![triggerOnAudio, triggerOnFace, triggerOnMotion].some((item) => item.checked)) {
+      input.checked = true;
+      triggerSourceResult.textContent = "At least one trigger source must stay enabled.";
+      return;
+    }
+    triggerSourceResult.textContent = "Saving…";
+    try {
+      await saveOperationSettings();
+      triggerSourceResult.textContent = "Saved";
+      window.setTimeout(() => { triggerSourceResult.textContent = ""; }, 1500);
+    } catch (error) {
+      triggerSourceResult.textContent = error.message;
+    }
+  });
+});
+
+saveVisitorEngagement.addEventListener("click", async () => {
+  saveVisitorEngagement.disabled = true;
+  visitorEngagementResult.textContent = "Saving visitor behavior...";
+  try {
+    await saveOperationSettings();
+    await refreshStatus();
+    visitorEngagementResult.textContent = "Visitor behavior saved.";
+  } catch (error) {
+    visitorEngagementResult.textContent = error.message;
+  } finally {
+    saveVisitorEngagement.disabled = false;
+  }
+});
 
 operationSettingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -993,6 +1106,23 @@ defaultOperationMode.addEventListener("change", () => {
 
 hardwareProfile.addEventListener("change", () => {
   renderFppOverrideAvailability(hardwareProfile.value);
+});
+
+
+listeningSensitivity.addEventListener("input", () => {
+  listeningSensitivityValue.textContent = listeningSensitivity.value;
+});
+
+listeningSensitivity.addEventListener("change", async () => {
+  listeningSensitivityValue.textContent = listeningSensitivity.value;
+  microphoneResult.textContent = "Saving listening sensitivity…";
+  try {
+    await saveOperationSettings();
+    await refreshSensorStatus();
+    microphoneResult.textContent = `Listening sensitivity saved at ${listeningSensitivity.value}. Record a one-second sample to verify normal speech crosses the trigger.`;
+  } catch (error) {
+    microphoneResult.textContent = error.message;
+  }
 });
 
 [manualCameraEnabled, manualMicrophoneEnabled].forEach((control) => {
@@ -1137,7 +1267,7 @@ function renderMediaStatus(body) {
       return cell;
     };
     const movement = document.createElement("td");
-    const movementNames = { 0: "None", 1: "Head", 2: "Arm", 4: "Torso", 6: "Torso + arm", 7: "Head + arm + torso", 255: "All" };
+    const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "Head + arm + torso", 255: "All" };
     movement.textContent = movementNames[file.action] || `Action ${file.action}`;
     const eye = document.createElement("td");
     const eyeImage = document.createElement("img");
@@ -1256,7 +1386,12 @@ function editLightValues(name) {
 function openMediaEditor(file) {
   document.querySelector("#media-editor-title").textContent = file.name || `Media file ${file.serial}`;
   document.querySelector("#media-edit-serial").value = file.serial;
-  document.querySelector("#media-edit-action").value = String(file.action ?? 0);
+  const action = Number(file.action ?? 0);
+  document.querySelector("#media-move-head").checked = Boolean(action & 1);
+  document.querySelector("#media-move-arm").checked = Boolean(action & 2);
+  document.querySelector("#media-move-torso").checked = Boolean(action & 4);
+  document.querySelector("#media-move-all").checked = (action & 7) === 7 || action === 255;
+  document.querySelector("#media-edit-nag-response").checked = file.nag_response === true;
   document.querySelector("#media-edit-eye").value = String(file.eye || 1);
   [["head", file.lights?.[1], "#00ff62"], ["torso", file.lights?.[0], "#3300ff"]].forEach(([name, light, fallback]) => {
     const block = document.querySelector(`[data-edit-light="${name}"]`);
@@ -1268,6 +1403,17 @@ function openMediaEditor(file) {
   mediaEditorResult.textContent = "";
   mediaEditor.showModal();
 }
+
+const mediaMoveAll = document.querySelector("#media-move-all");
+const mediaMoveParts = ["#media-move-head", "#media-move-arm", "#media-move-torso"].map((selector) => document.querySelector(selector));
+mediaMoveAll.addEventListener("change", () => {
+  mediaMoveParts.forEach((input) => { input.checked = mediaMoveAll.checked; });
+});
+mediaMoveParts.forEach((input) => {
+  input.addEventListener("change", () => {
+    mediaMoveAll.checked = mediaMoveParts.every((part) => part.checked);
+  });
+});
 
 document.querySelector("#close-media-editor").addEventListener("click", () => mediaEditor.close());
 mediaEditorForm.addEventListener("submit", async (event) => {
@@ -1281,7 +1427,10 @@ mediaEditorForm.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         serial: Number(document.querySelector("#media-edit-serial").value),
-        action: Number(document.querySelector("#media-edit-action").value),
+        action: (document.querySelector("#media-move-head").checked ? 1 : 0)
+          | (document.querySelector("#media-move-arm").checked ? 2 : 0)
+          | (document.querySelector("#media-move-torso").checked ? 4 : 0),
+        nag_response: document.querySelector("#media-edit-nag-response").checked,
         eye: Number(document.querySelector("#media-edit-eye").value),
         head_light: editLightValues("head"),
         torso_light: editLightValues("torso"),

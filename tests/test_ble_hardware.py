@@ -167,3 +167,7 @@ async def test_ble_movement_probe_is_restricted_armed_and_always_stops() -> None
     assert result.movement == Movement.NONE
     assert client.writes[-2][1] == ble_protocol.probe_movement_value(8)
     assert client.writes[-1][1] == ble_protocol.set_movement(0)
+
+
+def test_head_and_torso_combination_uses_verified_bitfield_layout() -> None:
+    assert ble_protocol.set_movement(5).hex().upper().startswith("AACA05")

@@ -295,3 +295,42 @@ def test_setup_keeps_wifi_management_available_after_onboarding() -> None:
     assert 'hardwareConnection.textContent = body.hardware.connected ? "prop connected" : "prop disconnected"' in script
     assert 'link.href = "http://usa-controller:8787"' in script
     assert 'link.textContent = "Open usa-controller:8787"' in script
+
+
+def test_listening_sensitivity_controls_are_present() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    for marker in (
+        'id="listening-sensitivity"',
+        'id="listening-sensitivity-value"',
+        'id="microphone-threshold"',
+        'id="microphone-would-trigger"',
+        'id="microphone-threshold-marker"',
+    ):
+        assert marker in html
+    assert 'listening_sensitivity: Number(listeningSensitivity.value)' in script
+    assert 'microphoneWouldTrigger.textContent' in script
+
+
+def test_build2_visitor_engagement_and_classic_movement_controls_present() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "skelly_ai" / "static"
+    html = (root / "index.html").read_text(encoding="utf-8")
+    js = (root / "app.js").read_text(encoding="utf-8")
+
+    for marker in (
+        'id="nag-mode"',
+        'id="nag-delay"',
+        'id="nag-cooldown"',
+        'id="nag-max"',
+        'id="media-move-head"',
+        'id="media-move-arm"',
+        'id="media-move-torso"',
+        'id="media-move-all"',
+        'id="media-edit-nag-response"',
+    ):
+        assert marker in html
+    assert 'nag_response:' in js
+    assert 'nag_max_per_visitor:' in js

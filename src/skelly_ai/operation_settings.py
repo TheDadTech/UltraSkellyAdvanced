@@ -22,6 +22,15 @@ class OperationSettings(BaseModel):
     allow_fpp_override: bool = False
     manual_microphone_enabled: bool = True
     manual_camera_enabled: bool = True
+    listening_sensitivity: int = Field(default=45, ge=1, le=100)
+    trigger_on_audio: bool = True
+    trigger_on_face: bool = True
+    trigger_on_motion: bool = True
+    nag_mode: Literal["disabled", "media", "ai"] = "disabled"
+    nag_delay_seconds: int = Field(default=5, ge=2, le=30)
+    nag_cooldown_seconds: int = Field(default=30, ge=10, le=120)
+    nag_max_per_visitor: int = Field(default=2, ge=1, le=5)
+    nag_require_presence: bool = True
 
     @field_validator("skelly_name", mode="before")
     @classmethod
@@ -67,3 +76,20 @@ class OperationSettingsStore:
         os.replace(temporary_path, self._path)
         os.chmod(self._path, 0o600)
         return settings
+
+
+def listening_sensitivity_to_dbfs(value: int) -> float:
+    """Map a friendly 1-100 sensitivity control to a practical speech threshold.
+
+    1 is intentionally conservative (-25 dBFS); 100 is very sensitive (-55 dBFS).
+    The default 45 maps to approximately the historical -38 dBFS threshold.
+    """
+    sensitivity = max(1, min(100, int(value)))
+    return round(-25.0 - ((sensitivity - 1) * (30.0 / 99.0)), 1)
+
+
+def dbfs_to_listening_sensitivity(value: float) -> int:
+    """Inverse mapping used to preserve an environment-configured legacy threshold."""
+    dbfs = max(-55.0, min(-25.0, float(value)))
+    sensitivity = 1 + ((-25.0 - dbfs) * (99.0 / 30.0))
+    return max(1, min(100, round(sensitivity)))

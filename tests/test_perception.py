@@ -218,3 +218,93 @@ async def test_monitor_reports_that_automatic_response_was_spoken() -> None:
     assert stopped["events"][0]["speech_error"] is None
     assert "listening" in phases
     assert "thinking" in phases
+
+@pytest.mark.asyncio
+async def test_active_session_keeps_listening_during_brief_missed_presence_frames() -> None:
+    sensors = FakeSensors([True, True, False, True, False, False, False])
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        camera_interval_seconds=0.01,
+        presence_confirmations=2,
+        clear_confirmations=3,
+        record_seconds=5,
+        listen_retry_seconds=0.0,
+        conversation_turn_delay_seconds=0.0,
+    )
+
+    await engine.start()
+    await wait_until(lambda: sensors.transcription_calls >= 2)
+    stopped = await engine.stop()
+
+    # A single missed camera frame must not suspend an active conversation.
+    assert sensors.transcription_calls >= 2
+    assert stopped["event_count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_nagger_runs_after_no_speech_without_ending_session() -> None:
+    class QuietSensors(FakeSensors):
+        async def transcribe_microphone(self, duration_seconds: int) -> dict[str, object]:
+            self.transcription_calls += 1
+            status = self.status()
+            status["microphone"] = dict(status["microphone"])
+            status["microphone"]["voice_active"] = False
+            status["microphone"]["transcript"] = ""
+            return status
+
+    sensors = QuietSensors([True] * 20)
+    nags: list[tuple[int, float, float | None]] = []
+
+    async def nagger(count: int, elapsed: float, since_last: float | None) -> dict[str, object]:
+        nags.append((count, elapsed, since_last))
+        return {"performed": count == 0}
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        nagger=nagger,
+        camera_interval_seconds=0.01,
+        presence_confirmations=1,
+        clear_confirmations=3,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+
+    await engine.start()
+    await wait_until(lambda: engine.status()["nag_count"] == 1)
+    status = engine.status()
+    await engine.stop()
+
+    assert status["session_active"] is True
+    assert nags
+    assert nags[0][0] == 0
+
+@pytest.mark.asyncio
+async def test_interaction_snapshot_url_is_attached_to_event() -> None:
+    sensors = FakeSensors([True, True, True, True, False, False])
+    calls: list[tuple[int, int, int]] = []
+
+    async def snapshotter(event_id: int, session_id: int, turn_number: int) -> str:
+        calls.append((event_id, session_id, turn_number))
+        return f"/api/perception/snapshots/event-{event_id:06d}-session-{session_id:04d}-turn-{turn_number:03d}.jpg"
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        snapshotter=snapshotter,
+        camera_interval_seconds=0.01,
+        presence_confirmations=2,
+        clear_confirmations=2,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+
+    await engine.start()
+    await wait_until(lambda: engine.status()["event_count"] == 1)
+    stopped = await engine.stop()
+
+    assert calls == [(1, 1, 1)]
+    assert stopped["events"][0]["snapshot_url"].endswith(
+        "event-000001-session-0001-turn-001.jpg"
+    )

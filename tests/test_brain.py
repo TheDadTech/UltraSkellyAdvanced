@@ -76,3 +76,12 @@ async def test_local_brain_rejects_invalid_control_output() -> None:
 
     with pytest.raises(BrainResponseError):
         await brain.respond("Hello")
+
+
+def test_character_prompt_does_not_encourage_repeated_self_introductions() -> None:
+    from skelly_ai.brain import build_system_prompt
+
+    prompt = build_system_prompt("Steve Boneschemi")
+    assert "If directly asked your name" in prompt
+    assert "do not repeat your name or reintroduce yourself" in prompt
+    assert "controller handles physical response movement independently" in prompt
