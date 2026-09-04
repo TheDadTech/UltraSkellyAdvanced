@@ -1,7 +1,7 @@
 [Unit]
 Description=UltraSkellyAdvanced animatronic control system
-After=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service
-Wants=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service
+After=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service user@@SUPPORT_UID@.service
+Wants=network-online.target hciuart.service bluetooth.target user@@SKELLY_UID@.service user@@SUPPORT_UID@.service
 
 [Service]
 Type=simple

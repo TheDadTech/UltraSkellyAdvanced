@@ -1,6 +1,7 @@
 import asyncio
 import re
 import shutil
+from pathlib import Path
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -22,6 +23,7 @@ class ClassicAudioSnapshot:
     device_name: str | None
     last_error: str | None
     changed_at: str
+    sink_name: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -30,7 +32,7 @@ class ClassicAudioSnapshot:
 class ClassicAudio(Protocol):
     async def refresh(self) -> ClassicAudioSnapshot: ...
     async def prepare(self, pin: str) -> ClassicAudioSnapshot: ...
-    async def connect(self) -> ClassicAudioSnapshot: ...
+    async def connect(self, *, route: bool = True) -> ClassicAudioSnapshot: ...
     async def disconnect(self) -> ClassicAudioSnapshot: ...
     async def forget(self) -> ClassicAudioSnapshot: ...
     def clear_saved_target(self) -> None: ...
@@ -49,6 +51,7 @@ class SimulatedClassicAudio:
             trusted=True,
             sink_ready=False,
             sink_id=None,
+            sink_name=None,
             address="00:00:00:00:00:00",
             device_name="ServoSkelly(Live) (simulated)",
             last_error=None,
@@ -65,8 +68,8 @@ class SimulatedClassicAudio:
     async def refresh(self) -> ClassicAudioSnapshot:
         return self._snapshot
 
-    async def connect(self) -> ClassicAudioSnapshot:
-        return self._update(connected=True, sink_ready=True, sink_id="simulated")
+    async def connect(self, *, route: bool = True) -> ClassicAudioSnapshot:
+        return self._update(connected=True, sink_ready=route, sink_id="simulated")
 
     async def prepare(self, pin: str) -> ClassicAudioSnapshot:
         del pin
@@ -85,6 +88,7 @@ class SimulatedClassicAudio:
             trusted=False,
             sink_ready=False,
             sink_id=None,
+            sink_name=None,
             address=None,
             device_name=None,
             last_error=None,
@@ -124,11 +128,13 @@ class BluetoothClassicAudio:
         address: str | None = None,
         name_filter: str = "Skelly(Live)",
         timeout_seconds: float = 20.0,
+        system_helper: Path | None = None,
     ) -> None:
         self._configured_address = address.upper() if address else None
         self._address = self._configured_address
         self._name_filter = name_filter
         self._timeout_seconds = timeout_seconds
+        self._system_helper = system_helper
         self._lock = asyncio.Lock()
         self._snapshot = ClassicAudioSnapshot(
             available=shutil.which("bluetoothctl") is not None,
@@ -137,6 +143,7 @@ class BluetoothClassicAudio:
             trusted=False,
             sink_ready=False,
             sink_id=None,
+            sink_name=None,
             address=self._address,
             device_name=None,
             last_error=None,
@@ -174,10 +181,11 @@ class BluetoothClassicAudio:
                     trusted=False,
                     sink_ready=False,
                     sink_id=None,
+            sink_name=None,
                     last_error=str(exc),
                 )
 
-    async def connect(self) -> ClassicAudioSnapshot:
+    async def connect(self, *, route: bool = True) -> ClassicAudioSnapshot:
         async with self._lock:
             self._require_tool()
             address = await self._resolve_address()
@@ -190,7 +198,9 @@ class BluetoothClassicAudio:
                     message = detail or "The Skelly speaker did not accept the connection"
                     self._update(last_error=message)
                     raise ClassicAudioUnavailable(message)
-            return await self._route_pipewire_sink()
+            if route:
+                return await self._route_pipewire_sink()
+            return await self._find_pipewire_sink_without_routing()
 
     async def prepare(self, pin: str) -> ClassicAudioSnapshot:
         """Discover and pair a first-use speaker, then connect and route it."""
@@ -307,6 +317,7 @@ class BluetoothClassicAudio:
             trusted=False,
             sink_ready=False,
             sink_id=None,
+            sink_name=None,
             address=None,
             device_name=None,
             last_error=None,
@@ -371,10 +382,12 @@ class BluetoothClassicAudio:
     async def _run_program(
         self, executable: str, *arguments: str, input_text: str | None = None
     ) -> _CommandResult:
+        command = [executable, *arguments]
+        if Path(executable).name == "wpctl" and self._system_helper is not None and self._system_helper.exists():
+            command = ["sudo", str(self._system_helper), "audio-wpctl", *arguments]
         try:
             process = await asyncio.create_subprocess_exec(
-                executable,
-                *arguments,
+                *command,
                 stdin=asyncio.subprocess.PIPE if input_text is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -383,7 +396,7 @@ class BluetoothClassicAudio:
                 process.communicate(
                     input_text.encode() if input_text is not None else None
                 ),
-                timeout=max(self._timeout_seconds, 18.0) if "scan" in arguments else self._timeout_seconds,
+                timeout=max(self._timeout_seconds, 18.0) if "scan" in arguments else (3.0 if "audio-wpctl" in command else self._timeout_seconds),
             )
         except TimeoutError as exc:
             process.kill()
@@ -396,12 +409,46 @@ class BluetoothClassicAudio:
             output=stdout.decode(errors="replace").strip(),
         )
 
-    async def _read_pipewire_status(self) -> ClassicAudioSnapshot:
-        executable = shutil.which("wpctl")
+
+    async def _find_pipewire_sink_without_routing(self) -> ClassicAudioSnapshot:
+        executable = shutil.which("wpctl") or (str(self._system_helper) if self._system_helper and self._system_helper.exists() else None)
         if executable is None:
             return self._update(
                 sink_ready=False,
                 sink_id=None,
+            sink_name=None,
+                last_error="Bluetooth connected, but wpctl is not installed",
+            )
+        for _ in range(30):
+            result = await self._run_program(executable, "status")
+            sink = self._find_sink(result.output)
+            if sink is not None:
+                sink_id, is_default = sink
+                sink_name = await self._sink_node_name(sink_id)
+                # A non-default Skelly sink used for stock jaw mirroring still
+                # needs unity gain; the prop's jaw is audio-reactive.
+                await self._run_program(executable, "set-volume", sink_id, "1.0")
+                return self._update(
+                    sink_ready=True,
+                    sink_id=sink_id,
+                    sink_name=sink_name,
+                    last_error=None,
+                )
+            await asyncio.sleep(0.5)
+        return self._update(
+            sink_ready=False,
+            sink_id=None,
+            sink_name=None,
+            last_error="Skelly Bluetooth connected, but its PipeWire audio output did not appear",
+        )
+
+    async def _read_pipewire_status(self) -> ClassicAudioSnapshot:
+        executable = shutil.which("wpctl") or (str(self._system_helper) if self._system_helper and self._system_helper.exists() else None)
+        if executable is None:
+            return self._update(
+                sink_ready=False,
+                sink_id=None,
+            sink_name=None,
                 last_error="wpctl is not installed; Bluetooth connected but audio routing is unavailable",
             )
         result = await self._run_program(executable, "status")
@@ -409,14 +456,16 @@ class BluetoothClassicAudio:
         if sink is None:
             return self._update(sink_ready=False, sink_id=None)
         sink_id, is_default = sink
-        return self._update(sink_ready=is_default, sink_id=sink_id)
+        sink_name = await self._sink_node_name(sink_id)
+        return self._update(sink_ready=True, sink_id=sink_id, sink_name=sink_name)
 
     async def _route_pipewire_sink(self) -> ClassicAudioSnapshot:
-        executable = shutil.which("wpctl")
+        executable = shutil.which("wpctl") or (str(self._system_helper) if self._system_helper and self._system_helper.exists() else None)
         if executable is None:
             return self._update(
                 sink_ready=False,
                 sink_id=None,
+            sink_name=None,
                 last_error="Bluetooth connected, but wpctl is not installed",
             )
         # The Bluetooth connection can complete several seconds before
@@ -456,17 +505,31 @@ class BluetoothClassicAudio:
                         last_error=self._useful_output(volume.output)
                         or "Skelly connected, but its Pi audio level could not be initialized",
                     )
+                sink_name = await self._sink_node_name(sink_id)
                 return self._update(
                     sink_ready=True,
                     sink_id=sink_id,
+                    sink_name=sink_name,
                     last_error=None,
                 )
             await asyncio.sleep(0.5)
         return self._update(
             sink_ready=False,
             sink_id=None,
+            sink_name=None,
             last_error="Bluetooth connected, but the Skelly PipeWire audio output did not appear",
         )
+
+    async def _sink_node_name(self, sink_id: str) -> str | None:
+        executable = shutil.which("wpctl") or (str(self._system_helper) if self._system_helper and self._system_helper.exists() else None)
+        if executable is None:
+            return None
+        result = await self._run_program(executable, "inspect", sink_id)
+        for line in result.output.splitlines():
+            match = re.search(r'node\.name\s*=\s*"([^"]+)"', line)
+            if match:
+                return match.group(1)
+        return None
 
     def _find_sink(self, output: str) -> tuple[str, bool] | None:
         in_audio_sinks = False

@@ -1,0 +1,110 @@
+from fastapi.testclient import TestClient
+
+from skelly_ai.api import create_app
+from skelly_ai.config import Settings
+from skelly_ai.operation_settings import OperationSettings
+from skelly_ai.speech import LocalSpeech
+
+
+def test_operation_settings_audio_output_defaults_preserve_skelly_path() -> None:
+    settings = OperationSettings()
+    assert settings.audio_output == "skelly"
+    assert settings.external_bluetooth_address is None
+    assert settings.jaw_follow_speech is True
+    assert settings.jaw_sync_offset_ms == -750
+    assert settings.jaw_mirror_level_percent == 100
+
+
+def test_simulated_external_bluetooth_can_be_selected_and_saved(tmp_path) -> None:
+    app = create_app(Settings(simulation=True, data_dir=tmp_path))
+    with TestClient(app) as client:
+        # A configured prop is required for manual hardware actions.
+        current = client.get("/api/operation/status").json()["settings"]
+        current["device_configured"] = True
+        client.post("/api/operation/settings", json=current)
+        devices = client.post("/api/audio/external/scan")
+        assert devices.status_code == 200
+        address = devices.json()["devices"][0]["address"]
+        selected = client.post("/api/audio/external/select", json={"address": address})
+        assert selected.status_code == 200
+        body = selected.json()
+        assert body["settings"]["audio_output"] == "external_bluetooth"
+        assert body["external_bluetooth"]["connected"] is True
+        saved = client.get("/api/operation/status").json()["settings"]
+        assert saved["external_bluetooth_address"] == address
+
+
+def test_local_speech_output_configuration_separates_playback_and_jaw_mirror() -> None:
+    speech = LocalSpeech()
+    speech.configure_output(
+        playback_target="external-42",
+        jaw_mirror_target="skelly-17",
+        jaw_follow_speech=True,
+        jaw_sync_offset_ms=-200,
+    )
+    status = speech.status()
+    assert status["playback_target"] == "external-42"
+    assert status["jaw_mirror_target"] == "skelly-17"
+    assert status["jaw_follow_speech"] is True
+    assert status["jaw_sync_offset_seconds"] == -0.2
+
+
+def test_static_ui_contains_external_audio_controls() -> None:
+    from pathlib import Path
+    html = (Path(__file__).parents[1] / "src/skelly_ai/static/index.html").read_text()
+    assert 'id="audio-output-select"' in html
+    assert '>External Bluetooth<' in html
+    assert 'id="jaw-follow-speech"' in html
+    assert 'id="jaw-sync-offset"' in html
+    assert 'min="-1000" max="1000" step="25" value="-750"' in html
+
+
+def test_external_bluetooth_failure_does_not_block_manual_operation(tmp_path, monkeypatch) -> None:
+    from skelly_ai.audio_output import AudioOutputUnavailable, ExternalBluetoothAudio
+
+    async def fail_connect(self, *, route=True):
+        raise AudioOutputUnavailable("org.bluez.Error.Failed br-connection-page-timeout")
+
+    monkeypatch.setattr(ExternalBluetoothAudio, "connect", fail_connect)
+    app = create_app(Settings(simulation=True, data_dir=tmp_path))
+    with TestClient(app) as client:
+        current = client.get("/api/operation/status").json()["settings"]
+        current.update({
+            "device_configured": True,
+            "audio_output": "external_bluetooth",
+            "external_bluetooth_address": "F4:2B:7D:30:BB:94",
+            "external_bluetooth_name": "soundcore Boom V2",
+        })
+        saved = client.post("/api/operation/settings", json=current)
+        assert saved.status_code == 200
+        started = client.post("/api/operation/start", json={"mode": "manual"})
+        assert started.status_code == 200
+        body = started.json()["operation"]
+        assert body["active_mode"] == "manual"
+        assert body["ready"] is True
+
+
+def test_local_speech_can_route_primary_and_jaw_to_different_sessions(tmp_path) -> None:
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\n")
+    speech = LocalSpeech(system_helper=helper)
+    speech.configure_output(
+        playback_target="bluez_output.soundcore",
+        jaw_mirror_target="bluez_output.skelly",
+        jaw_follow_speech=True,
+        jaw_sync_offset_ms=-200,
+        playback_session="skelly-ai",
+        jaw_mirror_session="dadtech",
+        playback_target_required=True,
+    )
+    status = speech.status()
+    assert status["playback_session"] == "skelly-ai"
+    assert status["jaw_mirror_session"] == "dadtech"
+    assert speech._player_exec("--target", "bluez_output.soundcore", session="skelly-ai") == [
+        "sudo", str(helper), "audio-pw-play", "--session", "skelly-ai",
+        "--target", "bluez_output.soundcore",
+    ]
+    assert speech._player_exec("--target", "bluez_output.skelly", session="dadtech") == [
+        "sudo", str(helper), "audio-pw-play", "--session", "dadtech",
+        "--target", "bluez_output.skelly",
+    ]

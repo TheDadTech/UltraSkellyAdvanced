@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field, SecretStr
 
 from . import __version__
 from .brain import BrainResponseError, BrainUnavailable, LocalBrain
+from .audio_output import (
+    AudioOutputUnavailable,
+    ExternalBluetoothAudio,
+    SimulatedExternalBluetoothAudio,
+)
 from .cloud_providers import (
     CloudSpeechUnavailable,
     ElevenLabsVoice,
@@ -84,6 +89,10 @@ class EyeIndexRequest(BaseModel):
 
 class MovementArmRequest(BaseModel):
     enabled: bool
+
+
+class ExternalBluetoothSelectRequest(BaseModel):
+    address: str = Field(min_length=17, max_length=17)
 
 
 class MovementProbeRequest(BaseModel):
@@ -304,6 +313,7 @@ def create_app(
         word_gap=app_settings.local_speech_word_gap,
         bluetooth_delay_seconds=app_settings.local_speech_bluetooth_delay_seconds,
         speaker_preroll_seconds=app_settings.local_speech_speaker_preroll_seconds,
+        system_helper=app_settings.system_helper,
     )
     classic_audio = classic_audio_client or (
         SimulatedClassicAudio()
@@ -312,6 +322,16 @@ def create_app(
             address=app_settings.classic_audio_address,
             name_filter=app_settings.classic_audio_name,
             timeout_seconds=app_settings.classic_audio_connect_timeout_seconds,
+            system_helper=app_settings.system_helper,
+        )
+    )
+    external_audio = (
+        SimulatedExternalBluetoothAudio()
+        if app_settings.simulation
+        else ExternalBluetoothAudio(
+            timeout_seconds=app_settings.classic_audio_connect_timeout_seconds,
+            system_helper=app_settings.system_helper,
+            pipewire_session="skelly-ai",
         )
     )
     groq_brain = GroqBrain()
@@ -402,6 +422,10 @@ def create_app(
     )
     updates = UpdateManager(app_settings.data_dir, app_settings.system_helper)
     saved_operation_settings = operation_store.load()
+    external_audio.set_saved_target(
+        saved_operation_settings.external_bluetooth_address,
+        saved_operation_settings.external_bluetooth_name,
+    )
     sensors.voice_threshold_dbfs = listening_sensitivity_to_dbfs(
         saved_operation_settings.listening_sensitivity
     )
@@ -441,6 +465,41 @@ def create_app(
 
     apply_local_voice_settings(provider_store.load())
 
+    def apply_audio_output_settings() -> None:
+        settings = operation_store.load()
+        playback_target: str | None = None
+        jaw_mirror_target: str | None = None
+        playback_session = "dadtech"
+        jaw_mirror_session = "dadtech"
+        playback_target_required = False
+        skelly_snapshot = classic_audio.snapshot()
+        external_snapshot = external_audio.snapshot()
+        if settings.audio_output == "skelly":
+            playback_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+        elif settings.audio_output == "external_bluetooth":
+            # Proven 3-Bluetooth topology: Soundcore belongs to skelly-ai's
+            # PipeWire session while Animated Skelly(Live) belongs to dadtech.
+            playback_session = "skelly-ai"
+            playback_target_required = True
+            playback_target = external_snapshot.sink_name or external_snapshot.sink_id
+            if settings.jaw_follow_speech:
+                jaw_mirror_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+        elif settings.jaw_follow_speech:
+            jaw_mirror_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+        configure_output = getattr(local_speech, "configure_output", None)
+        if configure_output is not None:
+            configure_output(
+                playback_target=playback_target,
+                jaw_mirror_target=jaw_mirror_target,
+                jaw_follow_speech=settings.jaw_follow_speech,
+                jaw_sync_offset_ms=settings.jaw_sync_offset_ms,
+                jaw_mirror_level_percent=settings.jaw_mirror_level_percent,
+                playback_session=playback_session,
+                jaw_mirror_session=jaw_mirror_session,
+                playback_target_required=playback_target_required,
+            )
+
+    apply_audio_output_settings()
 
     async def respond_locally(
         transcript: str, history: list[dict[str, str]]
@@ -495,6 +554,11 @@ def create_app(
     ) -> dict[str, object]:
         settings = provider_store.load()
         apply_local_voice_settings(settings)
+        # Audio sinks can appear/reconnect after application startup. Always
+        # re-apply the latest snapshots before playback so every voice provider
+        # (including streamed ElevenLabs speech) uses the same external/main
+        # output and Skelly jaw-mirror targets.
+        apply_audio_output_settings()
         voice_started = asyncio.get_running_loop().time()
         provider_used = settings.voice_provider
         fallback_reason: str | None = None
@@ -744,6 +808,7 @@ def create_app(
     operator_gesture_lock = asyncio.Lock()
     operator_gesture_task: asyncio.Task[dict[str, object]] | None = None
     auto_start_task: asyncio.Task[None] | None = None
+    external_audio_reconnect_task: asyncio.Task[None] | None = None
 
     async def auto_start_saved_mode() -> None:
         await asyncio.sleep(0.25)
@@ -758,9 +823,32 @@ def create_app(
             # The dashboard reports the ordered startup steps and the exact failure.
             return
 
+    async def maintain_external_audio_connection() -> None:
+        while True:
+            await asyncio.sleep(15)
+            settings = operation_store.load()
+            if settings.audio_output != "external_bluetooth" or not settings.external_bluetooth_address:
+                continue
+            try:
+                snapshot = await external_audio.refresh()
+                if not snapshot.connected or not snapshot.sink_id:
+                    await external_audio.connect(route=True)
+                if settings.jaw_follow_speech and settings.hardware_profile != "dac":
+                    skelly = await classic_audio.refresh()
+                    if not skelly.connected or not skelly.sink_id:
+                        try:
+                            await classic_audio.connect(route=False)
+                            remember_speaker_connection()
+                        except ClassicAudioUnavailable:
+                            pass
+                apply_audio_output_settings()
+            except AudioOutputUnavailable:
+                # The Setup card reports the last error; retry when the speaker returns.
+                continue
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        nonlocal auto_start_task
+        nonlocal auto_start_task, external_audio_reconnect_task
         await controller.ready()
         if operation_store.load().device_configured:
             try:
@@ -769,6 +857,11 @@ def create_app(
                 # Keep the setup dashboard available when the prop is off or out of range.
                 pass
             await classic_audio.refresh()
+            try:
+                await external_audio.refresh()
+            except AudioOutputUnavailable:
+                pass
+        external_audio_reconnect_task = asyncio.create_task(maintain_external_audio_connection())
         if operation_store.load().auto_start:
             auto_start_task = asyncio.create_task(auto_start_saved_mode())
         yield
@@ -776,6 +869,12 @@ def create_app(
             auto_start_task.cancel()
             try:
                 await auto_start_task
+            except asyncio.CancelledError:
+                pass
+        if external_audio_reconnect_task is not None and not external_audio_reconnect_task.done():
+            external_audio_reconnect_task.cancel()
+            try:
+                await external_audio_reconnect_task
             except asyncio.CancelledError:
                 pass
         await perception.stop()
@@ -792,6 +891,7 @@ def create_app(
     app.state.dac = dac
     app.state.local_speech = local_speech
     app.state.classic_audio = classic_audio
+    app.state.external_audio = external_audio
     app.state.credential_store = credential_store
     app.state.provider_store = provider_store
     app.state.operation_store = operation_store
@@ -826,6 +926,7 @@ def create_app(
             "state": controller.snapshot().to_dict(),
             "hardware": hardware.snapshot().to_dict(),
             "audio": classic_audio.snapshot().to_dict(),
+            "external_audio": external_audio.snapshot().to_dict(),
             "dac": dac.snapshot().to_dict(),
             "operation": {
                 **operation_state,
@@ -1054,6 +1155,32 @@ def create_app(
                 pass
         return True
 
+    async def recover_audio_for_mode(settings: OperationSettings) -> None:
+        """Recover optional audio routes without delaying AI/Operator control startup."""
+        try:
+            if settings.audio_output == "skelly":
+                await classic_audio.connect(route=True)
+                remember_speaker_connection()
+            elif settings.audio_output == "external_bluetooth":
+                if settings.jaw_follow_speech and settings.hardware_profile != "dac":
+                    try:
+                        await classic_audio.connect(route=False)
+                        remember_speaker_connection()
+                    except ClassicAudioUnavailable:
+                        pass
+                try:
+                    await external_audio.connect(route=True)
+                except AudioOutputUnavailable:
+                    pass
+            elif settings.jaw_follow_speech and settings.hardware_profile != "dac":
+                try:
+                    await classic_audio.connect(route=False)
+                    remember_speaker_connection()
+                except ClassicAudioUnavailable:
+                    pass
+        finally:
+            apply_audio_output_settings()
+
     async def start_operation_mode(selected_mode: str) -> dict[str, object]:
         """Prepare the selected operating mode in one ordered, explicit action."""
 
@@ -1087,9 +1214,14 @@ def create_app(
                     await hardware.set_live_mode(True)
                     steps.append("Live Mode enabled")
                     await asyncio.sleep(0.8)
-                    await classic_audio.connect()
-                    remember_speaker_connection()
-                    steps.append("Skelly speaker connected")
+                    if settings.audio_output == "skelly":
+                        steps.append("Skelly speaker recovery started in background")
+                    elif settings.audio_output == "external_bluetooth":
+                        steps.append("External audio and jaw mirror recovery started in background")
+                    else:
+                        steps.append("Pi / USB audio selected; jaw mirror recovery started in background")
+                    asyncio.create_task(recover_audio_for_mode(settings))
+                    apply_audio_output_settings()
 
                 if selected_mode == "ai":
                     await perception.start()
@@ -1104,6 +1236,7 @@ def create_app(
             except (
                 HardwareUnavailable,
                 ClassicAudioUnavailable,
+                AudioOutputUnavailable,
                 DacUnavailable,
                 SensorUnavailable,
                 InvalidTransition,
@@ -1417,6 +1550,9 @@ def create_app(
     ) -> dict[str, object]:
         saved = provider_store.save(setup)
         apply_local_voice_settings(saved)
+        # Provider changes are hot-applied and must never change physical audio
+        # routing. Re-assert the current output/jaw mirror configuration here.
+        apply_audio_output_settings()
         return saved.model_dump()
 
     @app.get("/api/operation/status")
@@ -1431,9 +1567,14 @@ def create_app(
         setup: OperationSettings,
     ) -> dict[str, object]:
         saved = operation_store.save(setup)
+        external_audio.set_saved_target(
+            saved.external_bluetooth_address,
+            saved.external_bluetooth_name,
+        )
         sensors.voice_threshold_dbfs = listening_sensitivity_to_dbfs(
             saved.listening_sensitivity
         )
+        apply_audio_output_settings()
         return saved.model_dump()
 
     @app.post("/api/operation/start")
@@ -1653,6 +1794,105 @@ def create_app(
         result["local_speech"] = local_speech.status()
         result["voice_provider"] = settings.voice_provider
         return result
+
+    @app.get("/api/audio/output/status")
+    async def audio_output_status() -> dict[str, object]:
+        settings = operation_store.load()
+        external = await external_audio.refresh()
+        skelly = await classic_audio.refresh()
+        apply_audio_output_settings()
+        return {
+            "selected": settings.audio_output,
+            "jaw_follow_speech": settings.jaw_follow_speech,
+            "jaw_sync_offset_ms": settings.jaw_sync_offset_ms,
+            "skelly": skelly.to_dict(),
+            "external_bluetooth": external.to_dict(),
+        }
+
+    @app.post("/api/audio/external/scan")
+    async def external_audio_scan() -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            devices = await external_audio.scan()
+        except AudioOutputUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # Skelly's own Classic endpoint has dedicated pairing controls; omit it here.
+        skelly_name_filter = app_settings.classic_audio_name.casefold()
+        devices = [
+            device for device in devices
+            if skelly_name_filter not in str(device.get("name", "")).casefold()
+        ]
+        return {"devices": devices}
+
+    @app.post("/api/audio/external/select")
+    async def external_audio_select(setup: ExternalBluetoothSelectRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            snapshot = await external_audio.prepare(setup.address)
+        except AudioOutputUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        settings = operation_store.load()
+        saved = operation_store.save(
+            settings.model_copy(
+                update={
+                    "audio_output": "external_bluetooth",
+                    "external_bluetooth_address": snapshot.address,
+                    "external_bluetooth_name": snapshot.device_name,
+                }
+            )
+        )
+        external_audio.set_saved_target(snapshot.address, snapshot.device_name)
+        if saved.jaw_follow_speech and saved.hardware_profile != "dac":
+            try:
+                await classic_audio.connect(route=False)
+                remember_speaker_connection()
+            except ClassicAudioUnavailable:
+                pass
+        apply_audio_output_settings()
+        return {
+            "settings": saved.model_dump(),
+            "external_bluetooth": snapshot.to_dict(),
+        }
+
+    @app.post("/api/audio/external/connect")
+    async def external_audio_connect() -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            snapshot = await external_audio.connect(route=True)
+        except AudioOutputUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        apply_audio_output_settings()
+        return snapshot.to_dict()
+
+    @app.post("/api/audio/external/disconnect")
+    async def external_audio_disconnect() -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            snapshot = await external_audio.disconnect()
+        except AudioOutputUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        apply_audio_output_settings()
+        return snapshot.to_dict()
+
+    @app.post("/api/audio/external/forget")
+    async def external_audio_forget() -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            snapshot = await external_audio.forget()
+        except AudioOutputUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        settings = operation_store.load()
+        saved = operation_store.save(
+            settings.model_copy(
+                update={
+                    "audio_output": "skelly",
+                    "external_bluetooth_address": None,
+                    "external_bluetooth_name": None,
+                }
+            )
+        )
+        apply_audio_output_settings()
+        return {"settings": saved.model_dump(), "external_bluetooth": snapshot.to_dict()}
 
     @app.get("/api/audio/status")
     async def classic_audio_status() -> dict[str, object]:

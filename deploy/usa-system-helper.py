@@ -18,6 +18,7 @@ HOTSPOT = "USA-Setup"
 HOME = "USA-Home"
 HOTSPOT_SSID = "UltraSkellyAdvanced-Setup"
 SUPPORT_USER = "dadtech"
+AUDIO_SESSION_USERS = {"dadtech", "skelly-ai"}
 DATA_DIR = pathlib.Path("/var/lib/skelly-ai")
 ENV_FILE = pathlib.Path("/etc/skelly-ai/skelly-ai.env")
 STATE = DATA_DIR / "onboarding.json"
@@ -590,11 +591,164 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
 
 
 
+
+
+def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
+    """Ensure an allowlisted PipeWire user session is available for Bluetooth audio."""
+    if session_user not in AUDIO_SESSION_USERS:
+        raise SystemExit("Unsupported audio session")
+    if session_user != SUPPORT_USER:
+        if run("id", session_user, check=False).returncode != 0:
+            raise SystemExit("Audio session user is unavailable")
+        uid = run("id", "-u", session_user).stdout.strip()
+        run("loginctl", "enable-linger", session_user, check=False)
+        run("systemctl", "start", f"user@{uid}.service", check=False)
+        runtime = f"/run/user/{uid}"
+        bus = pathlib.Path(runtime) / "bus"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not bus.exists():
+            time.sleep(0.25)
+        env = [
+            "env",
+            f"XDG_RUNTIME_DIR={runtime}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+        ]
+        run(
+            "runuser", "-u", session_user, "--", *env,
+            "systemctl", "--user", "enable", "--now",
+            "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service",
+            check=False, timeout=20,
+        )
+        return
+
+    # dadtech is the managed Skelly jaw-audio session.
+    if run("id", SUPPORT_USER, check=False).returncode != 0:
+        run("useradd", "--create-home", "--shell", "/bin/bash", SUPPORT_USER)
+        run("passwd", "--lock", SUPPORT_USER, check=False)
+    uid = run("id", "-u", SUPPORT_USER).stdout.strip()
+    group = run("id", "-gn", SUPPORT_USER).stdout.strip()
+    passwd_entry = run("getent", "passwd", SUPPORT_USER).stdout.strip()
+    home = pathlib.Path(passwd_entry.split(":")[5] if passwd_entry.count(":") >= 5 else f"/home/{SUPPORT_USER}")
+    config_dir = home / ".config" / "wireplumber" / "wireplumber.conf.d"
+    config_path = config_dir / "50-headless-bluetooth.conf"
+    desired = (
+        "wireplumber.profiles = {\n"
+        "  main = {\n"
+        "    monitor.bluez = required\n"
+        "    monitor.bluez.seat-monitoring = disabled\n"
+        "  }\n"
+        "}\n"
+        "monitor.bluez.properties = {\n"
+        "  bluez5.roles = [ a2dp_sink a2dp_source ]\n"
+        "}\n"
+    )
+    config_changed = True
+    try:
+        config_changed = config_path.read_text("utf-8") != desired
+    except OSError:
+        pass
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(desired, encoding="utf-8")
+    shutil.chown(home / ".config", user=SUPPORT_USER, group=group)
+    for path in [home / ".config" / "wireplumber", config_dir, config_path]:
+        shutil.chown(path, user=SUPPORT_USER, group=group)
+
+    for hardware_group in ("audio", "video", "render", "plugdev", "bluetooth"):
+        if run("getent", "group", hardware_group, check=False).returncode == 0:
+            run("usermod", "-aG", hardware_group, SUPPORT_USER, check=False)
+    run("loginctl", "enable-linger", SUPPORT_USER, check=False)
+    run("systemctl", "start", f"user@{uid}.service", check=False)
+
+    runtime = f"/run/user/{uid}"
+    bus = pathlib.Path(runtime) / "bus"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not bus.exists():
+        time.sleep(0.25)
+    env = [
+        "env",
+        f"XDG_RUNTIME_DIR={runtime}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+    ]
+    run(
+        "runuser", "-u", SUPPORT_USER, "--", *env,
+        "systemctl", "--user", "enable", "--now",
+        "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service",
+        check=False, timeout=20,
+    )
+    if config_changed:
+        run(
+            "runuser", "-u", SUPPORT_USER, "--", *env,
+            "systemctl", "--user", "restart",
+            "wireplumber.service", "pipewire.service", "pipewire-pulse.service",
+            check=False, timeout=20,
+        )
+
+def audio_session_exec(program: str, arguments: list[str]) -> None:
+    """Execute an allowlisted PipeWire client in an explicitly allowlisted user session."""
+    session_user = SUPPORT_USER
+    if len(arguments) >= 2 and arguments[0] == "--session":
+        session_user = arguments[1]
+        arguments = arguments[2:]
+    if session_user not in AUDIO_SESSION_USERS:
+        raise SystemExit("Unsupported audio session")
+    if program not in {"wpctl", "pw-play"}:
+        raise SystemExit("Unsupported audio program")
+    if program == "wpctl":
+        if not arguments or arguments[0] not in {"status", "inspect", "set-default", "set-volume", "get-volume", "set-mute"}:
+            raise SystemExit("Unsupported wpctl action")
+    else:
+        allowed_flags = {"--target", "--raw", "--rate", "--channels", "--format"}
+        index = 0
+        while index < len(arguments):
+            item = arguments[index]
+            if item == "-" or item.startswith("/tmp/skelly-"):
+                index += 1
+                continue
+            if item not in allowed_flags:
+                raise SystemExit("Unsupported pw-play argument")
+            if item == "--raw":
+                index += 1
+                continue
+            if index + 1 >= len(arguments):
+                raise SystemExit("Missing pw-play argument value")
+            value = arguments[index + 1]
+            if item == "--target" and not re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+                raise SystemExit("Invalid PipeWire target")
+            if item in {"--rate", "--channels"} and not value.isdigit():
+                raise SystemExit("Invalid numeric pw-play argument")
+            if item == "--format" and value not in {"s16", "s16le"}:
+                raise SystemExit("Unsupported pw-play format")
+            index += 2
+    # Ensure the selected session exists.  Only dadtech receives USA's custom
+    # WirePlumber policy; skelly-ai is merely started/enabled so its existing
+    # Soundcore ownership is preserved.
+    audio_session_prepare(session_user)
+    uid = run("id", "-u", session_user).stdout.strip()
+    runtime = f"/run/user/{uid}"
+    env = [
+        "env",
+        f"XDG_RUNTIME_DIR={runtime}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+        program,
+        *arguments,
+    ]
+    os.execvp("runuser", ["runuser", "-u", session_user, "--", *env])
+
 def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit("Missing action")
     action = sys.argv[1]
-    if action == "network-boot": network_boot()
+    if action == "audio-session-prepare":
+        args = sys.argv[2:]
+        session_user = SUPPORT_USER
+        if len(args) == 2 and args[0] == "--session":
+            session_user = args[1]
+        elif args:
+            raise SystemExit("Unsupported audio-session-prepare arguments")
+        audio_session_prepare(session_user)
+    elif action == "audio-wpctl": audio_session_exec("wpctl", sys.argv[2:])
+    elif action == "audio-pw-play": audio_session_exec("pw-play", sys.argv[2:])
+    elif action == "network-boot": network_boot()
     elif action == "bluetooth-prepare": prepare_bluetooth()
     elif action == "wifi-list": wifi_list()
     elif action == "wifi-refresh": wifi_refresh()

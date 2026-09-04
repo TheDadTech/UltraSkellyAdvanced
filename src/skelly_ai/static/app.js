@@ -5,6 +5,7 @@ const topConnectSkelly = document.querySelector("#top-connect-skelly");
 const topConnectResult = document.querySelector("#top-connect-result");
 const headerPropStatus = document.querySelector("#header-prop-status");
 const headerSpeakerStatus = document.querySelector("#header-speaker-status");
+const headerSpeakerLabel = document.querySelector("#header-speaker-label");
 const headerDacStatus = document.querySelector("#header-dac-status");
 const headerAiStatus = document.querySelector("#header-ai-status");
 const headerFppStatus = document.querySelector("#header-fpp-status");
@@ -78,6 +79,33 @@ const speakerAddress = document.querySelector("#speaker-address");
 const speakerConnect = document.querySelector("#speaker-connect");
 const speakerDisconnect = document.querySelector("#speaker-disconnect");
 const speakerResult = document.querySelector("#speaker-result");
+const audioOutputSelect = document.querySelector("#audio-output-select");
+const audioOutputStatus = document.querySelector("#audio-output-status");
+const audioOutputNote = document.querySelector("#audio-output-note");
+const audioOutputResult = document.querySelector("#audio-output-result");
+const saveAudioOutput = document.querySelector("#save-audio-output");
+const jawFollowSpeech = document.querySelector("#jaw-follow-speech");
+const jawSyncOffset = document.querySelector("#jaw-sync-offset");
+const jawSyncOffsetValue = document.querySelector("#jaw-sync-offset-value");
+const jawMirrorLevel = document.querySelector("#jaw-mirror-level");
+const jawMirrorLevelValue = document.querySelector("#jaw-mirror-level-value");
+const externalBluetoothControls = document.querySelector("#external-bluetooth-controls");
+const externalBluetoothDevice = document.querySelector("#external-bluetooth-device");
+const externalBluetoothScan = document.querySelector("#external-bluetooth-scan");
+const externalBluetoothPair = document.querySelector("#external-bluetooth-pair");
+const externalBluetoothReconnect = document.querySelector("#external-bluetooth-reconnect");
+const externalBluetoothForget = document.querySelector("#external-bluetooth-forget");
+const externalBluetoothResult = document.querySelector("#external-bluetooth-result");
+let audioOutputInteractionUntil = 0;
+let externalBluetoothBusy = false;
+
+function holdAudioOutputSelection(ms = 6000) {
+  audioOutputInteractionUntil = Math.max(audioOutputInteractionUntil, Date.now() + ms);
+}
+
+function audioOutputSelectionLocked() {
+  return externalBluetoothBusy || Date.now() < audioOutputInteractionUntil;
+}
 const dacState = document.querySelector("#dac-state");
 const dacTarget = document.querySelector("#dac-target");
 const dacUniverse = document.querySelector("#dac-universe");
@@ -440,6 +468,15 @@ function renderOperation(operation) {
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
+  if (audioOutputSelect && document.activeElement !== audioOutputSelect && !audioOutputSelectionLocked()) {
+    audioOutputSelect.value = settings.audio_output || "skelly";
+  }
+  if (jawFollowSpeech) jawFollowSpeech.checked = settings.jaw_follow_speech !== false;
+  if (jawSyncOffset && document.activeElement !== jawSyncOffset) jawSyncOffset.value = settings.jaw_sync_offset_ms ?? -750;
+  if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = `${jawSyncOffset?.value ?? 0} ms`;
+  if (jawMirrorLevel && document.activeElement !== jawMirrorLevel) jawMirrorLevel.value = settings.jaw_mirror_level_percent ?? 100;
+  if (jawMirrorLevelValue) jawMirrorLevelValue.textContent = `${jawMirrorLevel?.value ?? 100}%`;
+  renderAudioOutputControls(settings);
   nagDelayValue.textContent = `${nagDelay.value}s`;
   nagCooldownValue.textContent = `${nagCooldown.value}s`;
   nagMaxValue.textContent = nagMax.value;
@@ -486,11 +523,30 @@ function renderStatus(body) {
   setStatusLight(statusLights.pi, "ok");
   headerPropStatus.textContent = body.hardware.connected ? "connected" : "disconnected";
   setStatusLight(statusLights.prop, body.hardware.connected ? "ok" : "error");
-  const speakerReady = Boolean(body.audio.connected && body.audio.sink_ready);
+  const selectedAudio = body.operation?.settings?.audio_output || "skelly";
+  const externalSpeakerReady = Boolean(body.external_audio?.connected && body.external_audio?.sink_id);
+  const skellySpeakerReady = Boolean(body.audio?.connected && body.audio?.sink_id);
+  const systemSpeakerReady = selectedAudio === "system";
+  const speakerReady = selectedAudio === "external_bluetooth"
+    ? externalSpeakerReady
+    : selectedAudio === "system"
+      ? systemSpeakerReady
+      : skellySpeakerReady;
+  if (headerSpeakerLabel) {
+    headerSpeakerLabel.textContent = selectedAudio === "external_bluetooth"
+      ? "EXTERNAL SPEAKER"
+      : selectedAudio === "system"
+        ? "PI / USB AUDIO"
+        : "SKELLY SPEAKER";
+  }
   const propReady = Boolean(body.hardware?.connected);
   if (skellyConnectionsSummary) skellyConnectionsSummary.textContent = `${propReady ? "Prop connected" : "Prop disconnected"} · ${speakerReady ? "Speaker ready" : "Speaker not ready"}`;
   if (skellyConnectionsDetails && propReady && speakerReady && !skellyConnectionsDetails.dataset.userOpened) skellyConnectionsDetails.open = false;
-  headerSpeakerStatus.textContent = speakerReady ? "connected" : "disconnected";
+  headerSpeakerStatus.textContent = selectedAudio === "external_bluetooth"
+    ? externalSpeakerReady
+      ? (body.external_audio?.device_name || "connected")
+      : body.external_audio?.address ? "reconnecting…" : "disconnected"
+    : speakerReady ? "connected" : "disconnected";
   setStatusLight(statusLights.speaker, speakerReady ? "ok" : "off");
   const profile = body.operation?.settings?.hardware_profile ?? "stock";
   headerDacStatus.textContent = profile === "dac"
@@ -551,6 +607,7 @@ function renderStatus(body) {
     button.disabled = !body.hardware.connected || !body.hardware.movement_armed;
   });
   renderAudioStatus(body.audio, body.state.mode);
+  renderAudioOutputStatus(body);
   const dac = body.dac;
   dacState.textContent = dac.transmitting ? "transmitting" : dac.armed ? "armed" : "disarmed";
   dacState.classList.toggle("neutral", !dac.transmitting);
@@ -1007,6 +1064,46 @@ function renderManualResult(body) {
     : `Response ready, but audio could not play: ${body.speech?.error || "speaker unavailable"}`;
 }
 
+function renderAudioOutputControls(settings = currentOperationSettings || {}) {
+  if (!audioOutputSelect) return;
+  const selected = audioOutputSelect.value || settings.audio_output || "skelly";
+  if (externalBluetoothControls) externalBluetoothControls.hidden = selected !== "external_bluetooth";
+  if (audioOutputNote) {
+    if (selected === "skelly") {
+      audioOutputNote.textContent = "Uses the existing Skelly speaker pairing and auto-connect path.";
+    } else if (selected === "external_bluetooth") {
+      audioOutputNote.textContent = jawFollowSpeech?.checked !== false
+        ? "Speech plays through the external speaker while Skelly remains connected for jaw-follow audio."
+        : "Speech plays only through the selected external Bluetooth speaker.";
+    } else {
+      audioOutputNote.textContent = jawFollowSpeech?.checked !== false
+        ? "Speech uses the Pi's current system output while Skelly remains connected for jaw-follow audio."
+        : "Speech uses the Pi's current system/USB audio output.";
+    }
+  }
+}
+
+function renderAudioOutputStatus(body) {
+  if (!audioOutputStatus || !body.operation?.settings) return;
+  const settings = body.operation.settings;
+  const selected = settings.audio_output || "skelly";
+  const external = body.external_audio || {};
+  if (selected === "skelly") {
+    audioOutputStatus.textContent = body.audio?.connected ? "Skelly connected" : "Skelly selected";
+    audioOutputStatus.classList.toggle("neutral", !body.audio?.connected);
+  } else if (selected === "external_bluetooth") {
+    audioOutputStatus.textContent = external.connected
+      ? (external.device_name || "External connected")
+      : external.address ? "reconnecting…" : "speaker needed";
+    audioOutputStatus.classList.toggle("neutral", !external.connected);
+    if (externalBluetoothResult && external.last_error) externalBluetoothResult.textContent = external.last_error;
+  } else {
+    audioOutputStatus.textContent = "Pi / USB audio";
+    audioOutputStatus.classList.add("neutral");
+  }
+  renderAudioOutputControls(settings);
+}
+
 function operationSettingsPayload() {
   return {
     skelly_name: skellyName.value.trim() || "Skelly",
@@ -1016,6 +1113,12 @@ function operationSettingsPayload() {
     device_configured: currentOperationSettings?.device_configured !== false,
     control_address: currentOperationSettings?.control_address ?? null,
     speaker_address: currentOperationSettings?.speaker_address ?? null,
+    audio_output: audioOutputSelect?.value || currentOperationSettings?.audio_output || "skelly",
+    external_bluetooth_address: currentOperationSettings?.external_bluetooth_address ?? null,
+    external_bluetooth_name: currentOperationSettings?.external_bluetooth_name ?? null,
+    jaw_follow_speech: jawFollowSpeech?.checked !== false,
+    jaw_sync_offset_ms: Number(jawSyncOffset?.value ?? -750),
+    jaw_mirror_level_percent: Number(jawMirrorLevel?.value ?? currentOperationSettings?.jaw_mirror_level_percent ?? 100),
     allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
@@ -2267,8 +2370,13 @@ function renderUpdateStatus(body) {
     rollbackUpdate.disabled = true;
     checkForUpdates.disabled = true;
     monitorUpdateInstallation();
-  } else if (["failed", "succeeded", "rolled_back"].includes(installation.state)) {
+  } else if (installation.state === "failed") {
     updateResult.textContent = installation.message || body.message;
+  } else if (["succeeded", "rolled_back"].includes(installation.state)) {
+    const installationVersion = String(installation.version || "");
+    if (installationVersion && installationVersion === String(body.current_version || "")) {
+      updateResult.textContent = installation.message || body.message;
+    }
   }
 }
 
@@ -2628,3 +2736,137 @@ setInterval(() => refreshAudioStatus().catch(() => {}), 15000);
 setInterval(() => refreshPerceptionStatus().catch(() => {}), 400);
 setInterval(() => refreshBrainStatus().catch(() => {}), 5000);
 setInterval(pollManualCamera, 1800);
+
+
+if (audioOutputSelect) {
+  audioOutputSelect.addEventListener("change", async () => {
+    holdAudioOutputSelection(10000);
+    renderAudioOutputControls();
+    audioOutputResult.textContent = "Saving audio output…";
+    try {
+      const body = await saveOperationSettings();
+      if (body?.settings) currentOperationSettings = body.settings;
+      audioOutputResult.textContent = "Audio output saved.";
+    } catch (error) {
+      audioOutputResult.textContent = error.message;
+    }
+  });
+}
+if (jawFollowSpeech) {
+  jawFollowSpeech.addEventListener("change", () => renderAudioOutputControls());
+}
+if (jawSyncOffset) {
+  jawSyncOffset.addEventListener("input", () => {
+    if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = `${jawSyncOffset.value} ms`;
+  });
+}
+if (jawMirrorLevel) {
+  jawMirrorLevel.addEventListener("input", () => {
+    if (jawMirrorLevelValue) jawMirrorLevelValue.textContent = `${jawMirrorLevel.value}%`;
+  });
+}
+if (saveAudioOutput) {
+  saveAudioOutput.addEventListener("click", async () => {
+    saveAudioOutput.disabled = true;
+    audioOutputResult.textContent = "Saving audio output…";
+    try {
+      await saveOperationSettings();
+      await refreshStatus();
+      audioOutputResult.textContent = "Audio output saved.";
+    } catch (error) {
+      audioOutputResult.textContent = error.message;
+    } finally {
+      saveAudioOutput.disabled = false;
+    }
+  });
+}
+if (externalBluetoothDevice) {
+  externalBluetoothDevice.addEventListener("change", () => {
+    externalBluetoothPair.disabled = !externalBluetoothDevice.value;
+  });
+}
+if (externalBluetoothScan) {
+  externalBluetoothScan.addEventListener("click", async () => {
+    externalBluetoothBusy = true;
+    holdAudioOutputSelection(20000);
+    externalBluetoothScan.disabled = true;
+    externalBluetoothResult.textContent = "Scanning for Bluetooth devices…";
+    try {
+      const body = await request("/api/audio/external/scan", { method: "POST" });
+      externalBluetoothDevice.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = body.devices?.length ? "Choose a speaker" : "No Bluetooth devices found";
+      externalBluetoothDevice.append(placeholder);
+      (body.devices || []).forEach((device) => {
+        const option = document.createElement("option");
+        option.value = device.address;
+        option.textContent = `${device.name} · ${device.address}${device.paired ? " · paired" : ""}`;
+        externalBluetoothDevice.append(option);
+      });
+      externalBluetoothPair.disabled = true;
+      externalBluetoothResult.textContent = body.devices?.length ? "Select your external speaker." : "No devices found. Put the speaker in pairing mode and scan again.";
+    } catch (error) {
+      externalBluetoothResult.textContent = error.message;
+    } finally {
+      externalBluetoothBusy = false;
+      holdAudioOutputSelection(10000);
+      externalBluetoothScan.disabled = false;
+    }
+  });
+}
+if (externalBluetoothPair) {
+  externalBluetoothPair.addEventListener("click", async () => {
+    if (!externalBluetoothDevice.value) return;
+    externalBluetoothBusy = true;
+    holdAudioOutputSelection(20000);
+    externalBluetoothPair.disabled = true;
+    externalBluetoothResult.textContent = "Pairing and connecting…";
+    try {
+      await request("/api/audio/external/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: externalBluetoothDevice.value }),
+      });
+      await refreshStatus();
+      externalBluetoothResult.textContent = "External Bluetooth speaker connected and saved for auto-reconnect.";
+    } catch (error) {
+      externalBluetoothResult.textContent = error.message;
+    } finally {
+      externalBluetoothBusy = false;
+      holdAudioOutputSelection(6000);
+      externalBluetoothPair.disabled = !externalBluetoothDevice.value;
+    }
+  });
+}
+if (externalBluetoothReconnect) {
+  externalBluetoothReconnect.addEventListener("click", async () => {
+    externalBluetoothReconnect.disabled = true;
+    externalBluetoothResult.textContent = "Reconnecting external speaker…";
+    try {
+      const body = await request("/api/audio/external/connect", { method: "POST" });
+      await refreshStatus();
+      externalBluetoothResult.textContent = `Connected to ${body.device_name || "external Bluetooth speaker"}.`;
+    } catch (error) {
+      externalBluetoothResult.textContent = error.message;
+    } finally {
+      externalBluetoothReconnect.disabled = false;
+    }
+  });
+}
+if (externalBluetoothForget) {
+  externalBluetoothForget.addEventListener("click", async () => {
+    externalBluetoothForget.disabled = true;
+    externalBluetoothResult.textContent = "Removing saved external speaker…";
+    try {
+      await request("/api/audio/external/forget", { method: "POST" });
+      if (audioOutputSelect) audioOutputSelect.value = "skelly";
+      await refreshStatus();
+      externalBluetoothResult.textContent = "External Bluetooth speaker forgotten.";
+    } catch (error) {
+      externalBluetoothResult.textContent = error.message;
+    } finally {
+      externalBluetoothForget.disabled = false;
+    }
+  });
+}

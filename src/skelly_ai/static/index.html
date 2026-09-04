@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.25.6">
+    <link rel="stylesheet" href="/static/styles.css?v=0.25.7">
   </head>
   <body>
     <main>
@@ -62,7 +62,7 @@
       <section class="status-card" aria-label="Live service status">
         <div class="service-status"><span id="pi-status-light" class="status-light waiting"></span><span><small>PI SERVICE</small><strong id="connection">Connecting…</strong></span></div>
         <div class="service-status"><span id="prop-status-light" class="status-light waiting"></span><span><small>PROP BLE</small><strong id="header-prop-status">checking</strong></span></div>
-        <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small>SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
+        <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small id="header-speaker-label">SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
         <div class="service-status"><span id="dac-status-light" class="status-light waiting"></span><span><small>HEAD + JAW</small><strong id="header-dac-status">checking</strong></span></div>
         <div class="service-status"><span id="ai-status-light" class="status-light waiting"></span><span><small>VISITOR MONITOR</small><strong id="header-ai-status">stopped</strong></span></div>
         <div class="service-status"><span id="fpp-status-light" class="status-light off"></span><span><small>FPP OVERRIDE</small><strong id="header-fpp-status">disabled</strong></span></div>
@@ -108,6 +108,46 @@
             <button id="start-default-operation" type="button">Start default mode</button>
           </div>
           <p id="setup-start-result" class="result" aria-live="polite"></p>
+        </section>
+
+        <section id="audio-output-section" class="setup-device-card">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">AUDIO OUTPUT</p>
+              <h2>Speaker routing & jaw sync</h2>
+              <p class="muted help-copy">Choose where USA plays speech. Skelly's existing speaker pairing remains saved even when another output is selected.</p>
+            </div>
+            <span id="audio-output-status" class="driver-badge neutral">checking</span>
+          </div>
+          <div class="operation-settings-form">
+            <label><span>Output device</span>
+              <select id="audio-output-select">
+                <option value="skelly">Skelly Speaker</option>
+                <option value="external_bluetooth">External Bluetooth</option>
+                <option value="system">USB / Pi Audio</option>
+              </select>
+            </label>
+            <label class="check-setting"><input id="jaw-follow-speech" type="checkbox" checked><span><strong>Jaw follows speech</strong><small class="help-copy">With DAC, USA animates the jaw from the speech waveform. Without DAC, USA mirrors speech to Skelly's speaker so its audio-reactive jaw can still move.</small></span></label>
+            <label class="range-setting"><span>Bluetooth Sync Compensation <output id="jaw-sync-offset-value">-750 ms</output></span><input id="jaw-sync-offset" type="range" min="-1000" max="1000" step="25" value="-750"><small class="help-copy">Bluetooth speakers can have different built-in audio delays. Adjust this until the external speaker and Skelly jaw are synchronized. Negative values delay the external speaker; positive values delay the jaw path. 0 starts both together.</small></label>
+            <label class="range-setting"><span>Jaw mirror level <output id="jaw-mirror-level-value">100%</output></span><input id="jaw-mirror-level" type="range" min="70" max="100" step="5" value="100"><small class="help-copy">Level sent to Skelly's speaker to trigger its stock audio-reactive jaw. Lower values may stop jaw movement.</small></label>
+          </div>
+          <div id="external-bluetooth-controls" class="setup-discovery" hidden>
+            <div>
+              <strong>External Bluetooth speaker</strong>
+              <p class="muted help-copy">Pair once here. USA remembers this speaker and automatically reconnects it after reboot or when it comes back in range.</p>
+            </div>
+            <label><span>Nearby Bluetooth devices</span><select id="external-bluetooth-device"><option value="">Scan for speakers</option></select></label>
+            <div class="controls">
+              <button id="external-bluetooth-scan" type="button" class="secondary">Scan</button>
+              <button id="external-bluetooth-pair" type="button" disabled>Pair & connect</button>
+              <button id="external-bluetooth-reconnect" type="button" class="secondary">Reconnect</button>
+              <button id="external-bluetooth-forget" type="button" class="disconnect">Forget external</button>
+            </div>
+            <p id="external-bluetooth-result" class="result" aria-live="polite"></p>
+          </div>
+          <p id="audio-output-note" class="muted help-copy"></p>
+          <div class="controls"><button id="save-audio-output" type="button">Save audio output</button></div>
+          <p id="audio-output-result" class="result" aria-live="polite"></p>
         </section>
       </div>
       <div id="panel-voice" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-voice" data-dashboard-panel="voice" hidden>
@@ -779,6 +819,6 @@
         <pre id="diagnostics">Checks have not run yet.</pre>
       </section>
     </main>
-    <script src="/static/app.js?v=0.25.6"></script>
+    <script src="/static/app.js?v=0.25.7"></script>
   </body>
 </html>

@@ -19,6 +19,12 @@ class OperationSettings(BaseModel):
     device_configured: bool = False
     control_address: str | None = None
     speaker_address: str | None = None
+    audio_output: Literal["skelly", "external_bluetooth", "system"] = "skelly"
+    external_bluetooth_address: str | None = None
+    external_bluetooth_name: str | None = None
+    jaw_follow_speech: bool = True
+    jaw_sync_offset_ms: int = Field(default=-750, ge=-1000, le=1000)
+    jaw_mirror_level_percent: int = Field(default=100, ge=70, le=100)
     allow_fpp_override: bool = False
     manual_microphone_enabled: bool = True
     manual_camera_enabled: bool = True

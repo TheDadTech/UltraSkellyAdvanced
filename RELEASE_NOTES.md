@@ -1,14 +1,112 @@
-## 0.25.6 Beta — Interaction tuning, Lure Visitors, snapshots, and multi-trigger AI
+# UltraSkellyAdvanced 0.25.7
 
-- Adds persistent Listening Sensitivity tuning with live microphone threshold diagnostics and a clear would-trigger indicator.
-- Improves Automatic AI Mode so Audio, Face, and Motion can be enabled independently as visitor triggers directly from the Operate tab.
-- Audio can acquire a visitor without requiring camera motion; active conversations tolerate temporary visual misses before confirming departure.
-- Rebalances AI response movement toward natural conversation: head movement is favored heavily, torso movement is secondary, and noisy arm motion is less frequent.
-- Reduces repetitive self-introductions while preserving the configured Skelly name when it is relevant or directly requested.
-- Adds Lure Visitors behavior with Disabled, Media, and AI modes, delay, cooldown, visitor-presence gating, and a 1–5 max-lures control.
-- Classic media presets can be flagged for Lure responses and now use independent Head, Arm, Torso, and All movement controls instead of fixed movement combinations.
-- Captures a local camera snapshot when visitor speech is accepted, retains the newest 100 images, and shows clickable thumbnails alongside interaction events.
-- Keeps all 0.25.5 voice-provider, ElevenLabs voice-library/remaining-credit, Help Mode, updater, and UI improvements.
+- Proven dual-session Bluetooth audio routing: Soundcore primary speech uses the `skelly-ai` PipeWire session while Animated Skelly(Live) jaw-mirror audio uses the `dadtech` PipeWire session.
+- External Bluetooth, stock jaw audio, and Skelly movement/control can remain connected simultaneously across reboot.
+- Renamed Audio/Jaw Sync to **Bluetooth Sync Compensation** and set the new-install default to **-750 ms**, based on real stock Skelly + Soundcore testing.
+- External Bluetooth never silently falls back to the Skelly default sink when its PipeWire output is unavailable.
+- Stale successful-update messages from older installed versions no longer remain pinned in the Updates card.
+
+# 0.25.7.dev8 smoke-test changes
+
+- Routes external Bluetooth speech through the `skelly-ai` PipeWire user session.
+- Keeps Animated Skelly(Live) jaw-mirror audio in the `dadtech` PipeWire user session.
+- Makes `audio-pw-play` and `audio-wpctl` session-aware with a strict `dadtech` / `skelly-ai` allowlist.
+- Prevents External Bluetooth from falling back to an unrelated default sink when its PipeWire sink is unavailable.
+- External-speaker readiness now checks the PipeWire session that actually owns the Soundcore.
+- Preserves the proven three-link topology: Skelly control BLE + Skelly jaw/audio + external Bluetooth speaker.
+
+# UltraSkellyAdvanced 0.25.7
+
+## Highlights
+
+- Adds Setup > Audio Output with **Skelly Speaker**, **External Bluetooth**, and **USB / Pi Audio** routing.
+- External Bluetooth devices can be scanned, paired, remembered, forgotten, and automatically reconnected.
+- Keeps the existing Skelly control/speaker pairing behavior separate from the new External Bluetooth route.
+- Adds **Jaw follows speech** for stock/no-DAC Skelly by mirroring reply audio to Animated Skelly(Live) while the external speaker carries the main room audio.
+- Adds **Jaw mirror level** (70–100%, default 100%) because real-hardware testing confirmed low mirror levels may not trigger the stock jaw.
+- Replaces the one-way jaw delay with **Audio/Jaw Sync** from -1000 ms to +1000 ms in 25 ms steps. Negative values delay the external speaker; positive values delay the jaw mirror. The earlier dev default was -200 ms; 0.25.7 updates the reference default to -750 ms after full dual-session hardware testing.
+- Uses the same signed dual-output timing for AI replies and Operator text-to-voice.
+- External-speaker failures no longer block AI/Operator mode startup; reconnect runs in the background.
+- Header status changes between **Skelly Speaker**, **External Speaker**, and **Pi / USB Audio** based on the active route.
+- Hardens headless PipeWire/WirePlumber startup: the `dadtech` audio session now has linger enabled, a headless Bluetooth policy, boot-time user-manager ordering, and helper-driven recovery so cold boots do not leave audio at `Host is down`.
+- PipeWire control/playback is intentionally executed in the persistent `dadtech` audio session while the main USA web service remains isolated as `skelly-ai`.
+
+## Smoke-tested behavior
+
+On the reference Pi, Soundcore Boom V2 and Animated Skelly(Live) coexist as separate PipeWire Bluetooth sinks. External speech plays through the Soundcore while mirrored Skelly audio drives the stock jaw. Earlier testing used -200 ms; full dual-session testing later established -750 ms as the reference compensation for the tested Soundcore + stock Skelly pair.
+
+# 0.25.7.dev6 smoke-test changes
+
+- Replaces one-way Jaw Sync Offset with **Audio/Jaw Sync** from -1000 ms to +1000 ms in 25 ms steps.
+- Earlier dev default was -200 ms; 0.25.7 uses -750 ms based on the final tested dual-session topology.
+- Negative values delay the external/main speaker while Skelly's jaw-mirror audio starts first.
+- Positive values delay the Skelly jaw mirror.
+- Applies the same signed timing behavior to file playback and streamed/operator TTS so Operator and AI use consistent dual-output sync.
+
+## 0.25.7.dev5 — Shared audio session + reliable jaw mirror
+
+- Routes PipeWire control/playback through the working `dadtech` user session while the main USA service remains isolated as `skelly-ai`.
+- Fixes slow audio-status/mode transitions caused by the service looking at the wrong PipeWire session.
+- External Bluetooth remains the main speech output while Animated Skelly(Live) receives a separate mirrored stream for stock jaw movement.
+- Jaw mirror level defaults to 100% and is adjustable from 70–100%; testing showed lower levels can fail to trigger the stock jaw.
+- Jaw sync offset now defaults to 0 ms.
+- Keeps external-audio reconnect non-blocking so Operate/AI mode can start even if a speaker is unavailable.
+
+## 0.25.7.dev4 — Non-blocking external audio startup
+
+- Fixed Operate/AI startup failing when the selected External Bluetooth speaker is asleep, out of range, or times out.
+- Skelly control, movement, and Live Mode now become ready independently of External Bluetooth availability.
+- External Bluetooth reconnection remains a background task and reports a degraded/reconnecting state instead of returning a 503 for the operating mode.
+- Retains dev3 headless WirePlumber support, exact PipeWire sink targeting, stock-jaw audio mirror, and dynamic speaker indicator.
+
+## 0.25.7.dev3 — External audio routing smoke fix
+
+- Adds the headless WirePlumber Bluetooth-seat configuration required for A2DP sinks on USA controllers.
+- Uses PipeWire node names for explicit external-speaker and Skelly jaw-mirror playback targets.
+- Keeps the Skelly sink at unity gain when it is used as the stock audio-reactive jaw mirror.
+- Reconnects the Skelly jaw-audio path alongside the saved external Bluetooth speaker.
+- Header speaker indicator now switches between Skelly Speaker, External Speaker, and Pi / USB Audio based on the selected route.
+- Retains the dev2 scan/pair UI race fix and verifies Bluetooth connection state before reporting success.
+
+# UltraSkellyAdvanced Release Notes
+
+## 0.25.7.dev1 — External audio smoke test
+
+- Adds Setup > Audio Output with **Skelly Speaker**, **External Bluetooth**, and **USB / Pi Audio** choices.
+- Keeps the existing Skelly-speaker pairing/auto-connect path intact when Skelly Speaker is selected.
+- Adds first-use discovery, pairing, saving, manual reconnect, forget, and background auto-reconnect for one External Bluetooth speaker.
+- Adds **Jaw follows speech** and a 0–500 ms **Jaw sync offset** control.
+- With DAC, jaw animation continues to follow the speech waveform in software regardless of speaker output.
+- Without DAC, external/system speech can be mirrored to the connected Skelly speaker so its stock audio-reactive jaw can continue moving.
+- If the Skelly jaw-audio path is unavailable, external/system speech is allowed to continue instead of blocking AI/Operator mode.
+
+> Smoke-test note: stock/no-DAC jaw-follow depends on Skelly's onboard audio-reactive jaw receiving the mirrored speech audio. The real-hardware test should verify Bluetooth dual-output latency and whether the Skelly speaker level is acceptable alongside the external speaker.
+
+## 0.25.6 Build 2 - Visitor engagement and Classic presets
+
+## 0.25.6.dev5 — Multi-trigger AI + snapshot thumbnails
+
+- Adds compact **Trigger on** checkboxes directly in Automatic AI Mode for Audio, Face, and Motion.
+- Any enabled source can acquire a visitor; Audio wakes a new session immediately while Face/Motion retain visual confirmation behavior.
+- Shows live activity dots for the three trigger sources.
+- Replaces the event-log **View snapshot** text link with a clickable interaction thumbnail on desktop and mobile.
+- Retains all 0.25.6.dev4 listening, lure, movement, and snapshot behavior.
+
+
+- Active AI conversations keep listening through brief camera misses, so a stationary visitor does not have to move again just to reopen the listening window. Departure still requires the configured consecutive clear-frame confirmation.
+- Added Visitor Engagement / Lure Mode: Disabled, Media, or AI, with first-nag delay, cooldown, max nags per visitor (1-5), and presence gating.
+- Media Lure Mode reuses Classic Mode media files that are explicitly marked `Use as Lure response` and avoids repeating the same clip when alternatives exist.
+- AI Lure Mode generates one short attention-getting line through the active AI/voice configuration.
+- Classic preset movement is now an independent Head / Arm / Torso checkbox bitmask with an All convenience toggle, allowing every movement combination.
+- Build 1 listening sensitivity, 90/50/30 response movement weighting, and reduced name repetition remain intact.
+
+## 0.25.6 Build 1 - Interaction movement tuning
+
+- AI response movement is now controller-weighted instead of model-selected: head 90%, torso 50%, arms 30% over time.
+- Added the combined stock head+torso movement bitfield so the requested weighting can be achieved without overusing the noisy arms.
+- Character prompting now avoids repeated self-introductions during an active conversation while still honoring the configured Skelly name when asked.
+- Listening sensitivity tuning from the 0.25.6 listening test remains unchanged.
+- Stock BLE still has no verified torso position/center command; responses continue to send a guaranteed Stop after speech rather than guessing at a recenter motion.
 
 ## 0.25.5 Stage 2 test checkpoint
 
