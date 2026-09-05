@@ -89,6 +89,7 @@ const jawSyncOffset = document.querySelector("#jaw-sync-offset");
 const jawSyncOffsetValue = document.querySelector("#jaw-sync-offset-value");
 const jawMirrorLevel = document.querySelector("#jaw-mirror-level");
 const jawMirrorLevelValue = document.querySelector("#jaw-mirror-level-value");
+const muteSkellySpeakerOnExternal = document.querySelector("#mute-skelly-speaker-on-external");
 const externalBluetoothControls = document.querySelector("#external-bluetooth-controls");
 const externalBluetoothDevice = document.querySelector("#external-bluetooth-device");
 const externalBluetoothScan = document.querySelector("#external-bluetooth-scan");
@@ -476,6 +477,7 @@ function renderOperation(operation) {
   if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = `${jawSyncOffset?.value ?? 0} ms`;
   if (jawMirrorLevel && document.activeElement !== jawMirrorLevel) jawMirrorLevel.value = settings.jaw_mirror_level_percent ?? 100;
   if (jawMirrorLevelValue) jawMirrorLevelValue.textContent = `${jawMirrorLevel?.value ?? 100}%`;
+  if (muteSkellySpeakerOnExternal) muteSkellySpeakerOnExternal.checked = settings.mute_skelly_speaker_on_external !== false;
   renderAudioOutputControls(settings);
   nagDelayValue.textContent = `${nagDelay.value}s`;
   nagCooldownValue.textContent = `${nagCooldown.value}s`;
@@ -1119,6 +1121,8 @@ function operationSettingsPayload() {
     jaw_follow_speech: jawFollowSpeech?.checked !== false,
     jaw_sync_offset_ms: Number(jawSyncOffset?.value ?? -750),
     jaw_mirror_level_percent: Number(jawMirrorLevel?.value ?? currentOperationSettings?.jaw_mirror_level_percent ?? 100),
+    mute_skelly_speaker_on_external: muteSkellySpeakerOnExternal?.checked !== false,
+    skelly_speaker_restore_volume: currentOperationSettings?.skelly_speaker_restore_volume ?? 128,
     allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
@@ -1637,12 +1641,15 @@ speakerVolume.addEventListener("change", async () => {
   speakerVolume.disabled = true;
   speakerVolumeResult.textContent = "Setting Skelly's speaker volume...";
   try {
-    renderMediaStatus(await request("/api/media/volume", {
+    const body = await request("/api/media/volume", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ volume: Number(speakerVolume.value) }),
-    }));
-    speakerVolumeResult.textContent = `Volume set to ${speakerVolumeValue.textContent}.`;
+    });
+    renderMediaStatus(body);
+    speakerVolumeResult.textContent = body.external_auto_muted
+      ? "External Bluetooth is active: Skelly stays muted while this level is saved for restore."
+      : `Volume set to ${speakerVolumeValue.textContent}.`;
   } catch (error) {
     speakerVolumeResult.textContent = error.message;
   } finally {

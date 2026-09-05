@@ -25,6 +25,8 @@ class OperationSettings(BaseModel):
     jaw_follow_speech: bool = True
     jaw_sync_offset_ms: int = Field(default=-750, ge=-1000, le=1000)
     jaw_mirror_level_percent: int = Field(default=100, ge=70, le=100)
+    mute_skelly_speaker_on_external: bool = True
+    skelly_speaker_restore_volume: int = Field(default=128, ge=0, le=255)
     allow_fpp_override: bool = False
     manual_microphone_enabled: bool = True
     manual_camera_enabled: bool = True

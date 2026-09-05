@@ -13,6 +13,8 @@ def test_operation_settings_audio_output_defaults_preserve_skelly_path() -> None
     assert settings.jaw_follow_speech is True
     assert settings.jaw_sync_offset_ms == -750
     assert settings.jaw_mirror_level_percent == 100
+    assert settings.mute_skelly_speaker_on_external is True
+    assert settings.skelly_speaker_restore_volume == 128
 
 
 def test_simulated_external_bluetooth_can_be_selected_and_saved(tmp_path) -> None:
@@ -57,6 +59,7 @@ def test_static_ui_contains_external_audio_controls() -> None:
     assert 'id="jaw-follow-speech"' in html
     assert 'id="jaw-sync-offset"' in html
     assert 'min="-1000" max="1000" step="25" value="-750"' in html
+    assert 'id="mute-skelly-speaker-on-external"' in html
 
 
 def test_external_bluetooth_failure_does_not_block_manual_operation(tmp_path, monkeypatch) -> None:
@@ -108,3 +111,56 @@ def test_local_speech_can_route_primary_and_jaw_to_different_sessions(tmp_path) 
         "sudo", str(helper), "audio-pw-play", "--session", "dadtech",
         "--target", "bluez_output.skelly",
     ]
+
+
+def test_external_audio_auto_mutes_skelly_and_restores_volume(tmp_path) -> None:
+    app = create_app(Settings(simulation=True, data_dir=tmp_path))
+    with TestClient(app) as client:
+        settings = client.get("/api/operation/status").json()["settings"]
+        settings["device_configured"] = True
+        client.post("/api/operation/settings", json=settings)
+        client.post("/api/hardware/connect", json={"address": None})
+        before = client.post("/api/media/volume", json={"volume": 180})
+        assert before.status_code == 200
+        assert before.json()["volume"] == 180
+
+        settings = client.get("/api/operation/status").json()["settings"]
+        settings["audio_output"] = "external_bluetooth"
+        settings["external_bluetooth_address"] = "F4:2B:7D:30:BB:94"
+        settings["external_bluetooth_name"] = "soundcore Boom V2"
+        saved = client.post("/api/operation/settings", json=settings)
+        assert saved.status_code == 200
+        assert saved.json()["skelly_speaker_restore_volume"] == 180
+        assert client.get("/api/media/status").json()["volume"] == 0
+
+        settings = saved.json()
+        settings["audio_output"] = "skelly"
+        restored = client.post("/api/operation/settings", json=settings)
+        assert restored.status_code == 200
+        assert client.get("/api/media/status").json()["volume"] == 180
+
+
+def test_provider_switch_preserves_external_dual_session_routing(tmp_path) -> None:
+    app = create_app(Settings(simulation=True, data_dir=tmp_path))
+    with TestClient(app) as client:
+        settings = client.get("/api/operation/status").json()["settings"]
+        settings.update({
+            "audio_output": "external_bluetooth",
+            "external_bluetooth_address": "F4:2B:7D:30:BB:94",
+            "external_bluetooth_name": "soundcore Boom V2",
+        })
+        client.post("/api/operation/settings", json=settings)
+        speech = app.state.local_speech
+        before = speech.status()
+
+        providers = client.get("/api/providers/status").json()["settings"]
+        providers["brain_provider"] = "groq"
+        providers["voice_provider"] = "elevenlabs"
+        saved = client.post("/api/providers/settings", json=providers)
+        assert saved.status_code == 200
+        after = speech.status()
+
+        assert after["playback_session"] == before["playback_session"]
+        assert after["jaw_mirror_session"] == before["jaw_mirror_session"]
+        assert after["playback_target"] == before["playback_target"]
+        assert after["jaw_mirror_target"] == before["jaw_mirror_target"]

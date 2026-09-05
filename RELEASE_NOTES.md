@@ -1,3 +1,14 @@
+# UltraSkellyAdvanced 0.25.8
+
+## Audio polish / maintenance release
+
+- Adds **Mute Skelly speaker with external audio** (default ON). The prop's BLE speaker volume is set to 0 while the independent full-strength A2DP jaw-mirror stream remains active.
+- Remembers the user's prior Skelly speaker volume and restores it when switching back from External Bluetooth. Changes to the header volume while externally muted update the restore value without unmuting Skelly.
+- Keeps provider changes hot-applied and re-asserts existing dual-session routing without reconnecting or restarting the audio sessions.
+- Adds regression coverage for external auto-mute/restore and provider-switch route preservation.
+- Corrects the bundled stable release-channel manifest to the published 0.25.7 asset/checksum, keeping update and rollback status grounded in the real current stable release.
+- Continues the 0.25.7 proven topology: `skelly-ai` PipeWire owns external audio; `dadtech` PipeWire owns Skelly jaw audio; movement/control remains independent.
+
 # UltraSkellyAdvanced 0.25.7
 
 - Proven dual-session Bluetooth audio routing: Soundcore primary speech uses the `skelly-ai` PipeWire session while Animated Skelly(Live) jaw-mirror audio uses the `dadtech` PipeWire session.

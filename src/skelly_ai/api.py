@@ -501,6 +501,52 @@ def create_app(
 
     apply_audio_output_settings()
 
+    async def apply_skelly_speaker_policy(
+        settings: OperationSettings,
+        *,
+        previous: OperationSettings | None = None,
+    ) -> OperationSettings:
+        """Mute only Skelly's onboard speaker while external audio is selected.
+
+        This uses the prop's BLE speaker-volume command, not PipeWire gain, so the
+        full-strength A2DP jaw-mirror stream remains untouched. The user's last
+        audible Skelly volume is persisted and restored when external audio is
+        disabled.
+        """
+        status = hardware.media_status()
+        current_volume = int(status.get("volume", settings.skelly_speaker_restore_volume) or 0)
+        external_muted = (
+            settings.audio_output == "external_bluetooth"
+            and settings.mute_skelly_speaker_on_external
+        )
+        previous_external_muted = bool(
+            previous
+            and previous.audio_output == "external_bluetooth"
+            and previous.mute_skelly_speaker_on_external
+        )
+
+        if external_muted:
+            restore_volume = settings.skelly_speaker_restore_volume
+            if not previous_external_muted and current_volume > 0:
+                restore_volume = current_volume
+            if current_volume != 0:
+                try:
+                    await hardware.set_volume(0)
+                except HardwareUnavailable:
+                    return settings
+            if restore_volume != settings.skelly_speaker_restore_volume:
+                settings = operation_store.save(
+                    settings.model_copy(update={"skelly_speaker_restore_volume": restore_volume})
+                )
+            return settings
+
+        if previous_external_muted and current_volume == 0:
+            try:
+                await hardware.set_volume(settings.skelly_speaker_restore_volume)
+            except HardwareUnavailable:
+                pass
+        return settings
+
     async def respond_locally(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
@@ -853,6 +899,7 @@ def create_app(
         if operation_store.load().device_configured:
             try:
                 await hardware.connect()
+                await apply_skelly_speaker_policy(operation_store.load())
             except HardwareUnavailable:
                 # Keep the setup dashboard available when the prop is off or out of range.
                 pass
@@ -1199,6 +1246,9 @@ def create_app(
                 if not hardware.snapshot().connected:
                     await hardware.connect()
                 remember_control_connection()
+                settings = await apply_skelly_speaker_policy(settings)
+                if settings.audio_output == "external_bluetooth" and settings.mute_skelly_speaker_on_external:
+                    steps.append("Skelly speaker muted; jaw mirror remains active")
                 steps.append("Prop BLE connected")
                 await controller.set_interactive()
                 steps.append("Local control enabled")
@@ -1551,7 +1601,8 @@ def create_app(
         saved = provider_store.save(setup)
         apply_local_voice_settings(saved)
         # Provider changes are hot-applied and must never change physical audio
-        # routing. Re-assert the current output/jaw mirror configuration here.
+        # routing or Skelly speaker policy. Re-assert the current output/jaw
+        # mirror configuration without reconnecting or restarting either audio session.
         apply_audio_output_settings()
         return saved.model_dump()
 
@@ -1566,6 +1617,14 @@ def create_app(
     async def save_operation_settings(
         setup: OperationSettings,
     ) -> dict[str, object]:
+        previous = operation_store.load()
+        # The restore volume is internal state; older/newer UIs may omit it.
+        # Preserve the server-side value unless this request explicitly carries
+        # a different value.
+        if setup.skelly_speaker_restore_volume == OperationSettings().skelly_speaker_restore_volume:
+            setup = setup.model_copy(
+                update={"skelly_speaker_restore_volume": previous.skelly_speaker_restore_volume}
+            )
         saved = operation_store.save(setup)
         external_audio.set_saved_target(
             saved.external_bluetooth_address,
@@ -1574,6 +1633,7 @@ def create_app(
         sensors.voice_threshold_dbfs = listening_sensitivity_to_dbfs(
             saved.listening_sensitivity
         )
+        saved = await apply_skelly_speaker_policy(saved, previous=previous)
         apply_audio_output_settings()
         return saved.model_dump()
 
@@ -1848,6 +1908,7 @@ def create_app(
                 remember_speaker_connection()
             except ClassicAudioUnavailable:
                 pass
+        saved = await apply_skelly_speaker_policy(saved, previous=settings)
         apply_audio_output_settings()
         return {
             "settings": saved.model_dump(),
@@ -1891,6 +1952,7 @@ def create_app(
                 }
             )
         )
+        saved = await apply_skelly_speaker_policy(saved, previous=settings)
         apply_audio_output_settings()
         return {"settings": saved.model_dump(), "external_bluetooth": snapshot.to_dict()}
 
@@ -2087,8 +2149,24 @@ def create_app(
     @app.post("/api/media/volume")
     async def media_volume(request: MediaVolumeRequest) -> dict[str, object]:
         require_manual_hardware_access()
+        settings = operation_store.load()
         try:
-            return await hardware.set_volume(request.volume)
+            if settings.audio_output == "external_bluetooth" and settings.mute_skelly_speaker_on_external:
+                operation_store.save(
+                    settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
+                )
+                status = hardware.media_status()
+                if int(status.get("volume", 0) or 0) != 0:
+                    status = await hardware.set_volume(0)
+                result = enrich_media_status(status)
+                result["external_auto_muted"] = True
+                result["restore_volume"] = request.volume
+                return result
+            status = await hardware.set_volume(request.volume)
+            operation_store.save(
+                settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
+            )
+            return enrich_media_status(status)
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -2215,6 +2293,7 @@ def create_app(
         try:
             snapshot = await hardware.connect(request.address)
             remember_control_connection()
+            await apply_skelly_speaker_policy(operation_store.load())
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return snapshot.to_dict()
