@@ -39,6 +39,7 @@ class PerceptionEvent:
     movement: str | None = None
     ai_generation_seconds: float | None = None
     brain_provider: str | None = None
+    personality: str | None = None
     voice_provider: str | None = None
     brain_fallback_reason: str | None = None
     voice_fallback_reason: str | None = None
@@ -438,6 +439,11 @@ class PerceptionEngine:
                         brain_provider=(
                             str(ai_result.get("brain_provider"))
                             if ai_result.get("brain_provider")
+                            else None
+                        ),
+                        personality=(
+                            str(ai_result.get("personality"))
+                            if ai_result.get("personality")
                             else None
                         ),
                         voice_provider=(

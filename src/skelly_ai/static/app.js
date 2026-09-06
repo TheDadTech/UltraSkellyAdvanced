@@ -19,6 +19,12 @@ const statusLights = {
 };
 const operationSettingsForm = document.querySelector("#operation-settings-form");
 const skellyName = document.querySelector("#skelly-name");
+const personalityPills = Array.from(document.querySelectorAll(".personality-pill[data-personality]"));
+const customPersonalitySetting = document.querySelector("#custom-personality-setting");
+const customPersonality = document.querySelector("#custom-personality");
+const savePersonality = document.querySelector("#save-personality");
+const personalityResult = document.querySelector("#personality-result");
+let personalityDirty = false;
 const hardwareProfile = document.querySelector("#hardware-profile");
 const defaultOperationMode = document.querySelector("#default-operation-mode");
 const autoStartOperation = document.querySelector("#auto-start-operation");
@@ -451,6 +457,18 @@ function renderOperation(operation) {
   currentOperationSettings = settings;
   currentOperationMode = operation.active_mode;
   if (document.activeElement !== skellyName) skellyName.value = settings.skelly_name || "Skelly";
+  const savedPersonalityPool = Array.isArray(settings.personality_pool) && settings.personality_pool.length
+    ? settings.personality_pool
+    : [settings.personality || "classic"];
+  if (!personalityDirty) {
+    personalityPills.forEach((pill) => {
+      const selected = savedPersonalityPool.includes(pill.dataset.personality);
+      pill.classList.toggle("selected", selected);
+      pill.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    if (customPersonality && document.activeElement !== customPersonality) customPersonality.value = settings.custom_personality || "";
+    if (customPersonalitySetting) customPersonalitySetting.hidden = !savedPersonalityPool.includes("custom");
+  }
   if (document.activeElement !== hardwareProfile) hardwareProfile.value = settings.hardware_profile;
   if (document.activeElement !== defaultOperationMode) defaultOperationMode.value = settings.default_mode;
   autoStartOperation.checked = settings.auto_start === true && settings.default_mode !== "idle";
@@ -827,6 +845,7 @@ function renderPerceptionStatus(body) {
           `listen ${event.listening_seconds ?? "?"}s`,
           `STT finish ${event.transcription_seconds ?? "?"}s${event.transcription_mode === "streaming" ? " (live)" : ""}`,
           `AI ${event.ai_generation_seconds ?? "?"}s (${event.brain_provider ?? "unknown"})`,
+          `personality ${event.personality || "classic"}`,
         ];
         if (event.voice_generation_seconds != null) {
           const voiceLabel = event.voice_provider === "elevenlabs" ? "first audio" : "voice";
@@ -1109,6 +1128,9 @@ function renderAudioOutputStatus(body) {
 function operationSettingsPayload() {
   return {
     skelly_name: skellyName.value.trim() || "Skelly",
+    personality: selectedPersonalityPool()[0] || "classic",
+    personality_pool: selectedPersonalityPool(),
+    custom_personality: customPersonality?.value.trim() || "",
     hardware_profile: hardwareProfile.value,
     default_mode: defaultOperationMode.value,
     auto_start: autoStartOperation.checked && defaultOperationMode.value !== "idle",
@@ -1185,6 +1207,63 @@ saveVisitorEngagement.addEventListener("click", async () => {
     saveVisitorEngagement.disabled = false;
   }
 });
+
+
+function selectedPersonalityPool() {
+  const selected = personalityPills
+    .filter((pill) => pill.classList.contains("selected"))
+    .map((pill) => pill.dataset.personality);
+  return selected.length ? selected : ["classic"];
+}
+
+personalityPills.forEach((pill) => {
+  pill.addEventListener("click", () => {
+    personalityDirty = true;
+    pill.classList.toggle("selected");
+    pill.setAttribute("aria-pressed", pill.classList.contains("selected") ? "true" : "false");
+    let selected = selectedPersonalityPool();
+    if (!personalityPills.some((item) => item.classList.contains("selected"))) {
+      const classic = personalityPills.find((item) => item.dataset.personality === "classic");
+      if (classic) {
+        classic.classList.add("selected");
+        classic.setAttribute("aria-pressed", "true");
+      }
+      selected = ["classic"];
+    }
+    if (customPersonalitySetting) customPersonalitySetting.hidden = !selected.includes("custom");
+    if (personalityResult) {
+      personalityResult.textContent = selected.length > 1
+        ? `${selected.length} personalities selected — one will be chosen per AI response.`
+        : `${selected[0][0].toUpperCase()}${selected[0].slice(1)} selected.`;
+    }
+  });
+});
+
+if (customPersonality) {
+  customPersonality.addEventListener("input", () => {
+    personalityDirty = true;
+  });
+}
+
+if (savePersonality) {
+  savePersonality.addEventListener("click", async () => {
+    savePersonality.disabled = true;
+    personalityResult.textContent = "Saving personality mix...";
+    try {
+      const selected = selectedPersonalityPool();
+      await saveOperationSettings();
+      personalityDirty = false;
+      await refreshStatus();
+      personalityResult.textContent = selected.length > 1
+        ? `${selected.length}-personality mix saved. USA will choose one per AI response.`
+        : `${selected[0][0].toUpperCase()}${selected[0].slice(1)} personality saved.`;
+    } catch (error) {
+      personalityResult.textContent = error.message;
+    } finally {
+      savePersonality.disabled = false;
+    }
+  });
+}
 
 operationSettingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();

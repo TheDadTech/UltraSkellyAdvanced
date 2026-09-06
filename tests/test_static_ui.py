@@ -334,3 +334,27 @@ def test_build2_visitor_engagement_and_classic_movement_controls_present() -> No
         assert marker in html
     assert 'nag_response:' in js
     assert 'nag_max_per_visitor:' in js
+
+
+def test_dev3_personality_glow_grid_and_mix_present() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    styles = (STATIC / "styles.css").read_text(encoding="utf-8")
+    assert html.count('class="personality-pill') == 9
+    assert 'data-personality="classic"' in html
+    assert 'data-personality="deadpan"' in html
+    assert 'data-personality="custom"' in html
+    assert 'class="personality-pill selected" data-personality="classic"' in html
+    assert 'personality_pool: selectedPersonalityPool()' in script
+    assert 'one will be chosen per AI response' in script
+    assert '.personality-grid' in styles
+    assert 'grid-template-columns: repeat(3' in styles
+
+
+def test_dev4_personality_dirty_state_survives_status_poll() -> None:
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "let personalityDirty = false;" in script
+    assert "if (!personalityDirty)" in script
+    assert "personalityDirty = true;" in script
+    assert "customPersonality.addEventListener(\"input\"" in script
+    assert "personalityDirty = false;" in script

@@ -1,3 +1,49 @@
+# UltraSkellyAdvanced 0.26.0-rc1
+
+## Image-readiness polish
+
+- Promotes the personality-mix smoke-tested tree to the first 0.26.0 release candidate.
+- Fixes the fresh-image installer so **both** persistent PipeWire/WirePlumber owners are configured: `skelly-ai` for external Bluetooth speech and `dadtech` for stock Skelly jaw audio.
+- Fixes the image service-template install to resolve `@SUPPORT_UID@`; the image build now fails if any service placeholder remains unresolved.
+- Enables linger for both audio-session users in fresh images so the proven dual-session topology exists after a cold boot without an interactive login.
+- Adds `image/release-preflight.sh` to verify version consistency, dual-session image wiring, obvious credential leakage, and the test gate before running pi-gen.
+- Expands the image release checklist to explicitly test external speech + jaw + movement across a cold reboot.
+- Runtime personality, ElevenLabs WAV playback, external-audio auto-mute, and Bluetooth routing are intentionally unchanged from the smoke-tested dev4 tree.
+
+# UltraSkellyAdvanced 0.26.0-dev4
+
+## Personality pill persistence fix
+
+- Unsaved personality pill selections are no longer overwritten by the 5-second background status refresh.
+- Custom personality text is also protected while being edited.
+- Normal server-driven rendering resumes immediately after a successful Save Personality action.
+
+Smoke-test build for personality mixing and stronger character differentiation.
+
+- Replaces the personality dropdown with a compact 3x3 glowing-pill selector.
+- Classic is selected by default.
+- Selecting one personality keeps it fixed; selecting multiple creates a per-response random personality pool.
+- Adds Deadpan as the eighth built-in personality; Custom is the ninth pill.
+- Custom instructions can participate in a personality mix.
+- Strengthens every preset so short responses are visibly more distinct and avoids generic interchangeable skeleton puns.
+- Interaction events report the effective personality used for each AI response.
+- Retains the 0.26.0-dev2 ElevenLabs WAV playback fix and the proven 0.25.8 dual-session Bluetooth audio stack.
+
+# UltraSkellyAdvanced 0.26.0-dev2
+
+## dev2 smoke-test fix
+
+- Best Voice / ElevenLabs now buffers its PCM response into a WAV before playback instead of piping raw PCM directly to `pw-play`.
+- Reuses the same proven dual-session WAV playback path as Cloud Starter, preserving external Bluetooth, Skelly jaw mirror, sync compensation, and movement control.
+- Personality behavior remains a brain-layer feature; Operator typed TTS intentionally speaks the text exactly as entered and does not apply personality rewriting.
+
+Personality smoke-test build.
+
+- Adds Classic, Sarcastic, Sinister, Goofy, Grumpy, Friendly, Unhinged, and Custom AI personalities.
+- Personality persists on the Pi and applies to both Local Brain and Groq.
+- Custom personality is limited to style; USA's identity, safety, concise-response, JSON, and movement-control rules remain authoritative.
+- No intentional changes to the proven 0.25.8 Bluetooth, external-audio, jaw-mirror, sync-compensation, or movement-control architecture.
+
 # UltraSkellyAdvanced 0.25.8
 
 ## Audio polish / maintenance release

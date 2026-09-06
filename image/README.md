@@ -20,10 +20,11 @@ sudo apt-get install -y docker.io git tar coreutils
 sudo usermod -aG docker "$USER"
 ```
 
-Sign out and back in after adding the Docker group, then run from the project:
+Sign out and back in after adding the Docker group, then run the release preflight and image build from the project:
 
 ```bash
-chmod +x image/build-image.sh
+chmod +x image/release-preflight.sh image/build-image.sh
+./image/release-preflight.sh
 ./image/build-image.sh --docker
 ```
 
@@ -53,6 +54,8 @@ Before publishing an image:
 - Boot once with no Skelly, camera, microphone, DAC, or ESP32 attached.
 - Confirm the dashboard opens Setup, scans for props, and keeps motion disarmed.
 - Test stock-hardware setup and advanced DAC setup separately.
+- Confirm both `skelly-ai` and `dadtech` have persistent PipeWire/WirePlumber sessions after cold boot.
+- With external Bluetooth selected, verify external speech + stock jaw audio + movement/control survive a reboot.
 - Confirm motors and DAC output remain disarmed after every reboot until setup.
 - Confirm no `/var/lib/skelly-ai/*.json` files or Bluetooth bonds were inherited.
 - Confirm offline microphone transcription works before adding cloud keys.

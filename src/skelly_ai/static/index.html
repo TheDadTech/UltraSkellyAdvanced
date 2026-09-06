@@ -155,7 +155,33 @@
         <section class="advanced-intro">
           <p class="section-kicker">VOICE TUNING</p>
           <h2>Choose the brain, voice, and talking behavior</h2>
-          <p class="muted help-copy">These settings are shared by AI Mode and Operator Mode.</p>
+          <p class="muted help-copy">Voice settings are shared by AI Mode and Operator Mode. Personality affects AI-generated replies.</p>
+        </section>
+        <section id="personality-section">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">CHARACTER</p>
+              <h2>Personality</h2>
+              <p class="muted help-copy">Change Skelly's attitude without changing the selected voice.</p>
+            </div>
+          </div>
+          <div id="personality-grid" class="personality-grid" role="group" aria-label="Personality mix">
+            <button type="button" class="personality-pill selected" data-personality="classic" aria-pressed="true">Classic</button>
+            <button type="button" class="personality-pill" data-personality="sarcastic" aria-pressed="false">Sarcastic</button>
+            <button type="button" class="personality-pill" data-personality="sinister" aria-pressed="false">Sinister</button>
+            <button type="button" class="personality-pill" data-personality="goofy" aria-pressed="false">Goofy</button>
+            <button type="button" class="personality-pill" data-personality="grumpy" aria-pressed="false">Grumpy</button>
+            <button type="button" class="personality-pill" data-personality="friendly" aria-pressed="false">Friendly</button>
+            <button type="button" class="personality-pill" data-personality="unhinged" aria-pressed="false">Unhinged</button>
+            <button type="button" class="personality-pill" data-personality="deadpan" aria-pressed="false">Deadpan</button>
+            <button type="button" class="personality-pill" data-personality="custom" aria-pressed="false">Custom</button>
+          </div>
+          <p class="muted help-copy personality-mix-help">One glowing personality stays fixed. Select several and USA picks one for each AI response.</p>
+          <div class="setting-grid">
+            <label id="custom-personality-setting" hidden><span>Custom personality</span><textarea id="custom-personality" rows="4" maxlength="500" placeholder="Describe how Skelly should act and speak."></textarea><small class="help-copy">Style instructions only. USA keeps its safety, response-length, identity, and control rules.</small></label>
+          </div>
+          <div class="controls"><button id="save-personality" type="button">Save personality</button></div>
+          <p id="personality-result" class="result" aria-live="polite"></p>
         </section>
       </div>
       <div id="panel-diagnostics" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-diagnostics" data-dashboard-panel="diagnostics" hidden>

@@ -12,6 +12,9 @@ class OperationSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     skelly_name: str = Field(default="Skelly", min_length=1, max_length=30)
+    personality: Literal["classic", "sarcastic", "sinister", "goofy", "grumpy", "friendly", "unhinged", "deadpan", "custom"] = "classic"
+    personality_pool: list[Literal["classic", "sarcastic", "sinister", "goofy", "grumpy", "friendly", "unhinged", "deadpan", "custom"]] = Field(default_factory=lambda: ["classic"], min_length=1, max_length=9)
+    custom_personality: str = Field(default="", max_length=500)
     hardware_profile: Literal["stock", "dac"] = "stock"
     default_mode: Literal["classic", "ai", "manual", "idle"] = "ai"
     auto_start: bool = False
@@ -46,6 +49,29 @@ class OperationSettings(BaseModel):
         name = str(value or "").strip()
         return name or "Skelly"
 
+    @field_validator("custom_personality", mode="before")
+    @classmethod
+    def normalize_custom_personality(cls, value: object) -> str:
+        return str(value or "").strip()[:500]
+
+    @field_validator("personality_pool", mode="before")
+    @classmethod
+    def normalize_personality_pool(cls, value: object) -> list[str]:
+        allowed = {"classic", "sarcastic", "sinister", "goofy", "grumpy", "friendly", "unhinged", "deadpan", "custom"}
+        raw = value if isinstance(value, (list, tuple, set)) else [value]
+        normalized: list[str] = []
+        for item in raw:
+            personality = str(item or "").strip().lower()
+            if personality in allowed and personality not in normalized:
+                normalized.append(personality)
+        return normalized or ["classic"]
+
+    @model_validator(mode="after")
+    def synchronize_legacy_personality(self) -> "OperationSettings":
+        # Keep the legacy single-value field populated for old clients and rollback compatibility.
+        self.personality = self.personality_pool[0] if self.personality_pool else "classic"
+        return self
+
     @model_validator(mode="after")
     def disable_fpp_override_without_dac(self) -> "OperationSettings":
         if self.hardware_profile != "dac" and self.allow_fpp_override:
@@ -68,6 +94,8 @@ class OperationSettingsStore:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
             merged = self._defaults.model_dump()
             merged.update(payload)
+            if "personality_pool" not in payload and payload.get("personality"):
+                merged["personality_pool"] = [payload["personality"]]
             return OperationSettings.model_validate(merged)
         except (OSError, json.JSONDecodeError, ValueError):
             return self._defaults.model_copy(deep=True)

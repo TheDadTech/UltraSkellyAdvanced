@@ -55,8 +55,9 @@ sudo apt-get install -y \
   wireplumber
 
 # Both the dedicated USA service identity and the support/login identity may
-# exist on an appliance. PipeWire playback is deliberately owned by dadtech,
-# so configure that session for headless Bluetooth and make it persistent.
+# exist on an appliance. External Bluetooth speech and the stock Skelly jaw
+# mirror deliberately use separate persistent PipeWire sessions, so configure
+# both users for headless Bluetooth audio.
 configure_headless_audio_user() {
   local user="$1" group="$2" home="$3"
   sudo install -d -m 0755 -o "${user}" -g "${group}" "${home}/.config/wireplumber/wireplumber.conf.d"

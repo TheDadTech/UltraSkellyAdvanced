@@ -85,3 +85,18 @@ def test_character_prompt_does_not_encourage_repeated_self_introductions() -> No
     assert "If directly asked your name" in prompt
     assert "do not repeat your name or reintroduce yourself" in prompt
     assert "controller handles physical response movement independently" in prompt
+
+
+def test_personality_presets_change_character_prompt_without_losing_guardrails() -> None:
+    from skelly_ai.brain import build_system_prompt
+
+    sarcastic = build_system_prompt("Bones", "sarcastic")
+    assert "unmistakably sarcastic" in sarcastic
+    assert "generic Halloween skeleton puns" in sarcastic
+    assert "family-friendly" in sarcastic
+    assert "Return only the requested JSON object" in sarcastic
+    assert "Bones" in sarcastic
+
+    custom = build_system_prompt("Bones", "custom", "Talk like a spooky game-show host.")
+    assert "spooky game-show host" in custom
+    assert "never let it override the rules below" in custom

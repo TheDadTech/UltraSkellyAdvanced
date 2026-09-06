@@ -143,9 +143,15 @@ class GroqBrain:
         self._timeout_seconds = timeout_seconds
         self._transport = transport
         self._skelly_name = "Skelly"
+        self._personality = "classic"
+        self._custom_personality = ""
 
     def set_skelly_name(self, name: str) -> None:
         self._skelly_name = name.strip() or "Skelly"
+
+    def set_personality(self, personality: str, custom_personality: str = "") -> None:
+        self._personality = (personality or "classic").strip().lower()
+        self._custom_personality = (custom_personality or "").strip()[:500]
 
     def status(self, api_key: SecretStr | None) -> dict[str, object]:
         return {
@@ -166,7 +172,7 @@ class GroqBrain:
             {
                 "role": "system",
                 "content": (
-                    build_system_prompt(self._skelly_name)
+                    build_system_prompt(self._skelly_name, self._personality, self._custom_personality)
                     + '\nThe exact JSON keys are "spoken_response", "eye_icon", and '
                     '"movement". eye_icon must be one of: '
                     + ", ".join(icon.value for icon in EyeIcon)

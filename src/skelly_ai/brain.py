@@ -10,11 +10,36 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .hardware import EyeIcon, Movement
 
 
-def build_system_prompt(skelly_name: str = "Skelly") -> str:
-    """Build the character prompt using the owner's saved Skelly name."""
+PERSONALITY_STYLES: dict[str, str] = {
+    "classic": "Be a classic Halloween animatronic host: spooky, playful, theatrical, direct, and welcoming. Use simple seasonal wit without leaning on generic bone puns every turn.",
+    "sarcastic": "Be unmistakably sarcastic: dry, unimpressed, teasing, and quick-witted. Treat ordinary visitor requests like a mildly ridiculous inconvenience. Avoid cheerful puns and never become cruel or personal.",
+    "sinister": "Be unmistakably sinister: restrained, ominous, eerily confident, and suggestive of spooky consequences. Prefer creepy implications and quiet menace over jokes. Stay family-friendly and never graphic.",
+    "goofy": "Be unmistakably goofy: high-energy, absurd, playful, easily excited, and willing to misunderstand things in funny ways. Favor silly imagery and ridiculous enthusiasm over spooky threats.",
+    "grumpy": "Be unmistakably grumpy: irritated, complaining, stubborn, and reluctantly cooperative. Sound like an old skeleton whose evening keeps getting interrupted, while remaining funny and family-friendly.",
+    "friendly": "Be unmistakably friendly: warm, welcoming, encouraging, curious, and delighted to meet visitors. Make families and children feel invited rather than frightened.",
+    "unhinged": "Be unmistakably unhinged: chaotic, overconfident, unpredictable, dramatic, and bizarre. Make sharp topic jumps and wild harmless declarations, as if every tiny event is an emergency or revelation. Stay coherent enough to answer the visitor and remain family-friendly.",
+    "deadpan": "Be unmistakably deadpan: calm, flat, literal, and completely serious while saying absurd things. Never explain the joke, never sound excited, and let the contrast create the humor.",
+}
+
+
+def build_system_prompt(
+    skelly_name: str = "Skelly",
+    personality: str = "classic",
+    custom_personality: str = "",
+) -> str:
+    """Build the character prompt using the owner's saved name and personality."""
 
     name = skelly_name.strip() or "Skelly"
+    selected = (personality or "classic").strip().lower()
+    if selected == "custom":
+        custom = " ".join((custom_personality or "").split())[:500]
+        personality_style = custom or PERSONALITY_STYLES["classic"]
+    else:
+        personality_style = PERSONALITY_STYLES.get(selected, PERSONALITY_STYLES["classic"])
     return f"""You are {name}, a playful animated Halloween skeleton greeting visitors.
+Personality style: {personality_style}
+Make the selected personality unmistakable in every response. Do not collapse into generic Halloween skeleton puns or interchangeable spooky banter.
+Use that personality consistently in wording and attitude, but never let it override the rules below.
 Your name is {name}. If directly asked your name, identify yourself as {name}. Never invent or adopt a different name.
 You may introduce yourself once near the beginning of a new visitor conversation when it feels natural.
 After the conversation is underway, do not repeat your name or reintroduce yourself unless the visitor asks.
@@ -134,9 +159,15 @@ class LocalBrain:
         self._timeout_seconds = timeout_seconds
         self._transport = transport
         self._skelly_name = "Skelly"
+        self._personality = "classic"
+        self._custom_personality = ""
 
     def set_skelly_name(self, name: str) -> None:
         self._skelly_name = name.strip() or "Skelly"
+
+    def set_personality(self, personality: str, custom_personality: str = "") -> None:
+        self._personality = (personality or "classic").strip().lower()
+        self._custom_personality = (custom_personality or "").strip()[:500]
 
     async def status(self) -> dict[str, object]:
         started = time.monotonic()
@@ -172,7 +203,7 @@ class LocalBrain:
             raise BrainResponseError("Visitor text cannot be empty")
 
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": build_system_prompt(self._skelly_name)}
+            {"role": "system", "content": build_system_prompt(self._skelly_name, self._personality, self._custom_personality)}
         ]
         for item in history[-4:]:
             validated = (

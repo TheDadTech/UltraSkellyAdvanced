@@ -551,13 +551,26 @@ def create_app(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
         settings = provider_store.load()
-        skelly_name = operation_store.load().skelly_name
+        operation_settings = operation_store.load()
+        skelly_name = operation_settings.skelly_name
         configure_local_character = getattr(brain, "set_skelly_name", None)
         if configure_local_character is not None:
             configure_local_character(skelly_name)
         configure_groq_character = getattr(groq_brain, "set_skelly_name", None)
         if configure_groq_character is not None:
             configure_groq_character(skelly_name)
+        personality_pool = list(operation_settings.personality_pool or ["classic"])
+        effective_personality = random.choice(personality_pool)
+        configure_local_personality = getattr(brain, "set_personality", None)
+        if configure_local_personality is not None:
+            configure_local_personality(
+                effective_personality, operation_settings.custom_personality
+            )
+        configure_groq_personality = getattr(groq_brain, "set_personality", None)
+        if configure_groq_personality is not None:
+            configure_groq_personality(
+                effective_personality, operation_settings.custom_personality
+            )
         started = asyncio.get_running_loop().time()
         provider_used = settings.brain_provider
         fallback_reason: str | None = None
@@ -589,6 +602,8 @@ def create_app(
         result["generation_seconds"] = generation_seconds
         result["brain_provider"] = provider_used
         result["brain_provider_selected"] = settings.brain_provider
+        result["personality"] = effective_personality
+        result["personality_pool"] = personality_pool
         if fallback_reason:
             result["brain_fallback_reason"] = fallback_reason
         return result
@@ -630,19 +645,24 @@ def create_app(
                         raise CloudSpeechUnavailable(
                             "Save an ElevenLabs API key in Setup or choose Local Voice"
                         )
-                    audio_stream = elevenlabs_voice.stream_pcm(
+                    # Buffer ElevenLabs PCM into a proper WAV before playback.
+                    # The raw streaming path proved fragile on the dual-session
+                    # Bluetooth topology (beep/static on some Pi runs), while the
+                    # WAV path is already proven for both PipeWire sessions.
+                    audio = await elevenlabs_voice.generate(
                         credentials.api_key,
                         text,
                         settings.elevenlabs_voice_id,
                         model=settings.elevenlabs_model,
                         speed=settings.elevenlabs_speed,
+                        volume_percent=settings.elevenlabs_volume_percent,
                     )
                     engine = f"elevenlabs:{settings.elevenlabs_model}"
-                    result = await local_speech.play_pcm_stream(
-                        audio_stream,
+                    result = await local_speech.play_wav_bytes(
+                        audio,
                         dac,
                         engine=engine,
-                        volume_percent=settings.elevenlabs_volume_percent,
+                        cloud_used=True,
                     )
             except CloudSpeechUnavailable as exc:
                 if not allow_fallback:
@@ -662,7 +682,9 @@ def create_app(
                         cloud_used=True,
                     )
                 else:
-                    voice_generation_seconds = result.get("first_audio_seconds")
+                    voice_generation_seconds = round(
+                        asyncio.get_running_loop().time() - voice_started, 2
+                    )
                 result["voice_generation_seconds"] = voice_generation_seconds
                 if settings.voice_provider == "elevenlabs":
                     result["voice_model"] = settings.elevenlabs_model
