@@ -61,6 +61,13 @@ h3 { margin: 22px 0 8px; color: #b9c7da; font-size: 0.78rem; letter-spacing: 0.0
 .header-volume-control label { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); font-size: 0.72rem; }
 .header-volume-control strong { color: var(--blue-bright); }
 .header-volume-control input { width: 100%; }
+.header-volume-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 8px; }
+.compact-mute-button { min-width: 64px; padding: 7px 9px; font-size: .72rem; }
+.compact-mute-button.is-muted { border-color: var(--orange-bright); color: #fff4e8; background: var(--orange-soft); }
+.speaker-mute-cue { color: var(--orange-bright); font-size: .68rem; line-height: 1.25; }
+.sync-direction-labels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; color: var(--subtle); font-size: .66rem; font-weight: 700; }
+.sync-direction-labels span:nth-child(2) { text-align: center; }
+.sync-direction-labels span:last-child { text-align: right; }
 .muted { color: var(--muted); }
 
 section {

@@ -1,6 +1,19 @@
-# UltraSkellyAdvanced 0.26.0-rc1
+# UltraSkellyAdvanced 0.26.1
+
+- Improved Bluetooth audio reliability.
+- Fixed Skelly speaker volume and mute restore.
+- Improved external speaker reconnect and automatic fallback to the Skelly speaker.
+- Improved Jaw / Audio timing controls.
+- General stability improvements.
+
+# UltraSkellyAdvanced 0.26.0
 
 ## Image-readiness polish
+
+## Known issue
+
+- On some fresh installs, the Skelly Bluetooth audio path may take longer to become ready on the first boot. If the prop connects but the speaker remains **not ready**, reboot the Raspberry Pi once and reconnect. This first-boot startup timing issue is planned for the 0.26.1 maintenance release.
+
 
 - Promotes the personality-mix smoke-tested tree to the first 0.26.0 release candidate.
 - Fixes the fresh-image installer so **both** persistent PipeWire/WirePlumber owners are configured: `skelly-ai` for external Bluetooth speech and `dadtech` for stock Skelly jaw audio.

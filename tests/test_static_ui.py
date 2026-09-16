@@ -358,3 +358,11 @@ def test_dev4_personality_dirty_state_survives_status_poll() -> None:
     assert "personalityDirty = true;" in script
     assert "customPersonality.addEventListener(\"input\"" in script
     assert "personalityDirty = false;" in script
+
+
+def test_fallback_ui_uses_active_route_and_neutral_center_copy() -> None:
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'currentAudioRoute?.active === "external_bluetooth"' in script
+    assert '"Unmuted · Fallback"' in script
+    assert '"0 ms"' in script
+    assert 'Start together' not in script

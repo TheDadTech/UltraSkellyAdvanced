@@ -181,7 +181,7 @@ class MediaPlayRequest(BaseModel):
 
 
 class MediaVolumeRequest(BaseModel):
-    volume: int = Field(ge=0, le=255)
+    volume: int = Field(ge=0, le=100)
 
 
 class LightSettings(BaseModel):
@@ -465,6 +465,34 @@ def create_app(
 
     apply_local_voice_settings(provider_store.load())
 
+    def audio_route_state() -> dict[str, object]:
+        settings = operation_store.load()
+        skelly_snapshot = classic_audio.snapshot()
+        external_snapshot = external_audio.snapshot()
+        skelly_ready = bool(
+            skelly_snapshot.connected
+            and (skelly_snapshot.sink_name or skelly_snapshot.sink_id)
+        )
+        external_ready = bool(
+            external_snapshot.connected
+            and (external_snapshot.sink_name or external_snapshot.sink_id)
+        )
+        preferred = settings.audio_output
+        fallback_active = preferred == "external_bluetooth" and not external_ready and skelly_ready
+        if preferred == "external_bluetooth":
+            active = "external_bluetooth" if external_ready else ("skelly" if skelly_ready else "unavailable")
+        elif preferred == "skelly":
+            active = "skelly" if skelly_ready else "unavailable"
+        else:
+            active = "system"
+        return {
+            "preferred": preferred,
+            "active": active,
+            "fallback_active": fallback_active,
+            "external_ready": external_ready,
+            "skelly_ready": skelly_ready,
+        }
+
     def apply_audio_output_settings() -> None:
         settings = operation_store.load()
         playback_target: str | None = None
@@ -474,16 +502,28 @@ def create_app(
         playback_target_required = False
         skelly_snapshot = classic_audio.snapshot()
         external_snapshot = external_audio.snapshot()
+        route_state = audio_route_state()
         if settings.audio_output == "skelly":
             playback_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
         elif settings.audio_output == "external_bluetooth":
-            # Proven 3-Bluetooth topology: Soundcore belongs to skelly-ai's
+            # Proven 3-Bluetooth topology: external audio belongs to skelly-ai's
             # PipeWire session while Animated Skelly(Live) belongs to dadtech.
-            playback_session = "skelly-ai"
-            playback_target_required = True
-            playback_target = external_snapshot.sink_name or external_snapshot.sink_id
-            if settings.jaw_follow_speech:
-                jaw_mirror_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+            # If the external speaker is unavailable, fail over to Skelly rather
+            # than dropping speech.  The maintenance loop keeps retrying the
+            # preferred external speaker and switches back only between speech
+            # requests once its sink is ready again.
+            external_target = external_snapshot.sink_name or external_snapshot.sink_id
+            skelly_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+            if route_state["active"] == "external_bluetooth" and external_target:
+                playback_session = "skelly-ai"
+                playback_target_required = True
+                playback_target = external_target
+                if settings.jaw_follow_speech:
+                    jaw_mirror_target = skelly_target
+            else:
+                playback_session = "dadtech"
+                playback_target_required = False
+                playback_target = skelly_target
         elif settings.jaw_follow_speech:
             jaw_mirror_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
         configure_output = getattr(local_speech, "configure_output", None)
@@ -514,10 +554,12 @@ def create_app(
         disabled.
         """
         status = hardware.media_status()
-        current_volume = int(status.get("volume", settings.skelly_speaker_restore_volume) or 0)
+        current_volume = max(0, min(100, int(status.get("volume", settings.skelly_speaker_restore_volume) or 0)))
+        route_state = audio_route_state()
         external_muted = (
             settings.audio_output == "external_bluetooth"
             and settings.mute_skelly_speaker_on_external
+            and route_state["active"] == "external_bluetooth"
         )
         previous_external_muted = bool(
             previous
@@ -526,7 +568,7 @@ def create_app(
         )
 
         if external_muted:
-            restore_volume = settings.skelly_speaker_restore_volume
+            restore_volume = max(0, min(100, int(settings.skelly_speaker_restore_volume or 0)))
             if not previous_external_muted and current_volume > 0:
                 restore_volume = current_volume
             if current_volume != 0:
@@ -540,12 +582,85 @@ def create_app(
                 )
             return settings
 
-        if previous_external_muted and current_volume == 0:
+        # Do not rely on the in-process hardware cache to prove the prop is
+        # audible. The Skelly can remain internally muted at 0 even when the UI
+        # and PipeWire both report 100%. Whenever external auto-mute is not
+        # active, explicitly re-assert the saved BLE speaker volume.
+        restore_volume = max(0, min(100, int(settings.skelly_speaker_restore_volume or 0)))
+        if restore_volume <= 0:
+            restore_volume = 100
+            settings = operation_store.save(
+                settings.model_copy(update={"skelly_speaker_restore_volume": restore_volume})
+            )
+        if previous_external_muted or settings.audio_output == "skelly" or not settings.mute_skelly_speaker_on_external:
             try:
-                await hardware.set_volume(settings.skelly_speaker_restore_volume)
+                await hardware.set_volume(restore_volume)
             except HardwareUnavailable:
                 pass
         return settings
+
+    async def ensure_skelly_fallback_audio_ready(settings: OperationSettings) -> bool:
+        """Establish a real Skelly A2DP fallback path, not just an audible BLE volume.
+
+        External Bluetooth can disappear between background polls.  Fallback is only
+        considered ready after the stock Skelly Live endpoint is connected and its
+        dadtech PipeWire sink exists.  This deliberately reuses the proven
+        Prepare/Connect sequence used by the Setup button.
+        """
+        if settings.audio_output != "external_bluetooth":
+            return False
+
+        restore_volume = max(0, min(100, int(settings.skelly_speaker_restore_volume or 0)))
+        if restore_volume <= 0:
+            restore_volume = 100
+        try:
+            await hardware.set_volume(restore_volume)
+        except HardwareUnavailable:
+            pass
+
+        snapshot = await classic_audio.refresh()
+        if snapshot.connected and snapshot.sink_ready and (snapshot.sink_name or snapshot.sink_id):
+            apply_audio_output_settings()
+            return True
+
+        try:
+            # A deliberate OFF -> ON edge wakes the Skelly BR/EDR audio radio on
+            # cold boot and after the external speaker has owned the active route.
+            await hardware.set_live_mode(False)
+            await asyncio.sleep(0.8)
+            await hardware.set_live_mode(True)
+            await asyncio.sleep(1.5)
+            prepare = getattr(classic_audio, "prepare", None)
+            snapshot = (
+                await prepare(app_settings.classic_audio_pin)
+                if prepare is not None
+                else await classic_audio.connect()
+            )
+            if snapshot.connected and not snapshot.sink_ready:
+                snapshot = await classic_audio.refresh()
+                if not snapshot.sink_ready:
+                    snapshot = await classic_audio.connect()
+            if snapshot.connected and snapshot.sink_ready:
+                remember_speaker_connection()
+                apply_audio_output_settings()
+                return True
+        except (HardwareUnavailable, ClassicAudioUnavailable):
+            pass
+
+        apply_audio_output_settings()
+        return False
+
+    async def restore_external_mute_policy(settings: OperationSettings) -> None:
+        """Re-apply external auto-mute after the preferred speaker is truly ready."""
+        if (
+            settings.audio_output == "external_bluetooth"
+            and settings.mute_skelly_speaker_on_external
+            and audio_route_state()["active"] == "external_bluetooth"
+        ):
+            try:
+                await hardware.set_volume(0)
+            except HardwareUnavailable:
+                pass
 
     async def respond_locally(
         transcript: str, history: list[dict[str, str]]
@@ -615,10 +730,24 @@ def create_app(
     ) -> dict[str, object]:
         settings = provider_store.load()
         apply_local_voice_settings(settings)
-        # Audio sinks can appear/reconnect after application startup. Always
-        # re-apply the latest snapshots before playback so every voice provider
-        # (including streamed ElevenLabs speech) uses the same external/main
-        # output and Skelly jaw-mirror targets.
+        # Audio sinks can disappear between background status polls.  Before
+        # every utterance, verify the preferred external route is usable.  If it
+        # is not, synchronously establish the stock Skelly speaker so this same
+        # utterance has a real destination instead of failing with
+        # "no target node available".
+        operation_settings = operation_store.load()
+        if operation_settings.audio_output == "external_bluetooth":
+            try:
+                external_snapshot = await external_audio.refresh()
+            except AudioOutputUnavailable:
+                external_snapshot = external_audio.snapshot()
+            if not (
+                external_snapshot.connected
+                and (external_snapshot.sink_name or external_snapshot.sink_id)
+            ):
+                await ensure_skelly_fallback_audio_ready(operation_settings)
+        # Re-apply the latest snapshots so every voice provider (including
+        # ElevenLabs WAV playback) uses the same external/main and jaw targets.
         apply_audio_output_settings()
         voice_started = asyncio.get_running_loop().time()
         provider_used = settings.voice_provider
@@ -900,7 +1029,16 @@ def create_app(
             try:
                 snapshot = await external_audio.refresh()
                 if not snapshot.connected or not snapshot.sink_id:
-                    await external_audio.connect(route=True)
+                    # Fail over immediately while the preferred speaker is off,
+                    # out of range, or owned by the wrong PipeWire session.
+                    await ensure_skelly_fallback_audio_ready(settings)
+                    snapshot = await external_audio.connect(route=True)
+
+                # External is now genuinely usable in skelly-ai's PipeWire
+                # session.  Restore the user's auto-mute choice before future
+                # speech, then repair jaw-follow if the temporary ownership
+                # reservation caused dadtech's Skelly sink to disappear.
+                await restore_external_mute_policy(settings)
                 if settings.jaw_follow_speech and settings.hardware_profile != "dac":
                     skelly = await classic_audio.refresh()
                     if not skelly.connected or not skelly.sink_id:
@@ -911,7 +1049,8 @@ def create_app(
                             pass
                 apply_audio_output_settings()
             except AudioOutputUnavailable:
-                # The Setup card reports the last error; retry when the speaker returns.
+                await ensure_skelly_fallback_audio_ready(settings)
+                # Keep retrying in the background when the speaker returns.
                 continue
 
     @asynccontextmanager
@@ -930,6 +1069,14 @@ def create_app(
                 await external_audio.refresh()
             except AudioOutputUnavailable:
                 pass
+            boot_settings = operation_store.load()
+            if boot_settings.audio_output == "external_bluetooth":
+                external_snapshot = external_audio.snapshot()
+                if external_snapshot.connected and external_snapshot.sink_id:
+                    await restore_external_mute_policy(boot_settings)
+                else:
+                    await ensure_skelly_fallback_audio_ready(boot_settings)
+            apply_audio_output_settings()
         external_audio_reconnect_task = asyncio.create_task(maintain_external_audio_connection())
         if operation_store.load().auto_start:
             auto_start_task = asyncio.create_task(auto_start_saved_mode())
@@ -996,6 +1143,7 @@ def create_app(
             "hardware": hardware.snapshot().to_dict(),
             "audio": classic_audio.snapshot().to_dict(),
             "external_audio": external_audio.snapshot().to_dict(),
+            "audio_route": audio_route_state(),
             "dac": dac.snapshot().to_dict(),
             "operation": {
                 **operation_state,
@@ -1885,6 +2033,7 @@ def create_app(
         apply_audio_output_settings()
         return {
             "selected": settings.audio_output,
+            "route": audio_route_state(),
             "jaw_follow_speech": settings.jaw_follow_speech,
             "jaw_sync_offset_ms": settings.jaw_sync_offset_ms,
             "skelly": skelly.to_dict(),
@@ -1940,10 +2089,66 @@ def create_app(
     @app.post("/api/audio/external/connect")
     async def external_audio_connect() -> dict[str, object]:
         require_manual_hardware_access()
+        settings = operation_store.load()
+
+        # Reconnect must work after a restart even when the in-memory target was
+        # lost. First restore the persisted target. If older settings lost the
+        # address but BlueZ still has exactly one paired non-Skelly speaker,
+        # recover it automatically instead of forcing Scan + Pair again.
+        if not external_audio.snapshot().address:
+            if settings.external_bluetooth_address:
+                external_audio.set_saved_target(
+                    settings.external_bluetooth_address,
+                    settings.external_bluetooth_name,
+                )
+            else:
+                try:
+                    paired = await external_audio.paired_devices()
+                except AudioOutputUnavailable as exc:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                skelly_name_filter = app_settings.classic_audio_name.casefold()
+                candidates = [
+                    device for device in paired
+                    if skelly_name_filter not in str(device.get("name", "")).casefold()
+                ]
+                if len(candidates) == 1:
+                    candidate = candidates[0]
+                    address = str(candidate["address"])
+                    name = str(candidate.get("name") or "External Bluetooth speaker")
+                    external_audio.set_saved_target(address, name)
+                    settings = operation_store.save(
+                        settings.model_copy(
+                            update={
+                                "external_bluetooth_address": address,
+                                "external_bluetooth_name": name,
+                            }
+                        )
+                    )
+                elif len(candidates) > 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Multiple paired external speakers were found. Select the one you want once; Reconnect will remember it afterward.",
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="No saved or paired external Bluetooth speaker was found. Pair a speaker once, then Reconnect will work without scanning.",
+                    )
+
         try:
             snapshot = await external_audio.connect(route=True)
         except AudioOutputUnavailable as exc:
+            await ensure_skelly_fallback_audio_ready(settings)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if settings.jaw_follow_speech and settings.hardware_profile != "dac":
+            try:
+                skelly = await classic_audio.refresh()
+                if not skelly.connected or not skelly.sink_id:
+                    await classic_audio.connect(route=False)
+                    remember_speaker_connection()
+            except ClassicAudioUnavailable:
+                pass
+        await restore_external_mute_policy(settings)
         apply_audio_output_settings()
         return snapshot.to_dict()
 
@@ -1998,8 +2203,13 @@ def create_app(
 
         require_manual_hardware_access()
         try:
-            await hardware.set_live_mode(True)
+            # A single Live-Mode ON command is not reliable after a prop reset or
+            # cold boot. A deliberate OFF -> ON edge wakes the BR/EDR audio radio
+            # before BlueZ begins discovery/connection.
+            await hardware.set_live_mode(False)
             await asyncio.sleep(0.8)
+            await hardware.set_live_mode(True)
+            await asyncio.sleep(1.5)
             prepare = getattr(classic_audio, "prepare", None)
             snapshot = (
                 await prepare(app_settings.classic_audio_pin)
@@ -2185,9 +2395,10 @@ def create_app(
                 result["restore_volume"] = request.volume
                 return result
             status = await hardware.set_volume(request.volume)
-            operation_store.save(
-                settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
-            )
+            if request.volume > 0:
+                operation_store.save(
+                    settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
+                )
             return enrich_media_status(status)
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -79,8 +79,8 @@ def play_media_file(serial: int, enabled: bool = True) -> bytes:
 
 
 def set_volume(volume: int) -> bytes:
-    if not 0 <= volume <= 255:
-        raise ValueError("Skelly volume must be between 0 and 255")
+    if not 0 <= volume <= 100:
+        raise ValueError("Skelly volume must be between 0 and 100")
     return build_command("AAFA", f"{volume:02X}")
 
 

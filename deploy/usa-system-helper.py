@@ -683,6 +683,52 @@ def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
             check=False, timeout=20,
         )
 
+def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
+    if session_user not in AUDIO_SESSION_USERS:
+        raise SystemExit("Unsupported audio session")
+    if run("id", session_user, check=False).returncode != 0:
+        raise SystemExit("Audio session user is unavailable")
+    uid = run("id", "-u", session_user).stdout.strip()
+    runtime = f"/run/user/{uid}"
+    env = [
+        "env",
+        f"XDG_RUNTIME_DIR={runtime}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+    ]
+    return uid, env
+
+
+def audio_session_pause_competitor(target_session: str) -> None:
+    """Temporarily remove the other WirePlumber/PipeWire stack from a new A2DP claim.
+
+    USA intentionally uses two user audio sessions. BlueZ exposes the same A2DP
+    endpoints to both session managers, so a newly paired/reconnected device can
+    otherwise be claimed by whichever WirePlumber wins the race.  Pause only the
+    competing session while the requested session establishes its transport.
+    """
+    if target_session not in AUDIO_SESSION_USERS:
+        raise SystemExit("Unsupported audio session")
+    competitor = next(user for user in AUDIO_SESSION_USERS if user != target_session)
+    _, env = _audio_session_env(competitor)
+    run(
+        "runuser", "-u", competitor, "--", *env,
+        "systemctl", "--user", "stop",
+        "wireplumber.service", "pipewire.service", "pipewire-pulse.service",
+        "pipewire.socket", "pipewire-pulse.socket",
+        check=False, timeout=20,
+    )
+    # The socket units can immediately respawn PipeWire and re-enter the A2DP
+    # ownership race. Stop them too; this matches the proven manual recovery.
+    audio_session_prepare(target_session)
+
+
+def audio_session_resume_competitor(target_session: str) -> None:
+    if target_session not in AUDIO_SESSION_USERS:
+        raise SystemExit("Unsupported audio session")
+    competitor = next(user for user in AUDIO_SESSION_USERS if user != target_session)
+    audio_session_prepare(competitor)
+
+
 def audio_session_exec(program: str, arguments: list[str]) -> None:
     """Execute an allowlisted PipeWire client in an explicitly allowlisted user session."""
     session_user = SUPPORT_USER
@@ -746,6 +792,14 @@ def main() -> None:
         elif args:
             raise SystemExit("Unsupported audio-session-prepare arguments")
         audio_session_prepare(session_user)
+    elif action in {"audio-session-pause-competitor", "audio-session-resume-competitor"}:
+        args = sys.argv[2:]
+        if len(args) != 2 or args[0] != "--session":
+            raise SystemExit("Unsupported audio session ownership arguments")
+        if action == "audio-session-pause-competitor":
+            audio_session_pause_competitor(args[1])
+        else:
+            audio_session_resume_competitor(args[1])
     elif action == "audio-wpctl": audio_session_exec("wpctl", sys.argv[2:])
     elif action == "audio-pw-play": audio_session_exec("pw-play", sys.argv[2:])
     elif action == "network-boot": network_boot()

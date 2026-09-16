@@ -81,9 +81,11 @@ def test_protocol_commands_match_verified_controller_frames() -> None:
     assert ble_protocol.play_media_file(1).hex().upper() == (
         "AAC60001010000000000E7"
     )
-    assert ble_protocol.set_volume(128).hex().upper() == (
-        "AAFA800000000000000057"
+    assert ble_protocol.set_volume(100).hex().upper() == (
+        "AAFA640000000000000031"
     )
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        ble_protocol.set_volume(101)
     assert ble_protocol.set_light_brightness(1, 200).hex().upper() == (
         "AAF301C8000000000000DE"
     )

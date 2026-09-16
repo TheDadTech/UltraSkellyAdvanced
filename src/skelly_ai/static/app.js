@@ -96,6 +96,8 @@ const jawSyncOffsetValue = document.querySelector("#jaw-sync-offset-value");
 const jawMirrorLevel = document.querySelector("#jaw-mirror-level");
 const jawMirrorLevelValue = document.querySelector("#jaw-mirror-level-value");
 const muteSkellySpeakerOnExternal = document.querySelector("#mute-skelly-speaker-on-external");
+const speakerMuteButton = document.querySelector("#speaker-mute-button");
+const speakerMuteCue = document.querySelector("#speaker-mute-cue");
 const externalBluetoothControls = document.querySelector("#external-bluetooth-controls");
 const externalBluetoothDevice = document.querySelector("#external-bluetooth-device");
 const externalBluetoothScan = document.querySelector("#external-bluetooth-scan");
@@ -105,6 +107,7 @@ const externalBluetoothForget = document.querySelector("#external-bluetooth-forg
 const externalBluetoothResult = document.querySelector("#external-bluetooth-result");
 let audioOutputInteractionUntil = 0;
 let externalBluetoothBusy = false;
+let currentAudioRoute = null;
 
 function holdAudioOutputSelection(ms = 6000) {
   audioOutputInteractionUntil = Math.max(audioOutputInteractionUntil, Date.now() + ms);
@@ -452,6 +455,32 @@ function renderFppOverrideAvailability(profile) {
   if (!available) allowFppOverride.checked = false;
 }
 
+function formatJawSyncOffset(value) {
+  const offset = Number(value || 0);
+  if (offset === 0) return "0 ms";
+  return offset < 0 ? `Jaw sooner by ${Math.abs(offset)} ms` : `Audio sooner by ${offset} ms`;
+}
+
+function renderSpeakerMuteState() {
+  if (!speakerMuteButton || !speakerMuteCue) return;
+  const externalAutoMute = currentOperationSettings?.audio_output === "external_bluetooth"
+    && currentOperationSettings?.mute_skelly_speaker_on_external !== false
+    && currentAudioRoute?.active === "external_bluetooth";
+  const actualMuted = Number(currentMediaStatus?.volume ?? speakerVolume?.value ?? 0) === 0;
+  const muted = externalAutoMute || actualMuted;
+  const fallbackActive = currentAudioRoute?.fallback_active === true;
+  speakerMuteButton.textContent = externalAutoMute
+    ? "Muted · External"
+    : fallbackActive
+      ? "Unmuted · Fallback"
+      : (muted ? "Unmute" : "Mute");
+  speakerMuteButton.classList.toggle("is-muted", muted);
+  speakerMuteButton.setAttribute("aria-pressed", muted ? "true" : "false");
+  speakerMuteCue.hidden = !(externalAutoMute || fallbackActive);
+  if (fallbackActive) speakerMuteCue.textContent = "External unavailable: Skelly speaker is active for fallback.";
+  else if (externalAutoMute) speakerMuteCue.textContent = "Muted because External Bluetooth is actively carrying speech.";
+}
+
 function renderOperation(operation) {
   const settings = operation.settings;
   currentOperationSettings = settings;
@@ -492,10 +521,11 @@ function renderOperation(operation) {
   }
   if (jawFollowSpeech) jawFollowSpeech.checked = settings.jaw_follow_speech !== false;
   if (jawSyncOffset && document.activeElement !== jawSyncOffset) jawSyncOffset.value = settings.jaw_sync_offset_ms ?? -750;
-  if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = `${jawSyncOffset?.value ?? 0} ms`;
+  if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = formatJawSyncOffset(jawSyncOffset?.value ?? 0);
   if (jawMirrorLevel && document.activeElement !== jawMirrorLevel) jawMirrorLevel.value = settings.jaw_mirror_level_percent ?? 100;
   if (jawMirrorLevelValue) jawMirrorLevelValue.textContent = `${jawMirrorLevel?.value ?? 100}%`;
   if (muteSkellySpeakerOnExternal) muteSkellySpeakerOnExternal.checked = settings.mute_skelly_speaker_on_external !== false;
+  renderSpeakerMuteState();
   renderAudioOutputControls(settings);
   nagDelayValue.textContent = `${nagDelay.value}s`;
   nagCooldownValue.textContent = `${nagCooldown.value}s`;
@@ -544,6 +574,7 @@ function renderStatus(body) {
   headerPropStatus.textContent = body.hardware.connected ? "connected" : "disconnected";
   setStatusLight(statusLights.prop, body.hardware.connected ? "ok" : "error");
   const selectedAudio = body.operation?.settings?.audio_output || "skelly";
+  currentAudioRoute = body.audio_route || null;
   const externalSpeakerReady = Boolean(body.external_audio?.connected && body.external_audio?.sink_id);
   const skellySpeakerReady = Boolean(body.audio?.connected && body.audio?.sink_id);
   const systemSpeakerReady = selectedAudio === "system";
@@ -553,7 +584,9 @@ function renderStatus(body) {
       ? systemSpeakerReady
       : skellySpeakerReady;
   if (headerSpeakerLabel) {
-    headerSpeakerLabel.textContent = selectedAudio === "external_bluetooth"
+    headerSpeakerLabel.textContent = selectedAudio === "external_bluetooth" && currentAudioRoute?.fallback_active
+      ? "AUDIO OUTPUT"
+      : selectedAudio === "external_bluetooth"
       ? "EXTERNAL SPEAKER"
       : selectedAudio === "system"
         ? "PI / USB AUDIO"
@@ -564,10 +597,18 @@ function renderStatus(body) {
   if (skellyConnectionsDetails && propReady && speakerReady && !skellyConnectionsDetails.dataset.userOpened) skellyConnectionsDetails.open = false;
   headerSpeakerStatus.textContent = selectedAudio === "external_bluetooth"
     ? externalSpeakerReady
-      ? (body.external_audio?.device_name || "connected")
-      : body.external_audio?.address ? "reconnecting…" : "disconnected"
+      ? "External ready"
+      : body.external_audio?.connected
+        ? "Bluetooth connected · audio starting"
+        : skellySpeakerReady
+          ? "External unavailable · using Skelly"
+          : body.external_audio?.address ? "reconnecting…" : "disconnected"
     : speakerReady ? "connected" : "disconnected";
-  setStatusLight(statusLights.speaker, speakerReady ? "ok" : "off");
+  const effectiveSpeakerReady = selectedAudio === "external_bluetooth"
+    ? (externalSpeakerReady || skellySpeakerReady)
+    : speakerReady;
+  setStatusLight(statusLights.speaker, effectiveSpeakerReady ? "ok" : "off");
+  renderSpeakerMuteState();
   const profile = body.operation?.settings?.hardware_profile ?? "stock";
   headerDacStatus.textContent = profile === "dac"
     ? body.dac.transmitting ? "active" : body.dac.armed ? "armed" : "disarmed"
@@ -1113,10 +1154,16 @@ function renderAudioOutputStatus(body) {
     audioOutputStatus.textContent = body.audio?.connected ? "Skelly connected" : "Skelly selected";
     audioOutputStatus.classList.toggle("neutral", !body.audio?.connected);
   } else if (selected === "external_bluetooth") {
-    audioOutputStatus.textContent = external.connected
-      ? (external.device_name || "External connected")
-      : external.address ? "reconnecting…" : "speaker needed";
-    audioOutputStatus.classList.toggle("neutral", !external.connected);
+    const externalReady = Boolean(external.connected && external.sink_id);
+    const skellyReady = Boolean(body.audio?.connected && body.audio?.sink_id);
+    audioOutputStatus.textContent = externalReady
+      ? "External ready"
+      : external.connected
+        ? "Bluetooth connected · audio starting"
+        : skellyReady
+          ? "External unavailable · using Skelly"
+          : external.address ? "reconnecting…" : "speaker needed";
+    audioOutputStatus.classList.toggle("neutral", !externalReady);
     if (externalBluetoothResult && external.last_error) externalBluetoothResult.textContent = external.last_error;
   } else {
     audioOutputStatus.textContent = "Pi / USB audio";
@@ -1144,7 +1191,7 @@ function operationSettingsPayload() {
     jaw_sync_offset_ms: Number(jawSyncOffset?.value ?? -750),
     jaw_mirror_level_percent: Number(jawMirrorLevel?.value ?? currentOperationSettings?.jaw_mirror_level_percent ?? 100),
     mute_skelly_speaker_on_external: muteSkellySpeakerOnExternal?.checked !== false,
-    skelly_speaker_restore_volume: currentOperationSettings?.skelly_speaker_restore_volume ?? 128,
+    skelly_speaker_restore_volume: currentOperationSettings?.skelly_speaker_restore_volume ?? 100,
     allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
@@ -1400,8 +1447,9 @@ stopOperation.addEventListener("click", async () => {
 
 function renderMediaStatus(body) {
   currentMediaStatus = body;
-  speakerVolume.value = String(body.volume ?? 128);
-  speakerVolumeValue.textContent = `${Math.round((Number(speakerVolume.value) / 255) * 100)}%`;
+  speakerVolume.value = String(Math.max(0, Math.min(100, Number(body.volume ?? 100))));
+  speakerVolumeValue.textContent = `${Math.round(Number(speakerVolume.value))}%`;
+  renderSpeakerMuteState();
   mediaLibrary.replaceChildren();
   const filter = mediaFilter.value.trim().toLowerCase();
   const files = (body.files || []).filter((file) => !filter || String(file.name || "").toLowerCase().includes(filter));
@@ -1713,7 +1761,7 @@ stopOperatorGesture.addEventListener("click", async () => {
 });
 
 speakerVolume.addEventListener("input", () => {
-  speakerVolumeValue.textContent = `${Math.round((Number(speakerVolume.value) / 255) * 100)}%`;
+  speakerVolumeValue.textContent = `${Math.round(Number(speakerVolume.value))}%`;
 });
 
 speakerVolume.addEventListener("change", async () => {
@@ -1735,6 +1783,40 @@ speakerVolume.addEventListener("change", async () => {
     speakerVolume.disabled = false;
   }
 });
+
+if (speakerMuteButton) {
+  speakerMuteButton.addEventListener("click", async () => {
+    speakerMuteButton.disabled = true;
+    try {
+      const externalAutoMute = currentOperationSettings?.audio_output === "external_bluetooth"
+        && currentOperationSettings?.mute_skelly_speaker_on_external !== false
+        && currentAudioRoute?.active === "external_bluetooth";
+      if (externalAutoMute) {
+        muteSkellySpeakerOnExternal.checked = false;
+        const body = await saveOperationSettings();
+        if (body?.settings) currentOperationSettings = body.settings;
+        await refreshStatus();
+        speakerVolumeResult.textContent = "Skelly speaker unmuted while External Bluetooth remains selected.";
+      } else {
+        const isMuted = Number(currentMediaStatus?.volume ?? speakerVolume.value) === 0;
+        const restore = Math.max(1, Math.min(100, Number(currentOperationSettings?.skelly_speaker_restore_volume ?? speakerVolume.value ?? 100)));
+        const target = isMuted ? restore : 0;
+        const body = await request("/api/media/volume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ volume: target }),
+        });
+        renderMediaStatus(body);
+        speakerVolumeResult.textContent = target === 0 ? "Skelly speaker muted." : `Skelly speaker restored to ${target}%.`;
+      }
+    } catch (error) {
+      speakerVolumeResult.textContent = error.message;
+    } finally {
+      speakerMuteButton.disabled = false;
+      renderSpeakerMuteState();
+    }
+  });
+}
 
 document.querySelector("#run-diagnostics").addEventListener("click", async (event) => {
   event.currentTarget.disabled = true;
@@ -2843,7 +2925,7 @@ if (jawFollowSpeech) {
 }
 if (jawSyncOffset) {
   jawSyncOffset.addEventListener("input", () => {
-    if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = `${jawSyncOffset.value} ms`;
+    if (jawSyncOffsetValue) jawSyncOffsetValue.textContent = formatJawSyncOffset(jawSyncOffset.value);
   });
 }
 if (jawMirrorLevel) {

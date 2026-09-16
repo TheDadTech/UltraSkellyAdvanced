@@ -29,7 +29,7 @@ class OperationSettings(BaseModel):
     jaw_sync_offset_ms: int = Field(default=-750, ge=-1000, le=1000)
     jaw_mirror_level_percent: int = Field(default=100, ge=70, le=100)
     mute_skelly_speaker_on_external: bool = True
-    skelly_speaker_restore_volume: int = Field(default=128, ge=0, le=255)
+    skelly_speaker_restore_volume: int = Field(default=100, ge=0, le=100)
     allow_fpp_override: bool = False
     manual_microphone_enabled: bool = True
     manual_camera_enabled: bool = True
@@ -53,6 +53,15 @@ class OperationSettings(BaseModel):
     @classmethod
     def normalize_custom_personality(cls, value: object) -> str:
         return str(value or "").strip()[:500]
+
+    @field_validator("skelly_speaker_restore_volume", mode="before")
+    @classmethod
+    def normalize_skelly_speaker_restore_volume(cls, value: object) -> int:
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            return 100
+        return max(0, min(100, numeric))
 
     @field_validator("personality_pool", mode="before")
     @classmethod

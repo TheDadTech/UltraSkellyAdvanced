@@ -135,7 +135,7 @@ class SimulatedSkelly:
         self._movement_armed = True
         self._changed_at = self._now()
         self._events: deque[dict[str, str]] = deque(maxlen=50)
-        self._volume = 128
+        self._volume = 100
         self._firmware_version = "vSIM"
         self._playing_serial: int | None = None
         self._live_lights = {
@@ -304,8 +304,8 @@ class SimulatedSkelly:
 
     async def set_volume(self, volume: int) -> dict[str, object]:
         self._require_connected()
-        if not 0 <= volume <= 255:
-            raise ValueError("Skelly volume must be between 0 and 255")
+        if not 0 <= volume <= 100:
+            raise ValueError("Skelly volume must be between 0 and 100")
         self._volume = volume
         self._record("volume", str(volume))
         return self.media_status()

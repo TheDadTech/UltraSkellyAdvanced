@@ -84,7 +84,7 @@ class BleSkelly:
         self._chunk_resume_from: int | None = None
         self._media_order: list[int] = []
         self._playing_serial: int | None = None
-        self._volume = 128
+        self._volume = 100
         self._firmware_version: str | None = None
         self._changed_at = self._now()
         self._events: deque[dict[str, str]] = deque(maxlen=100)

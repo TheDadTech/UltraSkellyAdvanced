@@ -93,7 +93,7 @@ async def test_routing_allows_full_first_connection_publication_window(monkeypat
     audio._run_program = fake_run_program  # type: ignore[method-assign]
     snapshot = await audio._route_pipewire_sink()
 
-    assert status_reads == 60
+    assert status_reads == 120
     assert snapshot.sink_ready is False
     assert snapshot.last_error == (
         "Bluetooth connected, but the Skelly PipeWire audio output did not appear"
@@ -401,5 +401,99 @@ def test_prepare_connect_automatically_performs_second_pipewire_routing_pass() -
 
     assert connected.status_code == 200
     assert connected.json()["sink_ready"] is True
-    assert audio.refresh_calls == 1
+    assert audio.refresh_calls == 2
     assert audio.connect_calls == 1
+
+@pytest.mark.asyncio
+async def test_connect_reclaims_skelly_for_dadtech_when_bluez_connected_without_sink(monkeypatch) -> None:
+    monkeypatch.setattr("skelly_ai.classic_audio.shutil.which", lambda _: "/usr/bin/bluetoothctl")
+    audio = BluetoothClassicAudio(address="AA:BB:CC:DD:EE:02")
+    connected = True
+    calls: list[tuple[str, ...]] = []
+    claim_events: list[str] = []
+
+    async def pause() -> bool:
+        claim_events.append("pause")
+        return True
+
+    async def resume() -> None:
+        claim_events.append("resume")
+
+    async def fake_run(*arguments: str, input_text=None) -> _CommandResult:
+        nonlocal connected
+        del input_text
+        calls.append(arguments)
+        if arguments[0] == "info":
+            return _CommandResult(0, "\n".join((
+                "Device AA:BB:CC:DD:EE:02 (public)",
+                "Name: Animated Skelly(Live)",
+                "Paired: yes",
+                "Trusted: yes",
+                f"Connected: {'yes' if connected else 'no'}",
+            )))
+        if arguments[0] == "disconnect":
+            connected = False
+            return _CommandResult(0, "Successful disconnected")
+        if arguments[0] == "connect":
+            connected = True
+            return _CommandResult(0, "Connection successful")
+        raise AssertionError(arguments)
+
+    async def no_sink() -> ClassicAudioSnapshot:
+        return audio._update(sink_ready=False, sink_id=None, sink_name=None)
+
+    async def routed() -> ClassicAudioSnapshot:
+        return audio._update(sink_ready=True, sink_id="92", sink_name="bluez_output.AA_BB_CC_DD_EE_02.1")
+
+    monkeypatch.setattr(audio, "_pause_competing_audio_session", pause)
+    monkeypatch.setattr(audio, "_resume_competing_audio_session", resume)
+    monkeypatch.setattr(audio, "_run", fake_run)
+    monkeypatch.setattr(audio, "_read_pipewire_status", no_sink)
+    monkeypatch.setattr(audio, "_route_pipewire_sink", routed)
+
+    result = await audio.connect(route=True)
+
+    assert result.sink_ready is True
+    assert ("disconnect", "AA:BB:CC:DD:EE:02") in calls
+    assert ("connect", "AA:BB:CC:DD:EE:02") in calls
+    assert claim_events == ["pause", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_connect_does_not_bounce_skelly_when_dadtech_already_owns_sink(monkeypatch) -> None:
+    monkeypatch.setattr("skelly_ai.classic_audio.shutil.which", lambda _: "/usr/bin/bluetoothctl")
+    audio = BluetoothClassicAudio(address="AA:BB:CC:DD:EE:02")
+    calls: list[tuple[str, ...]] = []
+
+    async def pause() -> bool:
+        return True
+
+    async def resume() -> None:
+        return None
+
+    async def fake_run(*arguments: str, input_text=None) -> _CommandResult:
+        del input_text
+        calls.append(arguments)
+        if arguments[0] == "info":
+            return _CommandResult(0, "\n".join((
+                "Device AA:BB:CC:DD:EE:02 (public)",
+                "Name: Animated Skelly(Live)",
+                "Paired: yes",
+                "Trusted: yes",
+                "Connected: yes",
+            )))
+        raise AssertionError(arguments)
+
+    async def has_sink() -> ClassicAudioSnapshot:
+        return audio._update(sink_ready=True, sink_id="92", sink_name="bluez_output.AA_BB_CC_DD_EE_02.1")
+
+    monkeypatch.setattr(audio, "_pause_competing_audio_session", pause)
+    monkeypatch.setattr(audio, "_resume_competing_audio_session", resume)
+    monkeypatch.setattr(audio, "_run", fake_run)
+    monkeypatch.setattr(audio, "_read_pipewire_status", has_sink)
+    monkeypatch.setattr(audio, "_route_pipewire_sink", has_sink)
+
+    result = await audio.connect(route=True)
+
+    assert result.sink_ready is True
+    assert not any(call[0] in {"disconnect", "connect"} for call in calls)

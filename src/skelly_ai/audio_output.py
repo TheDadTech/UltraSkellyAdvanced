@@ -111,6 +111,28 @@ class ExternalBluetoothAudio:
             result.sort(key=lambda item: (not bool(item["paired"]), str(item["name"]).casefold()))
             return result
 
+    async def paired_devices(self) -> list[dict[str, object]]:
+        async with self._lock:
+            self._require_tools()
+            paired = await self._run("devices", "Paired")
+            result: list[dict[str, object]] = []
+            seen: set[str] = set()
+            for raw_line in paired.output.splitlines():
+                match = self._DEVICE_PATTERN.match(raw_line.strip())
+                if not match:
+                    continue
+                address = match.group(1).upper()
+                if address in seen:
+                    continue
+                seen.add(address)
+                result.append({
+                    "address": address,
+                    "name": match.group(2).strip(),
+                    "paired": True,
+                })
+            result.sort(key=lambda item: str(item["name"]).casefold())
+            return result
+
     async def refresh(self) -> ExternalBluetoothSnapshot:
         async with self._lock:
             if not self._address:
@@ -162,27 +184,61 @@ class ExternalBluetoothAudio:
         await self._ensure_headless_pipewire()
         if not self._address:
             raise AudioOutputUnavailable("Choose an External Bluetooth speaker in Setup first")
+
         info = await self._read_info(self._address)
-        if not info.connected:
-            connected = await self._run("connect", self._address)
-            info = await self._read_info(self._address)
-            if connected.returncode != 0 or not info.connected:
-                raise AudioOutputUnavailable(self._useful_output(connected.output) or "External Bluetooth speaker did not accept the connection")
-        sink_id = None
-        sink_name = None
-        for _ in range(30):
-            sink = await self._find_pipewire_sink(info.device_name)
-            if sink:
-                sink_id, sink_name = sink
-                break
-            await asyncio.sleep(0.5)
-        if sink_id is None:
-            raise AudioOutputUnavailable("External Bluetooth connected, but its PipeWire audio output did not appear")
-        if route:
-            routed = await self._run_program("wpctl", "set-default", sink_id)
-            if routed.returncode != 0:
-                raise AudioOutputUnavailable(self._useful_output(routed.output) or "Unable to select the external Bluetooth speaker as audio output")
-        return self._update(sink_id=sink_id, sink_name=sink_name, last_error=None)
+        existing_sink = await self._find_pipewire_sink(info.device_name) if info.connected else None
+        ownership_reserved = False
+        try:
+            # BlueZ can report the speaker connected while the *other* user
+            # WirePlumber session owns its A2DP transport.  That produces the
+            # confusing state where the speaker chimes but USA has no usable
+            # external sink.  Reserve the requested PipeWire session and force
+            # one controlled reconnect whenever the target session has no sink.
+            if existing_sink is None:
+                # First prove the external speaker is actually reachable WITHOUT
+                # pausing dadtech. Failed background reconnect attempts must not
+                # bounce the Skelly A2DP path and make the prop chime repeatedly.
+                if not info.connected:
+                    connected = await self._run("connect", self._address)
+                    info = await self._read_info(self._address)
+                    if connected.returncode != 0 or not info.connected:
+                        raise AudioOutputUnavailable(self._useful_output(connected.output) or "External Bluetooth speaker did not accept the connection")
+                    await asyncio.sleep(0.75)
+                    existing_sink = await self._find_pipewire_sink(info.device_name)
+
+                # If BlueZ connected but this session still has no sink, the other
+                # WirePlumber session claimed the transport. Only now reserve the
+                # external session and perform one controlled ownership transfer.
+                if existing_sink is None:
+                    await self._pause_competing_session()
+                    ownership_reserved = True
+                    info = await self._read_info(self._address)
+                    if info.connected:
+                        await self._run("disconnect", self._address)
+                        await asyncio.sleep(0.75)
+                    connected = await self._run("connect", self._address)
+                    info = await self._read_info(self._address)
+                    if connected.returncode != 0 or not info.connected:
+                        raise AudioOutputUnavailable(self._useful_output(connected.output) or "External Bluetooth speaker did not accept the connection")
+
+            sink_id = None
+            sink_name = None
+            for _ in range(120):
+                sink = await self._find_pipewire_sink(info.device_name)
+                if sink:
+                    sink_id, sink_name = sink
+                    break
+                await asyncio.sleep(0.5)
+            if sink_id is None:
+                raise AudioOutputUnavailable("External Bluetooth connected, but its PipeWire audio output did not appear in the external-audio session within 60 seconds")
+            if route:
+                routed = await self._run_program("wpctl", "set-default", sink_id)
+                if routed.returncode != 0:
+                    raise AudioOutputUnavailable(self._useful_output(routed.output) or "Unable to select the external Bluetooth speaker as audio output")
+            return self._update(sink_id=sink_id, sink_name=sink_name, last_error=None)
+        finally:
+            if ownership_reserved:
+                await self._resume_competing_session()
 
     async def disconnect(self) -> ExternalBluetoothSnapshot:
         async with self._lock:
@@ -253,6 +309,33 @@ class ExternalBluetoothAudio:
                         break
                 return sink_id, sink_name
         return None
+
+
+    async def _pause_competing_session(self) -> None:
+        if self._system_helper is None or not self._system_helper.exists():
+            return
+        result = await self._run_program(
+            "sudo", str(self._system_helper),
+            "audio-session-pause-competitor", "--session", self._pipewire_session,
+        )
+        if result.returncode != 0:
+            raise AudioOutputUnavailable(
+                self._useful_output(result.output)
+                or "Unable to reserve the external Bluetooth audio session"
+            )
+
+    async def _resume_competing_session(self) -> None:
+        if self._system_helper is None or not self._system_helper.exists():
+            return
+        result = await self._run_program(
+            "sudo", str(self._system_helper),
+            "audio-session-resume-competitor", "--session", self._pipewire_session,
+        )
+        if result.returncode != 0:
+            # The external sink is already established.  Do not discard it only
+            # because the other session had trouble restarting; surface that
+            # through later Skelly refresh/recovery instead.
+            return
 
     async def _ensure_headless_pipewire(self) -> None:
         # Production images keep Bluetooth audio in the persistent dadtech
@@ -377,6 +460,15 @@ class SimulatedExternalBluetoothAudio:
         return [
             {"address": "11:22:33:44:55:66", "name": "External Speaker (simulated)", "paired": False}
         ]
+
+    async def paired_devices(self) -> list[dict[str, object]]:
+        if self._snapshot.address:
+            return [{
+                "address": self._snapshot.address,
+                "name": self._snapshot.device_name or "External Speaker (simulated)",
+                "paired": True,
+            }]
+        return [{"address": "11:22:33:44:55:66", "name": "External Speaker (simulated)", "paired": True}]
 
     async def refresh(self) -> ExternalBluetoothSnapshot:
         return self._snapshot

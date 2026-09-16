@@ -129,12 +129,14 @@ class BluetoothClassicAudio:
         name_filter: str = "Skelly(Live)",
         timeout_seconds: float = 20.0,
         system_helper: Path | None = None,
+        pipewire_session: str = "dadtech",
     ) -> None:
         self._configured_address = address.upper() if address else None
         self._address = self._configured_address
         self._name_filter = name_filter
         self._timeout_seconds = timeout_seconds
         self._system_helper = system_helper
+        self._pipewire_session = pipewire_session
         self._lock = asyncio.Lock()
         self._snapshot = ClassicAudioSnapshot(
             available=shutil.which("bluetoothctl") is not None,
@@ -188,61 +190,139 @@ class BluetoothClassicAudio:
     async def connect(self, *, route: bool = True) -> ClassicAudioSnapshot:
         async with self._lock:
             self._require_tool()
-            address = await self._resolve_address()
-            snapshot = await self._read_info(address)
-            if not snapshot.connected:
-                result = await self._run("connect", address)
+            claim_active = False
+            try:
+                if route:
+                    claim_active = await self._pause_competing_audio_session()
+                address = await self._resolve_address()
                 snapshot = await self._read_info(address)
-                if result.returncode != 0 or not snapshot.connected:
-                    detail = self._useful_output(result.output)
-                    message = detail or "The Skelly speaker did not accept the connection"
-                    self._update(last_error=message)
-                    raise ClassicAudioUnavailable(message)
-            if route:
-                return await self._route_pipewire_sink()
-            return await self._find_pipewire_sink_without_routing()
+                if snapshot.connected and route:
+                    current = await self._read_pipewire_status()
+                    if not current.sink_ready:
+                        # BlueZ can remain connected even when the A2DP transport
+                        # was claimed by the wrong user session. Reconnect once
+                        # while the competing session is paused so dadtech owns
+                        # Skelly's jaw/audio sink deterministically.
+                        await self._run("disconnect", address)
+                        await asyncio.sleep(0.5)
+                        snapshot = await self._read_info(address)
+                if not snapshot.connected:
+                    result = await self._run("connect", address)
+                    snapshot = await self._read_info(address)
+                    if result.returncode != 0 or not snapshot.connected:
+                        detail = self._useful_output(result.output)
+                        message = detail or "The Skelly speaker did not accept the connection"
+                        self._update(last_error=message)
+                        raise ClassicAudioUnavailable(message)
+                if route:
+                    return await self._route_pipewire_sink()
+                return await self._find_pipewire_sink_without_routing()
+            finally:
+                if claim_active:
+                    await self._resume_competing_audio_session()
 
     async def prepare(self, pin: str) -> ClassicAudioSnapshot:
         """Discover and pair a first-use speaker, then connect and route it."""
         async with self._lock:
             self._require_tool()
-            address = await self._resolve_address(discover=True)
-            snapshot = await self._read_info(address)
-            if not snapshot.paired:
-                paired = await self._pair(address, pin)
-                pair_detail = paired.output.casefold()
-                if paired.returncode != 0 and self._is_stale_pairing_error(pair_detail):
-                    # A physical factory reset invalidates Skelly's stored link
-                    # key while BlueZ can retain the old device record. Remove
-                    # only that Classic-audio record, rediscover it, and make
-                    # one clean pairing attempt with the factory PIN.
-                    await self._run("remove", address)
-                    await asyncio.sleep(1.0)
-                    await self._run("--timeout", "12", "scan", "bredr")
-                    paired = await self._pair(address, pin)
-                    pair_detail = paired.output.casefold()
-                if paired.returncode != 0 and "alreadyexists" not in pair_detail:
-                    message = self._useful_output(paired.output) or "The Skelly speaker could not be paired"
-                    self._update(last_error=message)
-                    raise ClassicAudioUnavailable(message)
-                trusted = await self._run("trust", address)
-                if trusted.returncode != 0:
-                    message = self._useful_output(trusted.output) or "The Skelly speaker could not be trusted"
-                    self._update(last_error=message)
-                    raise ClassicAudioUnavailable(message)
+            claim_active = await self._pause_competing_audio_session()
+            try:
+                address = await self._resolve_address(discover=True)
                 snapshot = await self._read_info(address)
                 if not snapshot.paired:
-                    message = "The Skelly speaker pairing did not complete"
-                    self._update(last_error=message)
-                    raise ClassicAudioUnavailable(message)
-            if not snapshot.connected:
-                connected = await self._run("connect", address)
-                snapshot = await self._read_info(address)
-                if connected.returncode != 0 or not snapshot.connected:
-                    message = self._useful_output(connected.output) or "The Skelly speaker did not accept the connection"
-                    self._update(last_error=message)
-                    raise ClassicAudioUnavailable(message)
-            return await self._route_pipewire_sink()
+                    paired = await self._pair(address, pin)
+                    pair_detail = paired.output.casefold()
+                    if paired.returncode != 0 and self._is_stale_pairing_error(pair_detail):
+                        # A physical factory reset invalidates Skelly's stored link
+                        # key while BlueZ can retain the old device record. Remove
+                        # only that Classic-audio record, rediscover it, and make
+                        # one clean pairing attempt with the factory PIN.
+                        await self._run("remove", address)
+                        await asyncio.sleep(1.0)
+                        await self._run("--timeout", "12", "scan", "bredr")
+                        paired = await self._pair(address, pin)
+                        pair_detail = paired.output.casefold()
+                    if paired.returncode != 0 and "alreadyexists" not in pair_detail:
+                        message = self._useful_output(paired.output) or "The Skelly speaker could not be paired"
+                        self._update(last_error=message)
+                        raise ClassicAudioUnavailable(message)
+                    trusted = await self._run("trust", address)
+                    if trusted.returncode != 0:
+                        message = self._useful_output(trusted.output) or "The Skelly speaker could not be trusted"
+                        self._update(last_error=message)
+                        raise ClassicAudioUnavailable(message)
+                    snapshot = await self._read_info(address)
+                    if not snapshot.paired:
+                        message = "The Skelly speaker pairing did not complete"
+                        self._update(last_error=message)
+                        raise ClassicAudioUnavailable(message)
+
+                # A previous attempt may leave BlueZ connected while another
+                # WirePlumber session owns the transport. If dadtech cannot see
+                # the sink, reconnect once while the competitor is paused.
+                if snapshot.connected:
+                    current = await self._read_pipewire_status()
+                    if not current.sink_ready:
+                        await self._run("disconnect", address)
+                        await asyncio.sleep(0.5)
+                        snapshot = await self._read_info(address)
+
+                if not snapshot.connected:
+                    connected = await self._run("connect", address)
+                    snapshot = await self._read_info(address)
+                    if connected.returncode != 0 or not snapshot.connected:
+                        message = self._useful_output(connected.output) or "The Skelly speaker did not accept the connection"
+                        self._update(last_error=message)
+                        raise ClassicAudioUnavailable(message)
+                return await self._route_pipewire_sink()
+            finally:
+                if claim_active:
+                    await self._resume_competing_audio_session()
+
+    async def _pause_competing_audio_session(self) -> bool:
+        if self._system_helper is None or not self._system_helper.exists():
+            return False
+        result = await self._run_helper(
+            "audio-session-pause-competitor", "--session", self._pipewire_session
+        )
+        if result.returncode != 0:
+            message = self._useful_output(result.output) or "Unable to reserve the Skelly Bluetooth audio session"
+            self._update(last_error=message)
+            raise ClassicAudioUnavailable(message)
+        return True
+
+    async def _resume_competing_audio_session(self) -> None:
+        if self._system_helper is None or not self._system_helper.exists():
+            return
+        # Recovery should never mask the original connection result. The
+        # external-audio maintenance task can reconnect its saved speaker if
+        # its session needed a moment to settle after being resumed.
+        await self._run_helper(
+            "audio-session-resume-competitor", "--session", self._pipewire_session
+        )
+
+    async def _run_helper(self, *arguments: str) -> _CommandResult:
+        if self._system_helper is None or not self._system_helper.exists():
+            return _CommandResult(0, "")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "sudo", str(self._system_helper), *arguments,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(), timeout=max(self._timeout_seconds, 25.0)
+            )
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise ClassicAudioUnavailable("Audio session ownership command timed out") from exc
+        except OSError as exc:
+            raise ClassicAudioUnavailable(f"Audio session ownership command failed: {exc}") from exc
+        return _CommandResult(
+            returncode=process.returncode or 0,
+            output=stdout.decode(errors="replace").strip(),
+        )
 
     async def _pair(self, address: str, pin: str) -> _CommandResult:
         return await self._run(
@@ -473,10 +553,11 @@ class BluetoothClassicAudio:
         # first button press alive long enough for that initial publication.
         # A freshly exposed Skelly Classic endpoint can take longer than the
         # Bluetooth connection itself to become an A2DP sink.  Keep the first
-        # button press alive for up to 30 seconds so owners do not have to
-        # press Prepare and connect a second time.  The loop still returns as
-        # soon as WirePlumber publishes the sink.
-        for _ in range(60):
+        # button press alive for up to 60 seconds so a fresh image has time
+        # to publish the A2DP transport without requiring a Raspberry Pi
+        # reboot.  The loop still returns immediately when WirePlumber
+        # publishes the sink.
+        for _ in range(120):
             result = await self._run_program(executable, "status")
             sink = self._find_sink(result.output)
             if sink is not None:

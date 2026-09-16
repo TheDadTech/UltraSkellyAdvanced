@@ -25,8 +25,12 @@
               <button id="top-connect-skelly" type="button">Connect to Skelly</button>
             </div>
             <div class="header-volume-control">
-              <label for="speaker-volume"><span>Speaker volume</span><strong id="speaker-volume-value">50%</strong></label>
-              <input id="speaker-volume" type="range" min="0" max="255" value="128" aria-label="Skelly speaker volume">
+              <label for="speaker-volume"><span>Skelly speaker volume</span><strong id="speaker-volume-value">100%</strong></label>
+              <div class="header-volume-row">
+                <input id="speaker-volume" type="range" min="0" max="100" value="100" aria-label="Skelly speaker volume">
+                <button id="speaker-mute-button" type="button" class="secondary compact-mute-button" aria-pressed="false">Mute</button>
+              </div>
+              <small id="speaker-mute-cue" class="speaker-mute-cue" hidden>Muted because External Bluetooth is selected.</small>
             </div>
             <p id="speaker-volume-result" class="header-action-result" aria-live="polite"></p>
             <p id="top-connect-result" class="header-action-result" aria-live="polite"></p>
@@ -128,7 +132,7 @@
               </select>
             </label>
             <label class="check-setting"><input id="jaw-follow-speech" type="checkbox" checked><span><strong>Jaw follows speech</strong><small class="help-copy">With DAC, USA animates the jaw from the speech waveform. Without DAC, USA mirrors speech to Skelly's speaker so its audio-reactive jaw can still move.</small></span></label>
-            <label class="range-setting"><span>Bluetooth Sync Compensation <output id="jaw-sync-offset-value">-750 ms</output></span><input id="jaw-sync-offset" type="range" min="-1000" max="1000" step="25" value="-750"><small class="help-copy">Bluetooth speakers can have different built-in audio delays. Adjust this until the external speaker and Skelly jaw are synchronized. Negative values delay the external speaker; positive values delay the jaw path. 0 starts both together.</small></label>
+            <label class="range-setting sync-setting"><span>Jaw / Audio timing <output id="jaw-sync-offset-value">Jaw sooner by 750 ms</output></span><div class="sync-direction-labels" aria-hidden="true"><span>Jaw sooner</span><span></span><span>Audio sooner</span></div><input id="jaw-sync-offset" type="range" min="-1000" max="1000" step="25" value="-750"><small class="help-copy">Move the slider toward whichever one needs to start sooner. USA still applies Bluetooth latency compensation behind the scenes.</small></label>
             <label class="range-setting"><span>Jaw mirror level <output id="jaw-mirror-level-value">100%</output></span><input id="jaw-mirror-level" type="range" min="70" max="100" step="5" value="100"><small class="help-copy">Level sent to Skelly's speaker to trigger its stock audio-reactive jaw. Lower values may stop jaw movement.</small></label>
             <label class="check-setting"><input id="mute-skelly-speaker-on-external" type="checkbox" checked><span><strong>Mute Skelly speaker with external audio</strong><small class="help-copy">Keeps the jaw-driving Bluetooth stream at full strength while muting only Skelly's onboard speaker. Your previous Skelly volume is restored when you switch back.</small></span></label>
           </div>
