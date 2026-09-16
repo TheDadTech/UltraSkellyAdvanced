@@ -51,9 +51,11 @@ class LocalSpeech:
         self._playback_session = "dadtech"
         self._playback_target_required = False
         self._jaw_mirror_target: str | None = None
+        self._jaw_mirror_volume_target: str | None = None
         self._jaw_mirror_session = "dadtech"
         self._jaw_follow_speech = True
         self._jaw_mirror_level_percent = 100
+        self._jaw_mirror_level_cache: tuple[str, str, int] | None = None
         self._speaker_preroll_seconds = speaker_preroll_seconds
         self._jaw_activity_percent = max(0, min(100, jaw_activity_percent))
         self._frame_seconds = frame_seconds
@@ -117,6 +119,7 @@ class LocalSpeech:
         *,
         playback_target: str | None,
         jaw_mirror_target: str | None,
+        jaw_mirror_volume_target: str | None,
         jaw_follow_speech: bool,
         jaw_sync_offset_ms: int,
         jaw_mirror_level_percent: int = 100,
@@ -124,6 +127,13 @@ class LocalSpeech:
         jaw_mirror_session: str = "dadtech",
         playback_target_required: bool = False,
     ) -> None:
+        previous_mirror = (
+            self._jaw_mirror_target,
+            self._jaw_mirror_volume_target,
+            self._jaw_mirror_session,
+            self._jaw_mirror_level_percent,
+        )
+
         self._playback_target = playback_target
         self._playback_session = playback_session
         self._playback_target_required = bool(playback_target_required)
@@ -133,9 +143,23 @@ class LocalSpeech:
             if jaw_mirror_target and jaw_mirror_target != playback_target
             else None
         )
+        self._jaw_mirror_volume_target = (
+            jaw_mirror_volume_target
+            if self._jaw_mirror_target
+            else None
+        )
         self._jaw_follow_speech = bool(jaw_follow_speech)
         self._jaw_sync_offset_seconds = max(-1.0, min(1.0, jaw_sync_offset_ms / 1000.0))
         self._jaw_mirror_level_percent = max(70, min(100, int(jaw_mirror_level_percent)))
+
+        current_mirror = (
+            self._jaw_mirror_target,
+            self._jaw_mirror_volume_target,
+            self._jaw_mirror_session,
+            self._jaw_mirror_level_percent,
+        )
+        if current_mirror != previous_mirror:
+            self._jaw_mirror_level_cache = None
 
     def _player_arguments(
         self,
@@ -160,13 +184,22 @@ class LocalSpeech:
         return arguments
 
     async def _set_jaw_mirror_level(self) -> None:
-        if not self._jaw_mirror_target:
+        if not self._jaw_mirror_target or not self._jaw_mirror_volume_target:
             return
         if self._system_helper is None or not self._system_helper.exists():
             return
+
+        desired = (
+            self._jaw_mirror_volume_target,
+            self._jaw_mirror_session,
+            self._jaw_mirror_level_percent,
+        )
+        if self._jaw_mirror_level_cache == desired:
+            return
+
         process = await asyncio.create_subprocess_exec(
             "sudo", str(self._system_helper), "audio-wpctl", "--session", self._jaw_mirror_session,
-            "set-volume", self._jaw_mirror_target, f"{self._jaw_mirror_level_percent / 100:.2f}",
+            "set-volume", str(self._jaw_mirror_volume_target), f"{self._jaw_mirror_level_percent / 100:.2f}",
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         try:
@@ -174,6 +207,12 @@ class LocalSpeech:
         except TimeoutError:
             process.kill()
             await process.wait()
+            return
+
+        self._last_jaw_mirror_volume_returncode = process.returncode
+
+        if process.returncode == 0:
+            self._jaw_mirror_level_cache = desired
 
     async def speak(
         self,
@@ -201,7 +240,8 @@ class LocalSpeech:
                 self._prepend_wake_signal(wav_path)
                 envelope, duration = self._jaw_envelope(wav_path)
                 wav_path.chmod(0o644)
-                return await self._play(
+
+                result = await self._play(
                     wav_path,
                     envelope,
                     duration,
@@ -209,6 +249,8 @@ class LocalSpeech:
                     engine="espeak-ng",
                     cloud_used=False,
                 )
+
+                return result
             finally:
                 wav_path.unlink(missing_ok=True)
 
@@ -683,6 +725,8 @@ class LocalSpeech:
         engine: str = "espeak-ng",
         cloud_used: bool = False,
     ) -> dict[str, object]:
+        loop = asyncio.get_running_loop()
+
         if self._playback_target_required and not self._playback_target:
             raise SpeechUnavailable("External Bluetooth is connected, but its PipeWire audio output is not ready")
         mirror_process = None
@@ -693,21 +737,23 @@ class LocalSpeech:
         )
 
         async def start_primary():
-            return await asyncio.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 *self._player_exec(*self._player_arguments(target=self._playback_target), session=self._playback_session),
                 str(wav_path),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
+            return process
 
         async def start_mirror():
             await self._set_jaw_mirror_level()
-            return await asyncio.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 *self._player_exec(*self._player_arguments(target=self._jaw_mirror_target), session=self._jaw_mirror_session),
                 str(wav_path),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
+            return process
 
         # Signed sync semantics:
         #   negative => Skelly jaw mirror starts first; delay external/main audio
@@ -728,7 +774,7 @@ class LocalSpeech:
         jaw_animated = jaw_animated and self._jaw_follow_speech and self._jaw_activity_percent > 0
         jaw_error: str | None = None
         last_state = False
-        started = asyncio.get_running_loop().time()
+        started = loop.time()
         try:
             if jaw.snapshot().armed and self._jaw_activity_percent == 0:
                 try:
@@ -780,7 +826,7 @@ class LocalSpeech:
             "spoken": True,
             "engine": engine,
             "duration_seconds": round(duration, 2),
-            "elapsed_seconds": round(asyncio.get_running_loop().time() - started, 2),
+            "elapsed_seconds": round(loop.time() - started, 2),
             "speaker_preroll_ms": round(self._speaker_preroll_seconds * 1000),
             "jaw_animated": jaw_animated,
             "jaw_mirrored_to_skelly": mirror_stock_jaw,

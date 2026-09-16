@@ -295,6 +295,7 @@ let currentOperationSettings = null;
 let currentOperationMode = "standby";
 let currentMediaStatus = null;
 let manualCameraPolling = false;
+let perceptionPollingIntervalMs = null;
 let gestureRequestId = 0;
 let operatorListenGestureAvailable = false;
 let firstRunDiscoveryStarted = false;
@@ -470,7 +471,7 @@ function renderSpeakerMuteState() {
   const muted = externalAutoMute || actualMuted;
   const fallbackActive = currentAudioRoute?.fallback_active === true;
   speakerMuteButton.textContent = externalAutoMute
-    ? "Muted · External"
+    ? "Skelly Muted"
     : fallbackActive
       ? "Unmuted · Fallback"
       : (muted ? "Unmute" : "Mute");
@@ -485,6 +486,7 @@ function renderOperation(operation) {
   const settings = operation.settings;
   currentOperationSettings = settings;
   currentOperationMode = operation.active_mode;
+  schedulePerceptionPolling(currentOperationMode);
   if (document.activeElement !== skellyName) skellyName.value = settings.skelly_name || "Skelly";
   const savedPersonalityPool = Array.isArray(settings.personality_pool) && settings.personality_pool.length
     ? settings.personality_pool
@@ -571,8 +573,7 @@ function renderStatus(body) {
     : "XX";
   versionPill.textContent = `Skelly ${skellyVersion} · USA ${body.version}`;
   setStatusLight(statusLights.pi, "ok");
-  headerPropStatus.textContent = body.hardware.connected ? "connected" : "disconnected";
-  setStatusLight(statusLights.prop, body.hardware.connected ? "ok" : "error");
+
   const selectedAudio = body.operation?.settings?.audio_output || "skelly";
   currentAudioRoute = body.audio_route || null;
   const externalSpeakerReady = Boolean(body.external_audio?.connected && body.external_audio?.sink_id);
@@ -583,31 +584,20 @@ function renderStatus(body) {
     : selectedAudio === "system"
       ? systemSpeakerReady
       : skellySpeakerReady;
-  if (headerSpeakerLabel) {
-    headerSpeakerLabel.textContent = selectedAudio === "external_bluetooth" && currentAudioRoute?.fallback_active
-      ? "AUDIO OUTPUT"
-      : selectedAudio === "external_bluetooth"
-      ? "EXTERNAL SPEAKER"
-      : selectedAudio === "system"
-        ? "PI / USB AUDIO"
-        : "SKELLY SPEAKER";
-  }
+
   const propReady = Boolean(body.hardware?.connected);
-  if (skellyConnectionsSummary) skellyConnectionsSummary.textContent = `${propReady ? "Prop connected" : "Prop disconnected"} · ${speakerReady ? "Speaker ready" : "Speaker not ready"}`;
-  if (skellyConnectionsDetails && propReady && speakerReady && !skellyConnectionsDetails.dataset.userOpened) skellyConnectionsDetails.open = false;
-  headerSpeakerStatus.textContent = selectedAudio === "external_bluetooth"
-    ? externalSpeakerReady
-      ? "External ready"
-      : body.external_audio?.connected
-        ? "Bluetooth connected · audio starting"
-        : skellySpeakerReady
-          ? "External unavailable · using Skelly"
-          : body.external_audio?.address ? "reconnecting…" : "disconnected"
-    : speakerReady ? "connected" : "disconnected";
-  const effectiveSpeakerReady = selectedAudio === "external_bluetooth"
-    ? (externalSpeakerReady || skellySpeakerReady)
-    : speakerReady;
-  setStatusLight(statusLights.speaker, effectiveSpeakerReady ? "ok" : "off");
+  if (skellyConnectionsSummary) {
+    skellyConnectionsSummary.textContent =
+      `${propReady ? "Prop connected" : "Prop disconnected"} · ${speakerReady ? "Speaker ready" : "Speaker not ready"}`;
+  }
+  if (
+    skellyConnectionsDetails &&
+    propReady &&
+    speakerReady &&
+    !skellyConnectionsDetails.dataset.userOpened
+  ) {
+    skellyConnectionsDetails.open = false;
+  }
   renderSpeakerMuteState();
   const profile = body.operation?.settings?.hardware_profile ?? "stock";
   headerDacStatus.textContent = profile === "dac"
@@ -668,7 +658,7 @@ function renderStatus(body) {
     button.disabled = !body.hardware.connected || !body.hardware.movement_armed;
   });
   renderAudioStatus(body.audio, body.state.mode);
-  renderAudioOutputStatus(body);
+
   const dac = body.dac;
   dacState.textContent = dac.transmitting ? "transmitting" : dac.armed ? "armed" : "disarmed";
   dacState.classList.toggle("neutral", !dac.transmitting);
@@ -706,6 +696,9 @@ function renderStatus(body) {
   dacJawClose.disabled = !dacControlsEnabled;
   dacCenter.disabled = !dacControlsEnabled;
   dacArm.disabled = dac.armed || body.state.mode === "show_locked";
+
+  // 0.27 state-driven UI gets final authority after legacy rendering.
+  window.USA?.status?.ingest(body);
 }
 
 function renderAudioStatus(audio, currentMode = currentControllerMode) {
@@ -942,6 +935,26 @@ async function refreshPerceptionStatus() {
   renderPerceptionStatus(await request("/api/perception/status"));
 }
 
+function perceptionPollingIntervalForMode(mode) {
+  return mode === "ai" ? 400 : 5000;
+}
+
+function schedulePerceptionPolling(mode = currentOperationMode) {
+  if (!window.USA?.polling?.start) return;
+
+  const intervalMs = perceptionPollingIntervalForMode(mode);
+  if (perceptionPollingIntervalMs === intervalMs) return;
+
+  perceptionPollingIntervalMs = intervalMs;
+
+  window.USA.polling.start(
+    "perception",
+    () => refreshPerceptionStatus().catch(() => {}),
+    intervalMs,
+    { immediate: false }
+  );
+}
+
 function renderBrainStatus(body) {
   const voiceReady = Boolean(body.local_speech?.available || body.voice_provider !== "local");
   brainAvailability.textContent = voiceReady ? "operator voice ready" : "voice unavailable";
@@ -1120,10 +1133,11 @@ async function refreshBrainStatus() {
 }
 
 function renderManualResult(body) {
-  const spoken = body.speech?.spoken;
-  brainResult.textContent = spoken
-    ? `Sent through Skelly: “${body.spoken_response}”`
-    : `Response ready, but audio could not play: ${body.speech?.error || "speaker unavailable"}`;
+  const speech = body.speech || {};
+
+  brainResult.textContent = speech.spoken
+    ? `Sent through Skelly: "${body.spoken_response}"`
+    : `Response ready, but audio could not play: ${speech.error || "speaker unavailable"}`;
 }
 
 function renderAudioOutputControls(settings = currentOperationSettings || {}) {
@@ -1143,33 +1157,6 @@ function renderAudioOutputControls(settings = currentOperationSettings || {}) {
         : "Speech uses the Pi's current system/USB audio output.";
     }
   }
-}
-
-function renderAudioOutputStatus(body) {
-  if (!audioOutputStatus || !body.operation?.settings) return;
-  const settings = body.operation.settings;
-  const selected = settings.audio_output || "skelly";
-  const external = body.external_audio || {};
-  if (selected === "skelly") {
-    audioOutputStatus.textContent = body.audio?.connected ? "Skelly connected" : "Skelly selected";
-    audioOutputStatus.classList.toggle("neutral", !body.audio?.connected);
-  } else if (selected === "external_bluetooth") {
-    const externalReady = Boolean(external.connected && external.sink_id);
-    const skellyReady = Boolean(body.audio?.connected && body.audio?.sink_id);
-    audioOutputStatus.textContent = externalReady
-      ? "External ready"
-      : external.connected
-        ? "Bluetooth connected · audio starting"
-        : skellyReady
-          ? "External unavailable · using Skelly"
-          : external.address ? "reconnecting…" : "speaker needed";
-    audioOutputStatus.classList.toggle("neutral", !externalReady);
-    if (externalBluetoothResult && external.last_error) externalBluetoothResult.textContent = external.last_error;
-  } else {
-    audioOutputStatus.textContent = "Pi / USB audio";
-    audioOutputStatus.classList.add("neutral");
-  }
-  renderAudioOutputControls(settings);
 }
 
 function operationSettingsPayload() {
@@ -2898,12 +2885,42 @@ refreshSshStatus().catch(() => {});
 loadWifiNetworks().catch((error) => { setupWifiResult.textContent = error.message; });
 refreshWifiStatus().catch(() => {});
 window.setTimeout(() => refreshUpdateStatus(true).catch(() => {}), 60000);
-window.setInterval(() => refreshUpdateStatus(true).catch(() => {}), 86400000);
-setInterval(refreshStatus, 5000);
-setInterval(() => refreshAudioStatus().catch(() => {}), 15000);
-setInterval(() => refreshPerceptionStatus().catch(() => {}), 400);
-setInterval(() => refreshBrainStatus().catch(() => {}), 5000);
-setInterval(pollManualCamera, 1800);
+
+window.USA.polling.start(
+  "update-check",
+  () => refreshUpdateStatus(true).catch(() => {}),
+  86400000,
+  { immediate: false }
+);
+window.USA.polling.start(
+  "status",
+  refreshStatus,
+  5000,
+  { immediate: false }
+);
+
+window.USA.polling.start(
+  "audio-status",
+  () => refreshAudioStatus().catch(() => {}),
+  15000,
+  { immediate: false }
+);
+
+schedulePerceptionPolling();
+
+window.USA.polling.start(
+  "brain",
+  () => refreshBrainStatus().catch(() => {}),
+  5000,
+  { immediate: false }
+);
+
+window.USA.polling.start(
+  "manual-camera",
+  pollManualCamera,
+  1800,
+  { immediate: false }
+);
 
 
 if (audioOutputSelect) {

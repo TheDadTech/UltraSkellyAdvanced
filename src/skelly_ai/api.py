@@ -498,6 +498,7 @@ def create_app(
         playback_target: str | None = None
         jaw_mirror_target: str | None = None
         playback_session = "dadtech"
+        jaw_mirror_volume_target = None
         jaw_mirror_session = "dadtech"
         playback_target_required = False
         skelly_snapshot = classic_audio.snapshot()
@@ -520,17 +521,20 @@ def create_app(
                 playback_target = external_target
                 if settings.jaw_follow_speech:
                     jaw_mirror_target = skelly_target
+                    jaw_mirror_volume_target = skelly_snapshot.sink_id
             else:
                 playback_session = "dadtech"
                 playback_target_required = False
                 playback_target = skelly_target
         elif settings.jaw_follow_speech:
-            jaw_mirror_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
+            jaw_mirror_target = skelly_snapshot.sink_name
+            jaw_mirror_volume_target = skelly_snapshot.sink_id
         configure_output = getattr(local_speech, "configure_output", None)
         if configure_output is not None:
             configure_output(
                 playback_target=playback_target,
                 jaw_mirror_target=jaw_mirror_target,
+                jaw_mirror_volume_target=jaw_mirror_volume_target,
                 jaw_follow_speech=settings.jaw_follow_speech,
                 jaw_sync_offset_ms=settings.jaw_sync_offset_ms,
                 jaw_mirror_level_percent=settings.jaw_mirror_level_percent,
@@ -730,22 +734,27 @@ def create_app(
     ) -> dict[str, object]:
         settings = provider_store.load()
         apply_local_voice_settings(settings)
-        # Audio sinks can disappear between background status polls.  Before
-        # every utterance, verify the preferred external route is usable.  If it
-        # is not, synchronously establish the stock Skelly speaker so this same
-        # utterance has a real destination instead of failing with
-        # "no target node available".
+        # Fast path: use the already-known external PipeWire target when it is
+        # healthy. Only perform the expensive live refresh/recovery path when
+        # the cached route is not ready.
         operation_settings = operation_store.load()
         if operation_settings.audio_output == "external_bluetooth":
-            try:
-                external_snapshot = await external_audio.refresh()
-            except AudioOutputUnavailable:
-                external_snapshot = external_audio.snapshot()
+            external_snapshot = external_audio.snapshot()
+
             if not (
                 external_snapshot.connected
                 and (external_snapshot.sink_name or external_snapshot.sink_id)
             ):
-                await ensure_skelly_fallback_audio_ready(operation_settings)
+                try:
+                    external_snapshot = await external_audio.refresh()
+                except AudioOutputUnavailable:
+                    external_snapshot = external_audio.snapshot()
+
+                if not (
+                    external_snapshot.connected
+                    and (external_snapshot.sink_name or external_snapshot.sink_id)
+                ):
+                    await ensure_skelly_fallback_audio_ready(operation_settings)
         # Re-apply the latest snapshots so every voice provider (including
         # ElevenLabs WAV playback) uses the same external/main and jaw targets.
         apply_audio_output_settings()
