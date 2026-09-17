@@ -64,6 +64,7 @@ def test_local_speech_output_configuration_separates_playback_and_jaw_mirror() -
     speech.configure_output(
         playback_target="external-42",
         jaw_mirror_target="skelly-17",
+        jaw_mirror_volume_target="17",
         jaw_follow_speech=True,
         jaw_sync_offset_ms=-200,
     )
@@ -122,6 +123,7 @@ def test_local_speech_can_route_primary_and_jaw_to_different_sessions(tmp_path) 
     speech.configure_output(
         playback_target="bluez_output.soundcore",
         jaw_mirror_target="bluez_output.skelly",
+        jaw_mirror_volume_target="17",
         jaw_follow_speech=True,
         jaw_sync_offset_ms=-200,
         playback_session="skelly-ai",
@@ -322,4 +324,4 @@ def test_status_reports_preferred_and_active_audio_route(tmp_path) -> None:
 
 def test_runtime_version_matches_dev9() -> None:
     from skelly_ai import __version__
-    assert __version__ == "0.26.1"
+    assert __version__ == "0.27.0"
