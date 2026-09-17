@@ -95,6 +95,13 @@ tar -xzf /root/skelly-ai-source.tar.gz -C "${PACKAGE_ROOT}"
 SKELLY_MODEL_ROOT=/var/lib/skelly-ai/models \
   bash "${PACKAGE_ROOT}/deploy/install-speech-model.sh"
 
+# Offline conversation is a core capability of the public image. Install the
+# pinned ARM64 llama.cpp runtime and verified Qwen model during the build so a
+# fresh SD card works without a separate 1.1 GB post-install download.
+SKELLY_BRAIN_IMAGE_INSTALL=1 \
+SKELLY_BRAIN_SERVICE_USER=skelly-ai \
+  bash "${PACKAGE_ROOT}/deploy/install-local-brain.sh"
+
 install -m 0640 -o root -g "${SKELLY_GROUP}" \
   "${PACKAGE_ROOT}/deploy/skelly-ai.env.example" \
   /etc/skelly-ai/skelly-ai.env

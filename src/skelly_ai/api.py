@@ -450,6 +450,10 @@ def create_app(
         "steps": [],
         "last_error": None,
     }
+    # The stock controller applies AACA movement selections on its own roughly
+    # six-second animation cadence.  Select motion when listening begins so the
+    # motors are already approaching that cadence when speech playback starts.
+    pending_response_movement: Movement | None = None
 
     def apply_local_voice_settings(settings: ProviderSettings) -> None:
         configure = getattr(local_speech, "configure", None)
@@ -669,6 +673,7 @@ def create_app(
     async def respond_locally(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
+        nonlocal pending_response_movement
         settings = provider_store.load()
         operation_settings = operation_store.load()
         skelly_name = operation_settings.skelly_name
@@ -713,8 +718,8 @@ def create_app(
             asyncio.get_running_loop().time() - started, 2
         )
         await hardware.set_eye(reply.eye_icon)
-        selected_movement = choose_ai_response_movement()
-        if hardware.snapshot().movement_armed:
+        selected_movement = pending_response_movement or choose_ai_response_movement()
+        if pending_response_movement is None and hardware.snapshot().movement_armed:
             await hardware.set_movement(selected_movement)
         result = reply.to_dict()
         result["movement"] = selected_movement.value
@@ -840,23 +845,28 @@ def create_app(
     async def respond_automatically(
         transcript: str, history: list[dict[str, str]]
     ) -> dict[str, object]:
-        result = await respond_locally(transcript, history)
+        nonlocal pending_response_movement
         try:
-            result["speech"] = await speak_selected(str(result["spoken_response"]))
-        except SpeechUnavailable as exc:
-            result["speech"] = {
-                "spoken": False,
-                "error": str(exc),
-                "elevenlabs_used": False,
-            }
+            result = await respond_locally(transcript, history)
+            try:
+                result["speech"] = await speak_selected(str(result["spoken_response"]))
+            except SpeechUnavailable as exc:
+                result["speech"] = {
+                    "spoken": False,
+                    "error": str(exc),
+                    "elevenlabs_used": False,
+                }
+            return result
         finally:
+            pending_response_movement = None
             try:
                 await hardware.stop()
             except HardwareUnavailable:
                 pass
-        return result
 
     async def end_local_session() -> None:
+        nonlocal pending_response_movement
+        pending_response_movement = None
         try:
             await hardware.stop()
             await hardware.set_eye(EyeIcon.NORMAL)
@@ -868,6 +878,7 @@ def create_app(
                     pass
 
     async def show_local_phase_cue(phase: str) -> None:
+        nonlocal pending_response_movement
         cue_eye = {
             "listening": EyeIcon.GREEN,
             "thinking": EyeIcon.SPIRAL,
@@ -875,11 +886,37 @@ def create_app(
         }.get(phase)
         if cue_eye is None or controller.snapshot().mode == Mode.SHOW_LOCKED:
             return
+
+        if phase == "listening":
+            pending_response_movement = None
+            if hardware.snapshot().movement_armed:
+                selected_movement = choose_ai_response_movement()
+                try:
+                    await hardware.set_movement(selected_movement)
+                except HardwareUnavailable:
+                    pass
+                else:
+                    pending_response_movement = selected_movement
+                    # The stock controller can discard the first of two BLE
+                    # writes sent in the same connection interval.  Give the
+                    # movement selection time to clear, then make the visible
+                    # listening eye cue the final command.
+                    await asyncio.sleep(0.2)
+        elif phase == "no_speech":
+            pending_response_movement = None
+            try:
+                await hardware.stop()
+            except HardwareUnavailable:
+                pass
+            else:
+                await asyncio.sleep(0.2)
+
         try:
             await hardware.set_eye(cue_eye)
         except HardwareUnavailable:
             # The dashboard cue still works while the prop is disconnected.
             pass
+
         if not dac.snapshot().armed:
             return
         try:

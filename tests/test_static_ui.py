@@ -1,9 +1,19 @@
 from html.parser import HTMLParser
 from pathlib import Path
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "src" / "skelly_ai" / "static"
+
+
+def test_package_data_includes_nested_frontend_modules() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = project["tool"]["setuptools"]["package-data"]["skelly_ai"]
+
+    assert "static/*" in patterns
+    assert "static/core/*.js" in patterns
+    assert list((STATIC / "core").glob("*.js"))
 
 
 class _DashboardParser(HTMLParser):
@@ -252,6 +262,16 @@ def test_image_enables_required_system_helper_and_radio_support() -> None:
     assert "monitor.bluez = required" in image_installer
     assert "bluez5.roles = [ a2dp_sink a2dp_source ]" in image_installer
     assert "dadtech ALL=(root) NOPASSWD: /usr/local/libexec/usa-system-helper *" in image_installer
+    assert "SKELLY_BRAIN_IMAGE_INSTALL=1" in image_installer
+    assert "SKELLY_BRAIN_SERVICE_USER=skelly-ai" in image_installer
+
+    brain_installer = (ROOT / "deploy" / "install-local-brain.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'SKELLY_USER="${SKELLY_BRAIN_SERVICE_USER:-}"' in brain_installer
+    assert 'run_root install -m 0644 -o "${SKELLY_USER}"' in brain_installer
+    assert 'run_root systemctl enable skelly-brain' in brain_installer
+    assert "After=local-fs.target" in brain_installer
 
 
 def test_live_installer_configures_headless_bluetooth_audio_and_wifi_retries() -> None:

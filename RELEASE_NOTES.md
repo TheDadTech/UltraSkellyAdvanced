@@ -1,3 +1,12 @@
+# UltraSkellyAdvanced 0.27.0
+
+- Bundles and enables the pinned offline Qwen local-brain runtime and model in the release image.
+- Packages the nested web-interface modules required for live status polling and Bluetooth controls.
+- Makes external Bluetooth pairing rediscover a selected device when BlueZ has discarded its scan record.
+- Starts the selected body movement while a response is being prepared so slow Skelly controllers move during speech, and sends the green listening-eye cue after the movement command.
+- Shortens no-speech retry delays while a visitor remains present.
+- Adds release-preflight coverage for the image contents and these real-hardware regressions.
+
 # UltraSkellyAdvanced 0.26.1
 
 - Improved Bluetooth audio reliability.

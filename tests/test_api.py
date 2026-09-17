@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ from skelly_ai.api import create_app
 from skelly_ai.brain import BrainReply
 from skelly_ai.config import Settings
 from skelly_ai.credentials import CredentialValidationError
+from skelly_ai.hardware import Movement, SimulatedSkelly
 
 
 class FakeBrain:
@@ -636,6 +638,91 @@ def test_ai_response_movement_weighting_boundaries() -> None:
     assert choose_ai_response_movement(0.79) == Movement.TORSO_AND_ARMS
     assert choose_ai_response_movement(0.80) == Movement.ALL
     assert choose_ai_response_movement(0.99) == Movement.ALL
+
+
+def test_ai_primes_stock_movement_before_speech_playback(tmp_path) -> None:
+    order: list[str] = []
+
+    class RecordingHardware(SimulatedSkelly):
+        async def set_movement(self, movement: Movement):
+            order.append(f"movement:{movement.value}")
+            return await super().set_movement(movement)
+
+        async def stop(self):
+            order.append("stop")
+            return await super().stop()
+
+    class ImmediateSensors:
+        def status(self) -> dict[str, object]:
+            return {
+                "camera": {
+                    "available": True,
+                    "face_count": 1,
+                    "person_count": 1,
+                    "motion_percent": 0.0,
+                },
+                "microphone": {
+                    "available": True,
+                    "offline_transcription_available": True,
+                    "voice_active": True,
+                    "level_dbfs": -25.0,
+                },
+            }
+
+        async def analyze_camera(self) -> bytes:
+            return b"jpeg"
+
+        async def sample_microphone(self, duration_seconds: int = 1) -> dict[str, object]:
+            return self.status()
+
+        async def transcribe_microphone_until_silence(
+            self, max_duration_seconds: int, silence_seconds: float
+        ) -> dict[str, object]:
+            return {
+                "microphone": {
+                    "voice_active": True,
+                    "transcript": "hello skelly",
+                    "level_dbfs": -25.0,
+                    "duration_seconds": 1.0,
+                    "transcription_seconds": 0.01,
+                }
+            }
+
+    class RecordingSpeech:
+        def status(self) -> dict[str, object]:
+            return {"available": True, "local_only": True}
+
+        async def speak(self, text: str, jaw) -> dict[str, object]:
+            order.append("speech")
+            return {"spoken": True, "engine": "test", "elapsed_seconds": 0.1}
+
+    app = create_app(
+        Settings(data_dir=tmp_path),
+        sensor_lab=ImmediateSensors(),
+        brain_client=FakeBrain(),
+        hardware_client=RecordingHardware(),
+        local_speech_client=RecordingSpeech(),
+    )
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/operation/settings",
+            json={
+                "hardware_profile": "stock",
+                "default_mode": "ai",
+                "allow_fpp_override": False,
+            },
+        )
+        assert client.post("/api/operation/start", json={"mode": "ai"}).status_code == 200
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if client.get("/api/perception/status").json()["event_count"]:
+                break
+            time.sleep(0.01)
+        client.post("/api/operation/stop")
+
+    first_movement = next(index for index, item in enumerate(order) if item.startswith("movement:"))
+    assert first_movement < order.index("speech") < order.index("stop", first_movement)
 
 
 def test_visitor_nag_settings_persist(tmp_path) -> None:

@@ -64,7 +64,7 @@ def test_local_speech_output_configuration_separates_playback_and_jaw_mirror() -
     speech.configure_output(
         playback_target="external-42",
         jaw_mirror_target="skelly-17",
-        jaw_mirror_volume_target="17",
+        jaw_mirror_volume_target=None,
         jaw_follow_speech=True,
         jaw_sync_offset_ms=-200,
     )
@@ -123,7 +123,7 @@ def test_local_speech_can_route_primary_and_jaw_to_different_sessions(tmp_path) 
     speech.configure_output(
         playback_target="bluez_output.soundcore",
         jaw_mirror_target="bluez_output.skelly",
-        jaw_mirror_volume_target="17",
+        jaw_mirror_volume_target=None,
         jaw_follow_speech=True,
         jaw_sync_offset_ms=-200,
         playback_session="skelly-ai",
@@ -254,6 +254,64 @@ def test_external_bluetooth_waits_up_to_sixty_seconds_for_pipewire_sink(monkeypa
     assert attempts == 120
     assert result.sink_id == "77"
     assert result.sink_name == "bluez_output.F4_2B_7D_30_BB_94.1"
+
+
+def test_external_pair_rediscovers_temporary_bluez_device(monkeypatch, tmp_path) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from skelly_ai.audio_output import AudioOutputUnavailable, ExternalBluetoothAudio
+
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\n")
+    audio = ExternalBluetoothAudio(system_helper=helper)
+    calls: list[tuple[str, ...]] = []
+    info_attempts = 0
+
+    async def noop_headless():
+        return None
+
+    async def read_info(address):
+        nonlocal info_attempts
+        info_attempts += 1
+        if info_attempts == 1:
+            raise AudioOutputUnavailable(f"Device {address} not available")
+        return SimpleNamespace(
+            connected=False,
+            paired=False,
+            trusted=False,
+            device_name="soundcore Boom V2",
+        )
+
+    async def run_bluetooth(*args, **kwargs):
+        calls.append(tuple(args))
+        return SimpleNamespace(returncode=0, output="successful")
+
+    async def connect_locked(*, route):
+        return audio._update(
+            connected=True,
+            paired=True,
+            trusted=True,
+            address="F4:2B:7D:30:BB:94",
+            device_name="soundcore Boom V2",
+            sink_id="77",
+            sink_name="bluez_output.F4_2B_7D_30_BB_94.1",
+        )
+
+    monkeypatch.setattr(audio, "_require_tools", lambda: None)
+    monkeypatch.setattr(audio, "_ensure_headless_pipewire", noop_headless)
+    monkeypatch.setattr(audio, "_read_info", read_info)
+    monkeypatch.setattr(audio, "_run", run_bluetooth)
+    monkeypatch.setattr(audio, "_connect_locked", connect_locked)
+
+    result = asyncio.run(audio.prepare("F4:2B:7D:30:BB:94"))
+
+    scan_index = calls.index(("--timeout", "12", "scan", "on"))
+    pair_index = calls.index(
+        ("--agent", "NoInputNoOutput", "pair", "F4:2B:7D:30:BB:94")
+    )
+    assert scan_index < pair_index
+    assert result.connected is True
 
 
 def test_skelly_output_reasserts_saved_ble_volume_when_hardware_cache_is_zero(tmp_path) -> None:

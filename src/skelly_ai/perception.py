@@ -75,7 +75,7 @@ class PerceptionEngine:
         clear_confirmations: int = 4,
         record_seconds: int = 5,
         silence_seconds: float = 1.4,
-        listen_retry_seconds: float = 5.0,
+        listen_retry_seconds: float = 1.0,
         conversation_turn_delay_seconds: float = 1.0,
         departure_motion_threshold: float = 1.0,
         max_events: int = 50,
@@ -344,7 +344,12 @@ class PerceptionEngine:
 
                     if time.monotonic() < self._next_listen_at:
                         self._phase = "waiting_to_listen"
-                        await asyncio.sleep(self._camera_interval_seconds)
+                        await asyncio.sleep(
+                            min(
+                                self._camera_interval_seconds,
+                                max(0.05, self._next_listen_at - time.monotonic()),
+                            )
+                        )
                         continue
 
                     self._phase = "listening"
@@ -376,7 +381,15 @@ class PerceptionEngine:
                         self._next_listen_at = (
                             time.monotonic() + self._listen_retry_seconds
                         )
-                        await asyncio.sleep(self._camera_interval_seconds)
+                        # A confirmed visitor should get another listening
+                        # window promptly.  The slower camera cadence remains
+                        # in effect while no session is active.
+                        await asyncio.sleep(
+                            min(
+                                self._camera_interval_seconds,
+                                self._listen_retry_seconds,
+                            )
+                        )
                         continue
 
                     self._clear_streak = 0

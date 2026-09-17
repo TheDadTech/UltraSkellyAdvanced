@@ -162,7 +162,22 @@ class ExternalBluetoothAudio:
             self._require_tools()
             await self._ensure_headless_pipewire()
             self._address = address.upper()
-            info = await self._read_info(self._address)
+            try:
+                info = await self._read_info(self._address)
+            except AudioOutputUnavailable:
+                info = None
+
+            # Unpaired BlueZ device objects are temporary and commonly vanish
+            # between the UI's Scan request and its later Pair click.  Rediscover
+            # the exact selected address inside this same operation so pairing
+            # never depends on stale BlueZ cache state.
+            if info is None or not info.paired:
+                await self._run(
+                    "--timeout", "12", "scan", "on",
+                    timeout=max(self._timeout_seconds, 16.0),
+                )
+                info = await self._read_info(self._address)
+
             if not info.paired:
                 paired = await self._run(
                     "--agent", "NoInputNoOutput", "pair", self._address,

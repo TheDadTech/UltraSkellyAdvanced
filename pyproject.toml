@@ -31,7 +31,7 @@ skelly-ai = "skelly_ai.main:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skelly_ai = ["static/*"]
+skelly_ai = ["static/*", "static/core/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

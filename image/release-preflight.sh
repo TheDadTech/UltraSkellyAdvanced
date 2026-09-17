@@ -17,6 +17,9 @@ grep -q 'configure_headless_audio_user dadtech' image/pi-gen-stage/00-install-sk
 grep -Fq 's/@SUPPORT_UID@/${SUPPORT_UID}/g' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -q 'touch /var/lib/systemd/linger/skelly-ai' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -q 'touch /var/lib/systemd/linger/dadtech' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -q 'SKELLY_BRAIN_IMAGE_INSTALL=1' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -q 'SKELLY_BRAIN_SERVICE_USER=skelly-ai' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -Fq 'static/core/*.js' pyproject.toml
 
 python - <<'PY'
 from pathlib import Path

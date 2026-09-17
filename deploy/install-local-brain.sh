@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${EUID}" -eq 0 ]]; then
+IMAGE_INSTALL="${SKELLY_BRAIN_IMAGE_INSTALL:-0}"
+
+if [[ "${EUID}" -eq 0 && "${IMAGE_INSTALL}" != "1" ]]; then
   echo "Run this script as the normal Pi user; it will use sudo when required." >&2
   exit 1
 fi
 
-if [[ "$(uname -m)" != "aarch64" ]]; then
+if [[ "${IMAGE_INSTALL}" != "1" && "$(uname -m)" != "aarch64" ]]; then
   echo "This installer currently supports the 64-bit Raspberry Pi image (aarch64)." >&2
   exit 1
 fi
+
+run_root() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
 
 LLAMA_RELEASE="b9637"
 LLAMA_ARCHIVE="llama-${LLAMA_RELEASE}-bin-ubuntu-arm64.tar.gz"
@@ -23,13 +33,20 @@ MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$
 MODEL_DIR="/var/lib/skelly-ai/models"
 MODEL_PATH="${MODEL_DIR}/${MODEL_NAME}"
 
-SKELLY_USER="$(id -un)"
-SKELLY_GROUP="$(id -gn)"
+SKELLY_USER="${SKELLY_BRAIN_SERVICE_USER:-}"
+if [[ -z "${SKELLY_USER}" ]]; then
+  if id skelly-ai >/dev/null 2>&1; then
+    SKELLY_USER="skelly-ai"
+  else
+    SKELLY_USER="$(id -un)"
+  fi
+fi
+SKELLY_GROUP="$(id -gn "${SKELLY_USER}")"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${TEMP_DIR}"' EXIT
 
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl
+run_root apt-get update
+run_root apt-get install -y ca-certificates curl
 
 echo "Downloading the pinned llama.cpp ARM64 runtime (about 12 MB)..."
 curl --fail --location --retry 5 --output "${TEMP_DIR}/${LLAMA_ARCHIVE}" "${LLAMA_URL}"
@@ -38,8 +55,8 @@ echo "${LLAMA_SHA256}  ${TEMP_DIR}/${LLAMA_ARCHIVE}" | sha256sum --check --statu
   exit 1
 }
 
-sudo install -d -m 0755 "${LLAMA_DIR}"
-sudo tar -xzf "${TEMP_DIR}/${LLAMA_ARCHIVE}" -C "${LLAMA_DIR}"
+run_root install -d -m 0755 "${LLAMA_DIR}"
+run_root tar -xzf "${TEMP_DIR}/${LLAMA_ARCHIVE}" -C "${LLAMA_DIR}"
 SERVER_PATH="$(find "${LLAMA_DIR}" -type f -name llama-server -print -quit)"
 if [[ -z "${SERVER_PATH}" ]]; then
   echo "The verified archive did not contain llama-server." >&2
@@ -47,25 +64,26 @@ if [[ -z "${SERVER_PATH}" ]]; then
 fi
 SERVER_DIR="$(dirname "${SERVER_PATH}")"
 
-sudo install -d -m 0755 -o "${SKELLY_USER}" -g "${SKELLY_GROUP}" "${MODEL_DIR}"
+run_root install -d -m 0755 -o "${SKELLY_USER}" -g "${SKELLY_GROUP}" "${MODEL_DIR}"
 if [[ -f "${MODEL_PATH}" ]] && echo "${MODEL_SHA256}  ${MODEL_PATH}" | sha256sum --check --status; then
   echo "The verified Qwen model is already installed."
 else
   echo "Downloading Qwen 2.5 1.5B Q4_K_M (about 1.12 GB)..."
+  MODEL_DOWNLOAD="${TEMP_DIR}/${MODEL_NAME}.part"
   curl --fail --location --retry 5 --continue-at - \
-    --output "${MODEL_PATH}.part" "${MODEL_URL}"
-  echo "${MODEL_SHA256}  ${MODEL_PATH}.part" | sha256sum --check --status || {
-    echo "Model checksum verification failed; the partial file was retained for inspection." >&2
+    --output "${MODEL_DOWNLOAD}" "${MODEL_URL}"
+  echo "${MODEL_SHA256}  ${MODEL_DOWNLOAD}" | sha256sum --check --status || {
+    echo "Model checksum verification failed; the model was not installed." >&2
     exit 1
   }
-  mv "${MODEL_PATH}.part" "${MODEL_PATH}"
+  run_root install -m 0644 -o "${SKELLY_USER}" -g "${SKELLY_GROUP}" \
+    "${MODEL_DOWNLOAD}" "${MODEL_PATH}"
 fi
 
-sudo tee /etc/systemd/system/skelly-brain.service >/dev/null <<EOF
+run_root tee /etc/systemd/system/skelly-brain.service >/dev/null <<EOF
 [Unit]
 Description=Skelly AI local Qwen brain
-After=network-online.target
-Wants=network-online.target
+After=local-fs.target
 
 [Service]
 Type=simple
@@ -83,8 +101,14 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now skelly-brain
+run_root systemctl daemon-reload
+if [[ "${IMAGE_INSTALL}" == "1" ]]; then
+  run_root systemctl enable skelly-brain
+  echo "Local Qwen brain installed and enabled for first boot."
+  exit 0
+fi
+
+run_root systemctl enable --now skelly-brain
 
 echo "Waiting for the model to load..."
 for _ in $(seq 1 60); do
