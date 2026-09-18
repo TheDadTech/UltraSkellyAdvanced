@@ -20,6 +20,8 @@ grep -q 'touch /var/lib/systemd/linger/dadtech' image/pi-gen-stage/00-install-sk
 grep -q 'SKELLY_BRAIN_IMAGE_INSTALL=1' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -q 'SKELLY_BRAIN_SERVICE_USER=skelly-ai' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -Fq 'static/core/*.js' pyproject.toml
+grep -Fq 'timeout -k 30s 5m python3 -m apt_listchanges.populate_database' image/build-image.sh
+grep -Fq -- "-printf '%T@ %p\\n' | sort -nr | head -n 1" image/build-image.sh
 
 python - <<'PY'
 from pathlib import Path

@@ -58,6 +58,14 @@ sed -i \
   's@^ROOT_MARGIN=.*@ROOT_MARGIN="$((3 * 1024 * 1024 * 1024))"@' \
   "${PI_GEN_EXPORT_PRERUN}"
 
+# apt-listchanges database population can hang indefinitely under QEMU during
+# final export. It is only a first-boot changelog cache, so let pi-gen attempt
+# it briefly and continue if emulation cannot finish it.
+PI_GEN_FINALISE="${PI_GEN_DIR}/export-image/05-finalise/01-run.sh"
+sed -i \
+  's@python3 -m apt_listchanges.populate_database --profile apt@timeout -k 30s 5m python3 -m apt_listchanges.populate_database --profile apt || true@' \
+  "${PI_GEN_FINALISE}"
+
 rm -rf "${CUSTOM_STAGE}"
 cp -a "${SCRIPT_DIR}/pi-gen-stage" "${CUSTOM_STAGE}"
 mkdir -p "${CUSTOM_STAGE}/00-install-skelly-ai/files"
@@ -111,12 +119,14 @@ case "${BUILD_MODE}" in
 esac
 popd >/dev/null
 
-mapfile -t images < <(find "${PI_GEN_DIR}/deploy" -maxdepth 1 -type f \
-  \( -name "*UltraSkellyAdvanced-${SKELLY_VERSION}*.img.xz" -o -name "*UltraSkellyAdvanced-${SKELLY_VERSION}*.zip" \) -print)
-if [[ "${#images[@]}" -eq 0 ]]; then
+latest_image="$(find "${PI_GEN_DIR}/deploy" -maxdepth 1 -type f \
+  \( -name "*UltraSkellyAdvanced-${SKELLY_VERSION}*.img.xz" -o -name "*UltraSkellyAdvanced-${SKELLY_VERSION}*.zip" \) \
+  -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+if [[ -z "${latest_image}" ]]; then
   echo "Build completed, but no compressed USA image was found." >&2
   exit 1
 fi
+images=("${latest_image}")
 
 for image in "${images[@]}"; do
   image_dir="$(dirname "${image}")"
