@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -10,6 +11,29 @@ from .sensors import SensorLab, SensorUnavailable
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+_JUNK_TRANSCRIPTS = {
+    "er",
+    "erm",
+    "hm",
+    "hmm",
+    "huh",
+    "mhm",
+    "mm",
+    "uh",
+    "uh huh",
+    "uh-huh",
+    "um",
+}
+
+
+def _is_junk_transcript(transcript: str) -> bool:
+    """Ignore common low-information speech-recognition filler."""
+    normalized = " ".join(
+        re.sub(r"[^a-z0-9'\\s-]+", " ", transcript.lower()).split()
+    )
+    return normalized in _JUNK_TRANSCRIPTS
 
 
 Responder = Callable[[str, list[dict[str, str]]], Awaitable[dict[str, object]]]
@@ -374,7 +398,11 @@ class PerceptionEngine:
 
                     microphone = transcription["microphone"]
                     transcript = str(microphone.get("transcript") or "").strip()
-                    if not microphone.get("voice_active") or not transcript:
+                    if (
+                        not microphone.get("voice_active")
+                        or not transcript
+                        or _is_junk_transcript(transcript)
+                    ):
                         self._phase = "no_speech"
                         await self._notify_phase_cue("no_speech")
                         await self._maybe_nag()
