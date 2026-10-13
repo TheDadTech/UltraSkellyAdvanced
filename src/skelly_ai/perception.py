@@ -398,10 +398,16 @@ class PerceptionEngine:
 
                     microphone = transcription["microphone"]
                     transcript = str(microphone.get("transcript") or "").strip()
+                    single_word_without_visual_confirmation = (
+                        len(transcript.split()) == 1
+                        and not int(camera.get("face_count") or 0)
+                        and not int(camera.get("person_count") or 0)
+                    )
                     if (
                         not microphone.get("voice_active")
                         or not transcript
                         or _is_junk_transcript(transcript)
+                        or single_word_without_visual_confirmation
                     ):
                         self._phase = "no_speech"
                         await self._notify_phase_cue("no_speech")
