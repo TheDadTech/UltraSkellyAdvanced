@@ -1,3 +1,12 @@
+# UltraSkellyAdvanced 0.27.1
+
+- Renames the Diagnostics dashboard tab to **System & Tools** for clearer navigation.
+- Standardizes the physical speaker label as **Skelly Speaker** in setup.
+- Fixes Classic preset saving for the **Head + Arm** movement combination.
+- Filters common low-information speech-recognition filler such as `huh`, `uh`, `um`, and `hmm` before it reaches the AI responder.
+- Ignores one-word transcripts when the camera sees no face or person, reducing phantom unattended responses while preserving normal one-word replies for visually confirmed visitors.
+- Adds regression tests for the movement-bitfield and phantom-transcript fixes.
+
 # UltraSkellyAdvanced 0.27.0
 
 - Bundles and enables the pinned offline Qwen local-brain runtime and model in the release image.
