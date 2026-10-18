@@ -20,7 +20,7 @@
           </div>
           <div class="header-actions">
             <div class="header-connection-group">
-              <p id="version-pill" class="connection-pill">Loading controller...</p>
+              <a id="version-pill" class="connection-pill" href="https://github.com/TheDadTech/UltraSkellyAdvanced/releases" target="_blank" rel="noopener noreferrer">Loading controller...</a>
               <button id="update-available-badge" type="button" class="update-available-badge" hidden>Update available</button>
               <button id="top-connect-skelly" type="button">Connect to Skelly</button>
             </div>
@@ -427,6 +427,10 @@
               <div><span class="label">People</span><strong id="camera-people">0</strong></div>
               <div><span class="label">Motion</span><strong id="camera-motion">0%</strong></div>
             </div>
+            <div class="device-inventory">
+              <span class="label">Detected cameras</span>
+              <ul id="camera-device-list"><li class="muted">Checking devices…</li></ul>
+            </div>
             <div class="camera-frame-wrap">
               <img id="camera-frame" alt="Annotated local camera analysis" hidden>
               <p id="camera-placeholder" class="muted">Analyze a frame to see local detection results.</p>
@@ -442,6 +446,10 @@
                 <p id="microphone-device" class="muted">Checking microphone…</p>
               </div>
               <span id="microphone-availability" class="driver-badge neutral">unknown</span>
+            </div>
+            <div class="device-inventory">
+              <span class="label">Detected microphones</span>
+              <ul id="microphone-device-list"><li class="muted">Checking devices…</li></ul>
             </div>
             <label class="listening-sensitivity-control">
               <span><strong>Listening sensitivity</strong><output id="listening-sensitivity-value">45</output></span>
