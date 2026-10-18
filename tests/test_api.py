@@ -297,6 +297,73 @@ def test_update_status_is_safe_without_a_release_channel() -> None:
     assert check_response.json()["current_version"] == status_response.json()["current_version"]
 
 
+def test_beta_update_channel_requires_explicit_acknowledgement(tmp_path) -> None:
+    app = create_app(Settings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": False},
+        )
+        enabled = client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": True},
+        )
+        persisted = client.get("/api/update/status")
+        stable = client.post(
+            "/api/update/channel",
+            json={"channel": "stable", "acknowledged": True},
+        )
+
+    assert rejected.status_code == 422
+    assert enabled.status_code == 200
+    assert enabled.json()["channel"] == "beta"
+    assert enabled.json()["beta_enabled"] is True
+    assert persisted.json()["channel"] == "beta"
+    assert stable.json()["channel"] == "stable"
+
+
+def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) -> None:
+    class Response:
+        def __init__(self, version: str) -> None:
+            self._version = version
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "version": self._version,
+                "package_url": "https://example.test/update.zip",
+                "sha256": "0" * 64,
+            }
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return Response("0.27.3-beta1")
+
+    monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
+    app = create_app(Settings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": True},
+        )
+        checked = client.post("/api/update/check")
+
+    assert checked.status_code == 200
+    assert checked.json()["channel"] == "beta"
+    assert checked.json()["latest_version"] == "0.27.3-beta1"
+    assert checked.json()["update_available"] is True
+
+
 def test_raw_ble_probe_is_hidden_unless_developer_mode_is_enabled() -> None:
     public_app = create_app(Settings())
 
