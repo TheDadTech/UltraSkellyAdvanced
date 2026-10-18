@@ -326,7 +326,13 @@ class SensorLab:
             1,
         )
 
-        encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        # Keep detection/tracking coordinates unchanged, but present camera
+        # previews and saved interaction snapshots in the natural visitor-facing
+        # orientation instead of the mirrored capture view.
+        display_frame = cv2.flip(frame, 1)
+        encoded, jpeg = cv2.imencode(
+            ".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 82]
+        )
         if not encoded:
             raise SensorUnavailable("Unable to encode the camera image")
 
