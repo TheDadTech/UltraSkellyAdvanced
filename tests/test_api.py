@@ -805,6 +805,8 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
                 "nag_cooldown_seconds": 45,
                 "nag_max_per_visitor": 4,
                 "nag_require_presence": True,
+                "nag_unattended_enabled": True,
+                "nag_unattended_interval_seconds": 180,
             }
         )
         saved = client.post("/api/operation/settings", json=settings)
@@ -815,6 +817,10 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
     assert body["nag_delay_seconds"] == 7
     assert body["nag_cooldown_seconds"] == 45
     assert body["nag_max_per_visitor"] == 4
+    assert body["nag_unattended_enabled"] is True
+    assert body["nag_unattended_interval_seconds"] == 180
     persisted = OperationSettingsStore(tmp_path).load()
     assert persisted.nag_mode == "media"
     assert persisted.nag_max_per_visitor == 4
+    assert persisted.nag_unattended_enabled is True
+    assert persisted.nag_unattended_interval_seconds == 180
