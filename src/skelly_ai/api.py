@@ -972,24 +972,11 @@ def create_app(
                 pass
         return f"/api/perception/snapshots/{filename}"
 
-    async def perform_visitor_nag(
-        nag_count: int, session_elapsed: float, since_last_nag: float | None
+    async def perform_lure(
+        settings: OperationSettings, *, unattended: bool = False
     ) -> dict[str, object] | None:
-        settings = operation_store.load()
         if settings.nag_mode == "disabled":
             return None
-        if nag_count >= settings.nag_max_per_visitor:
-            return None
-        if nag_count == 0 and session_elapsed < settings.nag_delay_seconds:
-            return None
-        if nag_count > 0 and (
-            since_last_nag is None or since_last_nag < settings.nag_cooldown_seconds
-        ):
-            return None
-        if settings.nag_require_presence:
-            camera = sensors.status().get("camera", {})
-            if not isinstance(camera, dict) or not bool(camera.get("presence_detected")):
-                return None
 
         if settings.nag_mode == "media":
             media_status = hardware.media_status()
@@ -1016,12 +1003,60 @@ def create_app(
             return {"performed": True, "mode": "media", "serial": serial}
 
         prompt = (
-            "A visitor is standing nearby but has not spoken to you. "
-            "Get their attention with one playful Halloween line of at most 8 words. "
-            "Do not introduce yourself or say your name."
+            (
+                "No visitor is currently interacting with you. "
+                "Say one short playful Halloween line that advertises that passersby can talk "
+                "to you and that you can hear them. Use at most 12 words. "
+            )
+            if unattended
+            else (
+                "A visitor is standing nearby but has not spoken to you. "
+                "Get their attention and clearly tell them they can talk to you. "
+                "Use one playful Halloween line of at most 12 words. "
+            )
         )
+        prompt += "Do not introduce yourself or say your name."
         result = await respond_automatically(prompt, [])
         return {"performed": True, "mode": "ai", "response": result.get("spoken_response")}
+
+    async def perform_visitor_nag(
+        nag_count: int, session_elapsed: float, since_last_nag: float | None
+    ) -> dict[str, object] | None:
+        settings = operation_store.load()
+        if settings.nag_mode == "disabled":
+            return None
+        if nag_count >= settings.nag_max_per_visitor:
+            return None
+        if nag_count == 0 and session_elapsed < settings.nag_delay_seconds:
+            return {
+                "performed": False,
+                "wait_seconds": round(
+                    settings.nag_delay_seconds - session_elapsed, 2
+                ),
+            }
+        if nag_count > 0 and (
+            since_last_nag is None or since_last_nag < settings.nag_cooldown_seconds
+        ):
+            return None
+        if settings.nag_require_presence:
+            camera = sensors.status().get("camera", {})
+            if not isinstance(camera, dict) or not bool(camera.get("presence_detected")):
+                return None
+        return await perform_lure(settings)
+
+    async def perform_unattended_nag() -> dict[str, object] | None:
+        settings = operation_store.load()
+        if not settings.nag_unattended_enabled:
+            return None
+        return await perform_lure(settings, unattended=True)
+
+    def unattended_lure_settings() -> dict[str, object]:
+        settings = operation_store.load()
+        return {
+            "enabled": settings.nag_unattended_enabled
+            and settings.nag_mode != "disabled",
+            "interval_seconds": settings.nag_unattended_interval_seconds,
+        }
 
     def perception_trigger_settings() -> dict[str, bool]:
         settings = operation_store.load()
@@ -1038,6 +1073,8 @@ def create_app(
         session_ended=end_local_session,
         phase_cue=show_local_phase_cue,
         nagger=perform_visitor_nag,
+        unattended_nagger=perform_unattended_nag,
+        unattended_lure_settings=unattended_lure_settings,
         snapshotter=save_interaction_snapshot,
         trigger_settings=perception_trigger_settings,
         camera_interval_seconds=app_settings.perception_camera_interval_seconds,
