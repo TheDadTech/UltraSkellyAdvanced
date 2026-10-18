@@ -310,6 +310,14 @@ async def test_interaction_snapshot_url_is_attached_to_event() -> None:
     )
 
 
+def test_phantom_this_is_always_junk() -> None:
+    from skelly_ai.perception import _is_junk_transcript
+
+    assert _is_junk_transcript("this") is True
+    assert _is_junk_transcript("THIS!") is True
+    assert _is_junk_transcript("hello") is False
+
+
 @pytest.mark.asyncio
 async def test_monitor_ignores_common_junk_transcript() -> None:
     class JunkSensors(FakeSensors):
