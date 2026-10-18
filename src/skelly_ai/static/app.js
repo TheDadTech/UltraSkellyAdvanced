@@ -151,6 +151,7 @@ const rollbackUpdate = document.querySelector("#rollback-update");
 let updateMonitorActive = false;
 const cameraAvailability = document.querySelector("#camera-availability");
 const cameraDevice = document.querySelector("#camera-device");
+const cameraDeviceList = document.querySelector("#camera-device-list");
 const cameraPresence = document.querySelector("#camera-presence");
 const cameraFaces = document.querySelector("#camera-faces");
 const cameraPeople = document.querySelector("#camera-people");
@@ -160,6 +161,7 @@ const cameraPlaceholder = document.querySelector("#camera-placeholder");
 const cameraResult = document.querySelector("#camera-result");
 const microphoneAvailability = document.querySelector("#microphone-availability");
 const microphoneDevice = document.querySelector("#microphone-device");
+const microphoneDeviceList = document.querySelector("#microphone-device-list");
 const microphoneVoice = document.querySelector("#microphone-voice");
 const microphoneLevel = document.querySelector("#microphone-level");
 const microphonePeak = document.querySelector("#microphone-peak");
@@ -572,6 +574,7 @@ function renderStatus(body) {
     ? (body.hardware.firmware_version || "XX")
     : "XX";
   versionPill.textContent = `Skelly ${skellyVersion} · USA ${body.version}`;
+  versionPill.href = `https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v${body.version}`;
   setStatusLight(statusLights.pi, "ok");
 
   const selectedAudio = body.operation?.settings?.audio_output || "skelly";
@@ -740,6 +743,31 @@ function renderAvailability(element, available) {
   element.classList.toggle("neutral", !available);
 }
 
+function renderDeviceInventory(listElement, devices, emptyText) {
+  if (!listElement) return;
+  listElement.replaceChildren();
+  if (!Array.isArray(devices) || !devices.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = emptyText;
+    listElement.append(item);
+    return;
+  }
+  devices.forEach((device) => {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `${device.name || device.device} (${device.device})`;
+    item.append(label);
+    if (device.active) {
+      const active = document.createElement("strong");
+      active.className = "driver-badge";
+      active.textContent = "ACTIVE";
+      item.append(" ", active);
+    }
+    listElement.append(item);
+  });
+}
+
 function renderSensorStatus(body) {
   const camera = body.camera;
   const microphone = body.microphone;
@@ -747,6 +775,8 @@ function renderSensorStatus(body) {
   renderAvailability(microphoneAvailability, microphone.available);
   cameraDevice.textContent = camera.device;
   microphoneDevice.textContent = microphone.resolved_device || microphone.device;
+  renderDeviceInventory(cameraDeviceList, camera.devices, "No camera devices detected.");
+  renderDeviceInventory(microphoneDeviceList, microphone.devices, "No microphone devices detected.");
   cameraPresence.textContent = camera.analyzed
     ? (camera.presence_detected ? "detected" : "clear")
     : "not tested";

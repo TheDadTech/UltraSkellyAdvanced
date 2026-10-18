@@ -308,3 +308,126 @@ async def test_interaction_snapshot_url_is_attached_to_event() -> None:
     assert stopped["events"][0]["snapshot_url"].endswith(
         "event-000001-session-0001-turn-001.jpg"
     )
+
+
+@pytest.mark.asyncio
+async def test_monitor_ignores_common_junk_transcript() -> None:
+    class JunkSensors(FakeSensors):
+        async def transcribe_microphone(self, duration_seconds: int) -> dict[str, object]:
+            assert duration_seconds == 5
+            self.transcription_calls += 1
+            status = self.status()
+            status["microphone"] = dict(status["microphone"])
+            status["microphone"]["transcript"] = "huh"
+            return status
+
+    sensors = JunkSensors([True, True, False, False, False])
+    responses: list[str] = []
+
+    async def respond(
+        transcript: str, history: list[dict[str, str]]
+    ) -> dict[str, object]:
+        responses.append(transcript)
+        return {"spoken_response": "This should not be spoken."}
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        responder=respond,
+        camera_interval_seconds=0.01,
+        presence_confirmations=2,
+        clear_confirmations=2,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+
+    await engine.start()
+    await wait_until(lambda: sensors.transcription_calls >= 1)
+    await asyncio.sleep(0.04)
+    stopped = await engine.stop()
+
+    assert responses == []
+    assert stopped["event_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_monitor_ignores_single_word_without_visual_confirmation() -> None:
+    class SingleWordSensors(FakeSensors):
+        async def transcribe_microphone(self, duration_seconds: int) -> dict[str, object]:
+            assert duration_seconds == 5
+            self.transcription_calls += 1
+            status = self.status()
+            status["camera"] = dict(status["camera"])
+            status["camera"]["person_count"] = 0
+            status["camera"]["face_count"] = 0
+            status["microphone"] = dict(status["microphone"])
+            status["microphone"]["transcript"] = "this"
+            return status
+
+    sensors = SingleWordSensors([False, False, False, False, False], motion_percent=3.5)
+    responses: list[str] = []
+
+    async def respond(
+        transcript: str, history: list[dict[str, str]]
+    ) -> dict[str, object]:
+        responses.append(transcript)
+        return {"spoken_response": "This should not be spoken."}
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        responder=respond,
+        trigger_settings=lambda: {"audio": False, "face": False, "motion": True},
+        camera_interval_seconds=0.01,
+        presence_confirmations=2,
+        clear_confirmations=2,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+
+    await engine.start()
+    await wait_until(lambda: sensors.transcription_calls >= 1)
+    await asyncio.sleep(0.04)
+    stopped = await engine.stop()
+
+    assert responses == []
+    assert stopped["event_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_monitor_accepts_single_word_with_visual_confirmation() -> None:
+    class SingleWordSensors(FakeSensors):
+        async def transcribe_microphone(self, duration_seconds: int) -> dict[str, object]:
+            assert duration_seconds == 5
+            self.transcription_calls += 1
+            status = self.status()
+            status["microphone"] = dict(status["microphone"])
+            status["microphone"]["transcript"] = "hello"
+            return status
+
+    sensors = SingleWordSensors([True, True, False, False, False])
+    responses: list[str] = []
+
+    async def respond(
+        transcript: str, history: list[dict[str, str]]
+    ) -> dict[str, object]:
+        responses.append(transcript)
+        return {"spoken_response": "Hello."}
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        responder=respond,
+        camera_interval_seconds=0.01,
+        presence_confirmations=2,
+        clear_confirmations=2,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+
+    await engine.start()
+    await wait_until(lambda: engine.status()["event_count"] >= 1)
+    stopped = await engine.stop()
+
+    assert responses[0] == "hello"
+    assert stopped["events"][0]["transcript"] == "hello"

@@ -20,7 +20,7 @@
           </div>
           <div class="header-actions">
             <div class="header-connection-group">
-              <p id="version-pill" class="connection-pill">Loading controller...</p>
+              <a id="version-pill" class="connection-pill" href="https://github.com/TheDadTech/UltraSkellyAdvanced/releases" target="_blank" rel="noopener noreferrer">Loading controller...</a>
               <button id="update-available-badge" type="button" class="update-available-badge" hidden>Update available</button>
               <button id="top-connect-skelly" type="button">Connect to Skelly</button>
             </div>
@@ -76,7 +76,7 @@
         <button type="button" role="tab" id="tab-operate" aria-controls="panel-operate" aria-selected="true" data-dashboard-tab="operate">Operate</button>
         <button type="button" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" data-dashboard-tab="setup">Setup</button>
         <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false" data-dashboard-tab="voice">Voice Tuning</button>
-        <button type="button" role="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false" data-dashboard-tab="diagnostics">Diagnostics</button>
+        <button type="button" role="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false" data-dashboard-tab="diagnostics">System &amp; Tools</button>
       </nav>
 
       <div id="panel-operate" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-operate" data-dashboard-panel="operate"></div>
@@ -427,6 +427,10 @@
               <div><span class="label">People</span><strong id="camera-people">0</strong></div>
               <div><span class="label">Motion</span><strong id="camera-motion">0%</strong></div>
             </div>
+            <div class="device-inventory">
+              <span class="label">Detected cameras</span>
+              <ul id="camera-device-list"><li class="muted">Checking devices…</li></ul>
+            </div>
             <div class="camera-frame-wrap">
               <img id="camera-frame" alt="Annotated local camera analysis" hidden>
               <p id="camera-placeholder" class="muted">Analyze a frame to see local detection results.</p>
@@ -442,6 +446,10 @@
                 <p id="microphone-device" class="muted">Checking microphone…</p>
               </div>
               <span id="microphone-availability" class="driver-badge neutral">unknown</span>
+            </div>
+            <div class="device-inventory">
+              <span class="label">Detected microphones</span>
+              <ul id="microphone-device-list"><li class="muted">Checking devices…</li></ul>
             </div>
             <label class="listening-sensitivity-control">
               <span><strong>Listening sensitivity</strong><output id="listening-sensitivity-value">45</output></span>
@@ -653,7 +661,7 @@
             <p class="muted help-copy">The header connects prop control. Prepare the speaker once to route every speaking voice through Skelly.</p>
           </div>
           </div>
-        <h3>Bluetooth speaker</h3>
+        <h3>Skelly Speaker</h3>
         <p class="security-note help-copy">Prepare and connect enables Live Mode, discovers and pairs the Skelly(Live) speaker when needed, and selects it for Pi audio.</p>
         <div class="controls">
           <button id="speaker-connect" type="button">Prepare and connect speaker</button>
@@ -850,12 +858,12 @@
         <pre id="diagnostics">Checks have not run yet.</pre>
       </section>
     </main>
-    <script src="/static/core/api.js?v=0.27.0-dev1"></script>
-    <script src="/static/core/store.js?v=0.27.0-dev1"></script>
-    <script src="/static/core/status.js?v=0.27.0-dev1"></script>
-    <script src="/static/core/header.js?v=0.27.0-dev1"></script>
-    <script src="/static/core/audio.js?v=0.27.0-dev1"></script>
-    <script src="/static/core/polling.js?v=0.27.0-dev1"></script>
-    <script src="/static/app.js?v=0.27.0-dev1"></script>
+    <script src="/static/core/api.js?v=0.27.1"></script>
+    <script src="/static/core/store.js?v=0.27.1"></script>
+    <script src="/static/core/status.js?v=0.27.1"></script>
+    <script src="/static/core/header.js?v=0.27.1"></script>
+    <script src="/static/core/audio.js?v=0.27.1"></script>
+    <script src="/static/core/polling.js?v=0.27.1"></script>
+    <script src="/static/app.js?v=0.27.1"></script>
   </body>
 </html>
