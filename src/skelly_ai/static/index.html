@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.25.7">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.2">
   </head>
   <body>
     <main>
@@ -65,6 +65,7 @@
 
       <section class="status-card" aria-label="Live service status">
         <div class="service-status"><span id="pi-status-light" class="status-light waiting"></span><span><small>PI SERVICE</small><strong id="connection">Connecting…</strong></span></div>
+        <div class="service-status"><span id="wifi-status-light" class="status-light waiting"></span><span><small>WIFI</small><strong id="header-wifi-status">checking</strong></span></div>
         <div class="service-status"><span id="prop-status-light" class="status-light waiting"></span><span><small>PROP BLE</small><strong id="header-prop-status">checking</strong></span></div>
         <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small id="header-speaker-label">SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
         <div class="service-status"><span id="dac-status-light" class="status-light waiting"></span><span><small>HEAD + JAW</small><strong id="header-dac-status">checking</strong></span></div>
@@ -859,11 +860,11 @@
       </section>
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
-    <script src="/static/core/store.js?v=0.27.1"></script>
-    <script src="/static/core/status.js?v=0.27.1"></script>
-    <script src="/static/core/header.js?v=0.27.1"></script>
-    <script src="/static/core/audio.js?v=0.27.1"></script>
-    <script src="/static/core/polling.js?v=0.27.1"></script>
-    <script src="/static/app.js?v=0.27.1"></script>
+    <script src="/static/core/store.js?v=0.27.2"></script>
+    <script src="/static/core/status.js?v=0.27.2"></script>
+    <script src="/static/core/header.js?v=0.27.2"></script>
+    <script src="/static/core/audio.js?v=0.27.2"></script>
+    <script src="/static/core/polling.js?v=0.27.2"></script>
+    <script src="/static/app.js?v=0.27.2"></script>
   </body>
 </html>
