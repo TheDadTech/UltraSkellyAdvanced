@@ -184,6 +184,9 @@ const nagCooldownValue = document.querySelector("#nag-cooldown-value");
 const nagMax = document.querySelector("#nag-max");
 const nagMaxValue = document.querySelector("#nag-max-value");
 const nagRequirePresence = document.querySelector("#nag-require-presence");
+const nagUnattendedEnabled = document.querySelector("#nag-unattended-enabled");
+const nagUnattendedInterval = document.querySelector("#nag-unattended-interval");
+const nagUnattendedIntervalValue = document.querySelector("#nag-unattended-interval-value");
 const triggerOnAudio = document.querySelector("#trigger-on-audio");
 const triggerOnFace = document.querySelector("#trigger-on-face");
 const triggerOnMotion = document.querySelector("#trigger-on-motion");
@@ -520,10 +523,14 @@ function renderOperation(operation) {
   if (document.activeElement !== listeningSensitivity) listeningSensitivity.value = settings.listening_sensitivity ?? 45;
   listeningSensitivityValue.textContent = listeningSensitivity.value;
   if (document.activeElement !== nagMode) nagMode.value = settings.nag_mode || "disabled";
-  if (document.activeElement !== nagDelay) nagDelay.value = settings.nag_delay_seconds ?? 5;
+  if (document.activeElement !== nagDelay) nagDelay.value = settings.nag_delay_seconds ?? 2;
   if (document.activeElement !== nagCooldown) nagCooldown.value = settings.nag_cooldown_seconds ?? 30;
   if (document.activeElement !== nagMax) nagMax.value = settings.nag_max_per_visitor ?? 2;
   nagRequirePresence.checked = settings.nag_require_presence !== false;
+  nagUnattendedEnabled.checked = settings.nag_unattended_enabled === true;
+  if (document.activeElement !== nagUnattendedInterval) {
+    nagUnattendedInterval.value = settings.nag_unattended_interval_seconds ?? 120;
+  }
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
@@ -541,6 +548,7 @@ function renderOperation(operation) {
   nagDelayValue.textContent = `${nagDelay.value}s`;
   nagCooldownValue.textContent = `${nagCooldown.value}s`;
   nagMaxValue.textContent = nagMax.value;
+  nagUnattendedIntervalValue.textContent = formatLureInterval(nagUnattendedInterval.value);
   brainVoiceButton.disabled = !manualMicrophoneEnabled.checked;
   operationProfileState.textContent = settings.hardware_profile === "dac"
     ? "Advanced: DAC + ESP32"
@@ -1234,6 +1242,8 @@ function operationSettingsPayload() {
     nag_cooldown_seconds: Number(nagCooldown.value),
     nag_max_per_visitor: Number(nagMax.value),
     nag_require_presence: nagRequirePresence.checked,
+    nag_unattended_enabled: nagUnattendedEnabled.checked,
+    nag_unattended_interval_seconds: Number(nagUnattendedInterval.value),
   };
 }
 
@@ -1245,10 +1255,17 @@ async function saveOperationSettings() {
   });
 }
 
+function formatLureInterval(value) {
+  const seconds = Number(value);
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 [
   [nagDelay, nagDelayValue, (value) => `${value}s`],
   [nagCooldown, nagCooldownValue, (value) => `${value}s`],
   [nagMax, nagMaxValue, (value) => value],
+  [nagUnattendedInterval, nagUnattendedIntervalValue, formatLureInterval],
 ].forEach(([input, output, format]) => {
   input.addEventListener("input", () => { output.textContent = format(input.value); });
 });
