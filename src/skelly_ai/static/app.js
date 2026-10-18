@@ -8,14 +8,12 @@ const headerSpeakerStatus = document.querySelector("#header-speaker-status");
 const headerSpeakerLabel = document.querySelector("#header-speaker-label");
 const headerDacStatus = document.querySelector("#header-dac-status");
 const headerAiStatus = document.querySelector("#header-ai-status");
-const headerFppStatus = document.querySelector("#header-fpp-status");
 const statusLights = {
   pi: document.querySelector("#pi-status-light"),
   prop: document.querySelector("#prop-status-light"),
   speaker: document.querySelector("#speaker-status-light"),
   dac: document.querySelector("#dac-status-light"),
   ai: document.querySelector("#ai-status-light"),
-  fpp: document.querySelector("#fpp-status-light"),
 };
 const operationSettingsForm = document.querySelector("#operation-settings-form");
 const skellyName = document.querySelector("#skelly-name");
@@ -625,9 +623,6 @@ function renderStatus(body) {
     statusLights.dac,
     profile === "dac" ? (body.dac.armed ? "ok" : "off") : "ok",
   );
-  const fppAllowed = Boolean(body.operation?.settings?.allow_fpp_override);
-  headerFppStatus.textContent = fppAllowed ? "allowed" : "disabled";
-  setStatusLight(statusLights.fpp, fppAllowed ? "ok" : "off");
   topConnectSkelly.disabled = false;
   topConnectSkelly.dataset.connected = String(body.hardware.connected);
   topConnectSkelly.classList.toggle("disconnect", body.hardware.connected);
