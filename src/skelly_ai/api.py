@@ -1,5 +1,7 @@
 import asyncio
 import ipaddress
+import json
+import os
 import re
 import random
 from contextlib import asynccontextmanager
@@ -173,6 +175,11 @@ class OperatorGestureRequest(BaseModel):
 
 class OperationStartRequest(BaseModel):
     mode: Literal["classic", "ai", "manual"]
+
+
+class UpdateChannelRequest(BaseModel):
+    channel: Literal["stable", "beta"]
+    acknowledged: bool = False
 
 
 class MediaPlayRequest(BaseModel):
@@ -1667,6 +1674,59 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"accepted": True, "message": "Raspberry Pi shutdown scheduled"}
 
+    official_stable_manifest_url = (
+        "https://raw.githubusercontent.com/TheDadTech/UltraSkellyAdvanced/"
+        "main/releases/stable/latest.json"
+    )
+    official_beta_manifest_url = (
+        "https://raw.githubusercontent.com/TheDadTech/UltraSkellyAdvanced/"
+        "main/releases/testing/latest.json"
+    )
+    update_channel_path = app_settings.data_dir / "update-channel.json"
+
+    def load_update_channel() -> str:
+        try:
+            payload = json.loads(update_channel_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return "stable"
+        return "beta" if isinstance(payload, dict) and payload.get("channel") == "beta" else "stable"
+
+    def save_update_channel(channel: str) -> str:
+        normalized = "beta" if channel == "beta" else "stable"
+        app_settings.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = update_channel_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"channel": normalized}, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(update_channel_path)
+        os.chmod(update_channel_path, 0o600)
+        return normalized
+
+    def manifest_url_for_channel(channel: str) -> str | None:
+        if channel == "beta":
+            return official_beta_manifest_url
+        return app_settings.update_manifest_url
+
+    def version_key(value: str) -> tuple[int, int, int, int, int]:
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)(?:[-.]?(?:beta|b|rc|dev)(\d*)?)?(?:\+.*)?",
+            value.strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            numbers = [int(number) for number in re.findall(r"\d+", value)[:3]]
+            numbers.extend([0] * (3 - len(numbers)))
+            return (*numbers[:3], 1, 0)
+        major, minor, patch = (int(match.group(index)) for index in range(1, 4))
+        prerelease_number = int(match.group(4) or 0)
+        is_final = 0 if re.search(r"(?:beta|b|rc|dev)", value, flags=re.IGNORECASE) else 1
+        return (major, minor, patch, is_final, prerelease_number)
+
+    def is_prerelease(value: str) -> bool:
+        return bool(re.search(r"(?:beta|b|rc|dev)", value, flags=re.IGNORECASE))
+
     def update_status_payload(
         *,
         latest_version: str | None = None,
@@ -1675,17 +1735,18 @@ def create_app(
         installable: bool = False,
         message: str | None = None,
     ) -> dict[str, object]:
-        def version_parts(value: str) -> tuple[int, ...]:
-            numbers = re.findall(r"\d+", value)
-            return tuple(int(number) for number in numbers[:4])
-
+        channel = load_update_channel()
+        manifest_url = manifest_url_for_channel(channel)
         available = bool(
             latest_version
-            and version_parts(latest_version) > version_parts(__version__)
+            and version_key(latest_version) > version_key(__version__)
         )
         return {
             "current_version": __version__,
-            "channel_configured": bool(app_settings.update_manifest_url),
+            "channel": channel,
+            "beta_enabled": channel == "beta",
+            "running_beta": is_prerelease(__version__),
+            "channel_configured": bool(manifest_url),
             "update_available": available,
             "latest_version": latest_version,
             "download_url": download_url if available else None,
@@ -1693,10 +1754,11 @@ def create_app(
             "installable": bool(available and installable),
             "installation": updates.status(),
             "rollback": updates.rollback_status(current_version=__version__),
+            "return_to_stable_available": is_prerelease(__version__),
             "message": message
             or (
-                "USA release channel ready. Check for updates when this Pi is online."
-                if app_settings.update_manifest_url
+                f"USA {channel} release channel ready. Check for updates when this Pi is online."
+                if manifest_url
                 else "No release channel is configured yet; install signed release packages manually."
             ),
         }
@@ -1705,8 +1767,9 @@ def create_app(
     async def update_status() -> dict[str, object]:
         return update_status_payload()
 
-    async def read_update_manifest() -> dict[str, object]:
-        manifest_url = app_settings.update_manifest_url
+    async def read_update_manifest(channel: str | None = None) -> dict[str, object]:
+        selected_channel = channel or load_update_channel()
+        manifest_url = manifest_url_for_channel(selected_channel)
         if not manifest_url:
             raise HTTPException(status_code=409, detail="No USA release channel is configured")
         try:
@@ -1725,9 +1788,10 @@ def create_app(
 
     @app.post("/api/update/check")
     async def check_for_update() -> dict[str, object]:
-        if not app_settings.update_manifest_url:
+        channel = load_update_channel()
+        if not manifest_url_for_channel(channel):
             return update_status_payload()
-        manifest = await read_update_manifest()
+        manifest = await read_update_manifest(channel)
         latest = str(manifest.get("version", "")).strip()
         if not latest:
             raise HTTPException(status_code=502, detail="The update manifest has no version")
@@ -1768,6 +1832,53 @@ def create_app(
         try:
             return updates.start_rollback(current_version=__version__)
         except UpdateError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/update/channel")
+    async def set_update_channel(
+        setup: UpdateChannelRequest, request: Request
+    ) -> dict[str, object]:
+        require_local_setup(request)
+        if setup.channel == "beta" and not setup.acknowledged:
+            raise HTTPException(
+                status_code=422,
+                detail="Beta releases require explicit acknowledgement",
+            )
+        save_update_channel(setup.channel)
+        return update_status_payload(
+            message=(
+                "Beta releases enabled. Check for updates to see test builds."
+                if setup.channel == "beta"
+                else "Stable releases selected."
+            )
+        )
+
+    @app.post("/api/update/return-stable")
+    async def return_to_stable(request: Request) -> dict[str, object]:
+        require_local_setup(request)
+        if not is_prerelease(__version__):
+            raise HTTPException(
+                status_code=409,
+                detail="This Pi is already running a stable release",
+            )
+        manifest = await read_update_manifest("stable")
+        stable_version = str(manifest.get("version") or "").strip()
+        if not stable_version:
+            raise HTTPException(status_code=502, detail="The stable manifest has no version")
+        if not manifest.get("package_url") or not manifest.get("sha256"):
+            raise HTTPException(
+                status_code=502,
+                detail="The stable release is not installable",
+            )
+        previous_channel = load_update_channel()
+        save_update_channel("stable")
+        try:
+            return await updates.stage_and_start(
+                manifest,
+                current_version=__version__,
+            )
+        except UpdateError as exc:
+            save_update_channel(previous_channel)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/status")
