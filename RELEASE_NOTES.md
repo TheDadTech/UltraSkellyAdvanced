@@ -6,6 +6,8 @@
 - Filters common low-information speech-recognition filler such as `huh`, `uh`, `um`, and `hmm` before it reaches the AI responder.
 - Ignores one-word transcripts when the camera sees no face or person, reducing phantom unattended responses while preserving normal one-word replies for visually confirmed visitors.
 - Adds regression tests for the movement-bitfield and phantom-transcript fixes.
+- Makes the version badge link directly to the matching GitHub release.
+- Lists detected cameras and microphones in **System & Tools** and marks the currently selected/automatic-priority device without changing device selection.
 
 # UltraSkellyAdvanced 0.27.0
 
