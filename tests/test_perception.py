@@ -364,7 +364,7 @@ async def test_monitor_ignores_single_word_without_visual_confirmation() -> None
             status["microphone"]["transcript"] = "this"
             return status
 
-    sensors = SingleWordSensors([True, True, False, False, False])
+    sensors = SingleWordSensors([False, False, False, False, False], motion_percent=3.5)
     responses: list[str] = []
 
     async def respond(
@@ -377,6 +377,7 @@ async def test_monitor_ignores_single_word_without_visual_confirmation() -> None
         sensors,
         show_locked=lambda: False,
         responder=respond,
+        trigger_settings=lambda: {"audio": False, "face": False, "motion": True},
         camera_interval_seconds=0.01,
         presence_confirmations=2,
         clear_confirmations=2,
