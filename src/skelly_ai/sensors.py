@@ -99,21 +99,90 @@ class SensorLab:
         }
         self._last_audio_wav: bytes | None = None
         self._last_audio_pcm: bytes | None = None
+        self._device_inventory_cache: dict[str, list[dict[str, object]]] | None = None
+        self._device_inventory_cached_at = 0.0
+
+    def _device_inventory(self) -> dict[str, list[dict[str, object]]]:
+        now = time.monotonic()
+        if (
+            self._device_inventory_cache is not None
+            and now - self._device_inventory_cached_at < 30.0
+        ):
+            return self._device_inventory_cache
+
+        cameras: list[dict[str, object]] = []
+        for device_path in sorted(Path("/dev").glob("video*")):
+            name_path = Path("/sys/class/video4linux") / device_path.name / "name"
+            try:
+                name = name_path.read_text("utf-8").strip()
+            except OSError:
+                name = device_path.name
+            cameras.append(
+                {
+                    "device": str(device_path),
+                    "name": name,
+                    "active": str(device_path) == self.camera_device,
+                }
+            )
+
+        microphones: list[dict[str, object]] = []
+        arecord = shutil.which("arecord")
+        if arecord is not None:
+            try:
+                listing = subprocess.run(
+                    [arecord, "-l"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=3,
+                    text=True,
+                ).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                listing = ""
+            for match in re.finditer(
+                r"card\s+(\d+):\s*([^\[]+)\[([^\]]+)\].*?"
+                r"device\s+(\d+):\s*([^\[]+)\[([^\]]+)\]",
+                listing,
+            ):
+                card, card_id, card_name, device, device_id, device_name = (
+                    value.strip() for value in match.groups()
+                )
+                resolved = f"plughw:{card},{device}"
+                microphones.append(
+                    {
+                        "device": resolved,
+                        "name": f"{card_name} — {device_name}",
+                        "card": int(card),
+                        "pcm_device": int(device),
+                        "active": (
+                            self.microphone_device == resolved
+                            or (self.microphone_device == "auto" and len(microphones) == 0)
+                        ),
+                    }
+                )
+
+        inventory = {"cameras": cameras, "microphones": microphones}
+        self._device_inventory_cache = inventory
+        self._device_inventory_cached_at = now
+        return inventory
 
     def status(self) -> dict[str, object]:
         with self._state_lock:
             camera = dict(self._last_camera)
             microphone = dict(self._last_microphone)
+        inventory = self._device_inventory()
         return {
             "local_only": True,
             "camera": {
                 "available": Path(self.camera_device).exists(),
                 "device": self.camera_device,
+                "devices": inventory["cameras"],
                 **camera,
             },
             "microphone": {
                 "available": shutil.which("arecord") is not None,
                 "device": self.microphone_device,
+                "devices": inventory["microphones"],
                 "voice_threshold_dbfs": self.voice_threshold_dbfs,
                 "offline_transcription_available": self.speech_model_path.is_dir(),
                 "speech_model": self.speech_model_path.name,
