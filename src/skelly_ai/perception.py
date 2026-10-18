@@ -25,6 +25,7 @@ _JUNK_TRANSCRIPTS = {
     "uh huh",
     "uh-huh",
     "um",
+    "this",
 }
 
 
