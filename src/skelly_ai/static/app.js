@@ -284,6 +284,8 @@ const setupWifiManual = document.querySelector("#setup-wifi-manual");
 const setupWifiPassword = document.querySelector("#setup-wifi-password");
 const setupWifiResult = document.querySelector("#setup-wifi-result");
 const wifiModeStatus = document.querySelector("#wifi-mode-status");
+const headerWifiStatus = document.querySelector("#header-wifi-status");
+const wifiStatusLight = document.querySelector("#wifi-status-light");
 const sshStatus = document.querySelector("#ssh-status");
 const sshPassword = document.querySelector("#ssh-password");
 const sshPersistent = document.querySelector("#ssh-persistent");
@@ -756,13 +758,19 @@ function renderDeviceInventory(listElement, devices, emptyText) {
   devices.forEach((device) => {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${device.name || device.device} (${device.device})`;
+    label.textContent = device.name || device.device;
     item.append(label);
     if (device.active) {
       const active = document.createElement("strong");
       active.className = "driver-badge";
       active.textContent = "ACTIVE";
       item.append(" ", active);
+    }
+    if (device.device) {
+      const detail = document.createElement("small");
+      detail.className = "muted";
+      detail.textContent = device.device;
+      item.append(document.createElement("br"), detail);
     }
     listElement.append(item);
   });
@@ -2766,15 +2774,42 @@ async function loadWifiNetworks() {
   return scan.networks;
 }
 
+function wifiSignalLabel(percent) {
+  if (!Number.isFinite(percent)) return "connected";
+  if (percent >= 75) return "Excellent";
+  if (percent >= 50) return "Good";
+  if (percent >= 30) return "Fair";
+  return "Weak";
+}
+
 async function refreshWifiStatus() {
   try {
     const body = await request("/api/system/wifi");
     wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home WiFi";
-    if (wifiSummary) wifiSummary.textContent = body.mode === "hotspot" ? "Setup hotspot active" : "Connected to home WiFi";
+    if (body.mode === "hotspot") {
+      if (wifiSummary) wifiSummary.textContent = "Setup hotspot active";
+      if (headerWifiStatus) headerWifiStatus.textContent = "hotspot";
+      setStatusLight(wifiStatusLight, "ok");
+    } else {
+      const signal = Number(body.signal_percent);
+      const hasSignal = Number.isFinite(signal);
+      const label = wifiSignalLabel(signal);
+      if (wifiSummary) {
+        wifiSummary.textContent = hasSignal
+          ? `${body.ssid || "Home WiFi"} · ${signal}% · ${label}`
+          : "Connected to home WiFi";
+      }
+      if (headerWifiStatus) {
+        headerWifiStatus.textContent = hasSignal ? `${signal}% ${label}` : "connected";
+      }
+      setStatusLight(wifiStatusLight, hasSignal && signal < 30 ? "error" : "ok");
+    }
     if (wifiSettingsDetails && body.mode !== "hotspot" && !wifiSettingsDetails.dataset.userOpened) wifiSettingsDetails.open = false;
     if (body.last_result?.message) setupWifiResult.textContent = body.last_result.message;
   } catch {
     wifiModeStatus.textContent = "image only";
+    if (headerWifiStatus) headerWifiStatus.textContent = "unavailable";
+    setStatusLight(wifiStatusLight, "error");
   }
 }
 
