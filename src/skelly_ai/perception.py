@@ -41,6 +41,8 @@ Responder = Callable[[str, list[dict[str, str]]], Awaitable[dict[str, object]]]
 SessionEnded = Callable[[], Awaitable[None]]
 PhaseCue = Callable[[str], Awaitable[None]]
 Nagger = Callable[[int, float, float | None], Awaitable[dict[str, object] | None]]
+UnattendedNagger = Callable[[], Awaitable[dict[str, object] | None]]
+UnattendedLureSettings = Callable[[], dict[str, object]]
 Snapshotter = Callable[[int, int, int], Awaitable[str | None]]
 TriggerSettings = Callable[[], dict[str, bool]]
 
@@ -93,6 +95,8 @@ class PerceptionEngine:
         session_ended: SessionEnded | None = None,
         phase_cue: PhaseCue | None = None,
         nagger: Nagger | None = None,
+        unattended_nagger: UnattendedNagger | None = None,
+        unattended_lure_settings: UnattendedLureSettings | None = None,
         snapshotter: Snapshotter | None = None,
         trigger_settings: TriggerSettings | None = None,
         camera_interval_seconds: float = 2.5,
@@ -111,6 +115,8 @@ class PerceptionEngine:
         self._session_ended = session_ended
         self._phase_cue = phase_cue
         self._nagger = nagger
+        self._unattended_nagger = unattended_nagger
+        self._unattended_lure_settings = unattended_lure_settings
         self._snapshotter = snapshotter
         self._trigger_settings = trigger_settings
         self._camera_interval_seconds = camera_interval_seconds
@@ -142,6 +148,7 @@ class PerceptionEngine:
         self._session_started_at = 0.0
         self._last_nag_at = 0.0
         self._nag_count = 0
+        self._last_unattended_nag_at = 0.0
         self._trigger_states = {"audio": False, "face": False, "motion": False}
 
     def status(self) -> dict[str, object]:
@@ -194,6 +201,7 @@ class PerceptionEngine:
             self._last_error = None
             self._started_at = _now()
             self._next_listen_at = 0.0
+            self._last_unattended_nag_at = time.monotonic()
             self._task = asyncio.create_task(
                 self._run(), name="skelly-perception-monitor"
             )
@@ -259,9 +267,9 @@ class PerceptionEngine:
             self._last_error = str(exc)
 
 
-    async def _maybe_nag(self) -> None:
+    async def _maybe_nag(self) -> dict[str, object] | None:
         if self._nagger is None or not self._session_active:
-            return
+            return None
         now = time.monotonic()
         try:
             result = await self._nagger(
@@ -271,12 +279,35 @@ class PerceptionEngine:
             )
         except RuntimeError as exc:
             self._last_error = str(exc)
-            return
+            return None
         if not result or not bool(result.get("performed")):
-            return
+            return result
         self._nag_count += 1
         self._last_nag_at = now
         self._phase = "nagging"
+        return result
+
+    async def _maybe_unattended_nag(self) -> bool:
+        if self._unattended_nagger is None or self._unattended_lure_settings is None:
+            return False
+        settings = self._unattended_lure_settings()
+        if not bool(settings.get("enabled")):
+            return False
+        interval = max(60.0, float(settings.get("interval_seconds") or 120.0))
+        now = time.monotonic()
+        if now - self._last_unattended_nag_at < interval:
+            return False
+        try:
+            result = await self._unattended_nagger()
+        except RuntimeError as exc:
+            self._last_error = str(exc)
+            self._last_unattended_nag_at = now
+            return False
+        self._last_unattended_nag_at = now
+        if not result or not bool(result.get("performed")):
+            return False
+        self._phase = "unattended_lure"
+        return True
 
     async def _run(self) -> None:
         try:
@@ -348,6 +379,9 @@ class PerceptionEngine:
                             # remains present until departure is fully confirmed.
                         else:
                             self._clear_streak = 0
+                            if await self._maybe_unattended_nag():
+                                await asyncio.sleep(self._camera_interval_seconds)
+                                continue
                             await asyncio.sleep(self._camera_interval_seconds)
                             continue
                     else:
@@ -366,6 +400,26 @@ class PerceptionEngine:
                             continue
                         self._begin_session()
                         self._phase = "visitor_confirmed"
+                        # A face/motion-confirmed passerby gets the configured
+                        # lure opportunity before the first microphone window.
+                        # If Audio itself triggered the session, they already
+                        # spoke, so listen immediately instead of luring.
+                        if not audio_active:
+                            lure = await self._maybe_nag()
+                            wait_seconds = (
+                                float(lure.get("wait_seconds") or 0.0)
+                                if isinstance(lure, dict)
+                                else 0.0
+                            )
+                            if wait_seconds > 0:
+                                self._phase = "waiting_to_lure"
+                                await asyncio.sleep(
+                                    min(self._camera_interval_seconds, wait_seconds)
+                                )
+                                continue
+                            if lure and bool(lure.get("performed")):
+                                await asyncio.sleep(0.1)
+                                continue
 
                     if time.monotonic() < self._next_listen_at:
                         self._phase = "waiting_to_listen"
