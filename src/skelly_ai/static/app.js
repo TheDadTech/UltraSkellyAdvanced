@@ -148,6 +148,11 @@ const checkForUpdates = document.querySelector("#check-for-updates");
 const downloadUpdate = document.querySelector("#download-update");
 const installUpdate = document.querySelector("#install-update");
 const rollbackUpdate = document.querySelector("#rollback-update");
+const returnStableUpdate = document.querySelector("#return-stable-update");
+const updateChannelBadge = document.querySelector("#update-channel-badge");
+const updateChannelHelp = document.querySelector("#update-channel-help");
+const enableBetaChannel = document.querySelector("#enable-beta-channel");
+const useStableChannel = document.querySelector("#use-stable-channel");
 let updateMonitorActive = false;
 const cameraAvailability = document.querySelector("#camera-availability");
 const cameraDevice = document.querySelector("#camera-device");
@@ -2543,6 +2548,22 @@ function renderUpdateStatus(body) {
   updateVersion.textContent = `version ${body.current_version}`;
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
+  const betaEnabled = body.channel === "beta";
+  if (updateChannelBadge) {
+    updateChannelBadge.textContent = betaEnabled ? "BETA" : "Stable";
+    updateChannelBadge.classList.toggle("neutral", !betaEnabled);
+  }
+  if (updateChannelHelp) {
+    updateChannelHelp.textContent = betaEnabled
+      ? "Beta releases are enabled on this controller."
+      : "Stable is recommended for normal use.";
+  }
+  if (enableBetaChannel) enableBetaChannel.hidden = betaEnabled;
+  if (useStableChannel) useStableChannel.hidden = !betaEnabled;
+  if (returnStableUpdate) {
+    returnStableUpdate.hidden = !body.return_to_stable_available;
+    returnStableUpdate.textContent = "Return to Stable";
+  }
   installUpdate.hidden = !body.update_available || !body.installable;
   installUpdate.dataset.version = body.latest_version || "";
   const rollback = body.rollback || {};
@@ -2579,6 +2600,63 @@ async function refreshUpdateStatus(check = false) {
   });
   renderUpdateStatus(body);
 }
+
+enableBetaChannel?.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Enable Beta releases on this controller?\n\nBeta builds may contain unfinished features or bugs. Stable remains the recommended channel."
+  );
+  if (!confirmed) return;
+  enableBetaChannel.disabled = true;
+  try {
+    const body = await request("/api/update/channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "beta", acknowledged: true }),
+    });
+    renderUpdateStatus(body);
+  } catch (error) {
+    updateResult.textContent = error.message;
+  } finally {
+    enableBetaChannel.disabled = false;
+  }
+});
+
+useStableChannel?.addEventListener("click", async () => {
+  useStableChannel.disabled = true;
+  try {
+    const body = await request("/api/update/channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "stable", acknowledged: true }),
+    });
+    renderUpdateStatus(body);
+  } catch (error) {
+    updateResult.textContent = error.message;
+  } finally {
+    useStableChannel.disabled = false;
+  }
+});
+
+returnStableUpdate?.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Return this controller to the current Stable release?\n\nUSA will download the published Stable package and restart."
+  );
+  if (!confirmed) return;
+  returnStableUpdate.disabled = true;
+  installUpdate.disabled = true;
+  checkForUpdates.disabled = true;
+  updateResult.textContent = "Downloading and verifying the current Stable release…";
+  try {
+    const status = await request("/api/update/return-stable", { method: "POST" });
+    updateResult.textContent = status.message || "Returning to Stable…";
+    await monitorUpdateInstallation();
+  } catch (error) {
+    updateResult.textContent = error.message;
+    returnStableUpdate.disabled = false;
+    installUpdate.disabled = false;
+    checkForUpdates.disabled = false;
+  }
+});
 
 checkForUpdates.addEventListener("click", async () => {
   checkForUpdates.disabled = true;
