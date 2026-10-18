@@ -380,6 +380,6 @@ def test_status_reports_preferred_and_active_audio_route(tmp_path) -> None:
         assert status["audio_route"]["active"] in {"external_bluetooth", "skelly"}
 
 
-def test_runtime_version_matches_dev9() -> None:
+def test_runtime_version_matches_release() -> None:
     from skelly_ai import __version__
-    assert __version__ == "0.27.0"
+    assert __version__ == "0.27.1"
