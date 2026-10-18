@@ -263,10 +263,31 @@ def wifi_switch_worker() -> None:
 
 
 def wifi_status() -> None:
+    mode = "hotspot" if hotspot_active() else "home"
     payload: dict[str, object] = {
-        "mode": "hotspot" if hotspot_active() else "home",
+        "mode": mode,
         "hotspot_ssid": HOTSPOT_SSID,
+        "ssid": None,
+        "signal_percent": None,
     }
+    if mode == "home":
+        result = run(
+            "nmcli", "-t", "--escape", "yes",
+            "-f", "IN-USE,SSID,SIGNAL",
+            "device", "wifi", "list", "ifname", "wlan0", "--rescan", "no",
+            check=False,
+        )
+        for raw in result.stdout.splitlines():
+            if not raw.startswith("*:"):
+                continue
+            try:
+                left, signal_text = raw.rsplit(":", 1)
+                _, ssid = left.split(":", 1)
+                payload["ssid"] = ssid.replace(r"\:", ":").replace(r"\\", "\\")
+                payload["signal_percent"] = max(0, min(100, int(signal_text)))
+            except (ValueError, TypeError):
+                pass
+            break
     try:
         payload["last_result"] = json.loads(WIFI_RESULT.read_text("utf-8"))
     except (OSError, ValueError):
