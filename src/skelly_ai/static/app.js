@@ -291,6 +291,7 @@ const setupWifiPassword = document.querySelector("#setup-wifi-password");
 const setupWifiResult = document.querySelector("#setup-wifi-result");
 const wifiModeStatus = document.querySelector("#wifi-mode-status");
 const headerWifiStatus = document.querySelector("#header-wifi-status");
+const headerNetworkLabel = document.querySelector("#header-network-label");
 const wifiStatusLight = document.querySelector("#wifi-status-light");
 const sshStatus = document.querySelector("#ssh-status");
 const sshPassword = document.querySelector("#ssh-password");
@@ -428,7 +429,7 @@ async function request(path, options = {}) {
 }
 
 function setStatusLight(light, state) {
-  light.classList.remove("ok", "error", "off", "waiting");
+  light.classList.remove("ok", "caution", "error", "off", "waiting");
   light.classList.add(state);
 }
 
@@ -2875,29 +2876,69 @@ function wifiSignalLabel(percent) {
 async function refreshWifiStatus() {
   try {
     const body = await request("/api/system/wifi");
-    wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home WiFi";
-    if (body.mode === "hotspot") {
-      if (wifiSummary) wifiSummary.textContent = "Setup hotspot active";
-      if (headerWifiStatus) headerWifiStatus.textContent = "hotspot";
-      setStatusLight(wifiStatusLight, "ok");
-    } else {
-      const signal = Number(body.signal_percent);
-      const hasSignal = Number.isFinite(signal);
-      const label = wifiSignalLabel(signal);
-      if (wifiSummary) {
-        wifiSummary.textContent = hasSignal
-          ? `${body.ssid || "Home WiFi"} · ${signal}% · ${label}`
-          : "Connected to home WiFi";
-      }
-      if (headerWifiStatus) {
-        headerWifiStatus.textContent = hasSignal ? `${signal}% ${label}` : "connected";
-      }
-      setStatusLight(wifiStatusLight, hasSignal && signal < 30 ? "error" : "ok");
+    const transport = body.transport || "offline";
+    const internet = body.internet === true;
+    wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home network";
+
+    if (headerNetworkLabel) {
+      headerNetworkLabel.textContent = transport === "ethernet"
+        ? "ETHERNET"
+        : transport === "wifi"
+          ? "WIFI"
+          : "NETWORK";
     }
+
+    const signal = Number(body.signal_percent);
+    const hasSignal = Number.isFinite(signal);
+    const label = wifiSignalLabel(signal);
+
+    if (wifiSummary) {
+      if (transport === "ethernet") {
+        wifiSummary.textContent = internet
+          ? "Ethernet connected · Internet available"
+          : "Ethernet connected · No Internet";
+      } else if (body.mode === "hotspot" && transport === "offline") {
+        wifiSummary.textContent = "Setup hotspot active";
+      } else if (hasSignal) {
+        wifiSummary.textContent = `${body.ssid || "Home WiFi"} · ${signal}% · ${label}${internet ? "" : " · No Internet"}`;
+      } else if (transport === "wifi") {
+        wifiSummary.textContent = internet
+          ? "Connected to home WiFi"
+          : "WiFi connected · No Internet";
+      } else {
+        wifiSummary.textContent = "No active network route";
+      }
+    }
+
+    if (headerWifiStatus) {
+      if (transport === "ethernet") {
+        headerWifiStatus.textContent = internet ? "connected" : "No Internet";
+      } else if (transport === "wifi") {
+        headerWifiStatus.textContent = internet
+          ? (hasSignal ? `${signal}% ${label}` : "connected")
+          : "No Internet";
+      } else if (body.mode === "hotspot") {
+        headerWifiStatus.textContent = "hotspot";
+      } else {
+        headerWifiStatus.textContent = "offline";
+      }
+    }
+
+    if (!internet) {
+      setStatusLight(wifiStatusLight, "error");
+    } else if (transport === "wifi" && hasSignal && signal < 30) {
+      setStatusLight(wifiStatusLight, "error");
+    } else if (transport === "wifi" && hasSignal && signal < 50) {
+      setStatusLight(wifiStatusLight, "caution");
+    } else {
+      setStatusLight(wifiStatusLight, "ok");
+    }
+
     if (wifiSettingsDetails && body.mode !== "hotspot" && !wifiSettingsDetails.dataset.userOpened) wifiSettingsDetails.open = false;
     if (body.last_result?.message) setupWifiResult.textContent = body.last_result.message;
   } catch {
     wifiModeStatus.textContent = "image only";
+    if (headerNetworkLabel) headerNetworkLabel.textContent = "NETWORK";
     if (headerWifiStatus) headerWifiStatus.textContent = "unavailable";
     setStatusLight(wifiStatusLight, "error");
   }
