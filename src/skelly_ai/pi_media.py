@@ -104,6 +104,8 @@ class PiMediaLibrary:
         changed = False
         result: list[dict[str, object]] = []
         present: set[str] = set()
+        if not self.media_dir.exists():
+            return result
         for path in sorted(self.media_dir.iterdir(), key=lambda item: item.name.casefold()):
             if not path.is_file() or path.name.startswith("."):
                 continue
@@ -160,6 +162,7 @@ class PiMediaLibrary:
             raise PiMediaError("The audio file is empty")
         if len(data) > self.MAX_FILE_BYTES:
             raise PiMediaError("A single Pi media file may not exceed 512 MB")
+        self._ensure_media_dir()
         destination = self.media_dir / clean
         if destination.exists():
             raise PiMediaError("A Pi media file with that name already exists")
