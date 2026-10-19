@@ -119,6 +119,7 @@ class SkellyHardware(Protocol):
     async def set_media_enabled(self, serial: int, enabled: bool) -> dict[str, object]: ...
     async def upload_media(self, name: str, data: bytes) -> dict[str, object]: ...
     def media_status(self) -> dict[str, object]: ...
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]: ...
     def snapshot(self) -> HardwareSnapshot: ...
 
 
@@ -178,6 +179,10 @@ class SimulatedSkelly:
     def _require_connected(self) -> None:
         if not self._connected:
             raise HardwareUnavailable("The simulated Skelly is disconnected")
+
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]:
+        safe_limit = max(1, min(100, int(limit)))
+        return list(self._events)[-safe_limit:]
 
     def snapshot(self) -> HardwareSnapshot:
         return HardwareSnapshot(
