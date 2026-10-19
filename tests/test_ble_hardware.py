@@ -105,6 +105,35 @@ def test_protocol_commands_match_verified_controller_frames() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ble_file_transfer_logs_start_packet_details() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    async def reject_start(command: bytes) -> None:
+        hardware._parse_notification("BBC002000000000000000000E3")
+
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._write_locked = reject_start  # type: ignore[method-assign]
+
+    with pytest.raises(HardwareUnavailable, match=r"BBC0 status 02"):
+        await hardware.upload_media("test.mp3", b"1234")
+
+    start_events = [
+        event for event in hardware._events
+        if event["action"] == "media_transfer_start"
+    ]
+    assert start_events
+    assert "name=test.mp3" in start_events[-1]["value"]
+    assert "size=4" in start_events[-1]["value"]
+    assert "packets=1" in start_events[-1]["value"]
+    assert "aac0=AAC0" in start_events[-1]["value"]
+
+
+@pytest.mark.asyncio
 async def test_ble_file_transfer_reports_bbc0_rejection_status() -> None:
     hardware = BleSkelly(
         address=FakeDevice.address,
