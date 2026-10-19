@@ -145,7 +145,7 @@ class BleSkelly:
                 self._record(
                     "media_capacity",
                     (
-                        f"remaining_kb={self._media_capacity_kb};"
+                        f"raw_value={self._media_capacity_kb};"
                         f"files={self._media_capacity_file_count};"
                         f"extra=0x{self._media_capacity_extra:08X}"
                     ),
@@ -453,12 +453,9 @@ class BleSkelly:
             "expected_count": self._media_expected,
             "playing_serial": self._playing_serial,
             "volume": self._volume,
-            "capacity_kb_remaining": self._media_capacity_kb,
-            "capacity_bytes_remaining": (
-                self._media_capacity_kb * 1024
-                if self._media_capacity_kb is not None
-                else None
-            ),
+            "capacity_raw": self._media_capacity_kb,
+            "capacity_kb_remaining": None,
+            "capacity_bytes_remaining": None,
             "capacity_file_count": self._media_capacity_file_count,
             "capacity_extra": self._media_capacity_extra,
             "upload_progress": dict(self._media_upload_progress),
@@ -595,9 +592,12 @@ class BleSkelly:
         if not data:
             raise HardwareUnavailable("The selected audio file is empty")
         protected_names = {
-            str(item.get("name", "")).strip().lower()
-            for serial, item in self._media_files.items()
-            if 1 <= int(serial) <= 6
+            *(f"default sound {index}.mp3" for index in range(1, 7)),
+            *(
+                str(item.get("name", "")).strip().lower()
+                for serial, item in self._media_files.items()
+                if 1 <= int(serial) <= 6
+            ),
         }
         if name.strip().lower() in protected_names:
             raise HardwareUnavailable("Factory media files cannot be overwritten")
