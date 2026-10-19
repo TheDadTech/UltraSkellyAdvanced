@@ -49,17 +49,6 @@ if bad:
     raise SystemExit(1)
 PY
 
-set +e
-test_output="$(PYTHONPATH=src python -m pytest -q 2>&1)"
-test_status=$?
-set -e
-printf '%s\n' "${test_output}"
-if [[ "${test_status}" -ne 0 ]]; then
-  failures="$(grep -c '^FAILED ' <<<"${test_output}" || true)"
-  if [[ "${failures}" -ne 1 ]] || ! grep -q 'test_prepare_connect_automatically_performs_second_pipewire_routing_pass' <<<"${test_output}"; then
-    exit "${test_status}"
-  fi
-  echo "PASS with one known Classic Audio refresh-count assertion."
-fi
+PYTHONPATH=src python -m pytest -q
 
 echo "PASS: ${version} source, dual audio-session image wiring, versioning, and release tests are ready."
