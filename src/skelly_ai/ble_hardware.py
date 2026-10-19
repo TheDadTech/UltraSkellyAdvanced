@@ -529,8 +529,15 @@ class BleSkelly:
             start_event = self._prepare_response("BBC0")
             await self._write_locked(ble_protocol.start_media_transfer(len(data), packet_count, name))
             start = await self._wait_response("BBC0", start_event, 8.0)
-            if len(start) >= 6 and int(start[4:6], 16):
-                raise HardwareUnavailable("Skelly rejected the file transfer")
+            start_status = int(start[4:6], 16) if len(start) >= 6 else 0
+            if start_status:
+                self._record(
+                    "media_transfer_rejected",
+                    f"BBC0:{start_status:02X}:{start}",
+                )
+                raise HardwareUnavailable(
+                    f"Skelly rejected the file transfer (BBC0 status {start_status:02X})"
+                )
             written = int(start[6:14], 16) if len(start) >= 14 else 0
             index = min(packet_count, written // chunk_size)
             retries = 0
