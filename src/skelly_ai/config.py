@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="SKELLY_",
-        env_file="/etc/skelly-ai/skelly-ai.env",
+        env_file=os.environ.get("SKELLY_ENV_FILE", "/etc/skelly-ai/skelly-ai.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
