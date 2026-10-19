@@ -183,23 +183,32 @@ def test_ble_media_capacity_response_is_exposed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ble_upload_rejects_file_larger_than_reported_capacity() -> None:
+async def test_ble_upload_does_not_enforce_unverified_capacity_units() -> None:
     hardware = BleSkelly(
         address=FakeDevice.address,
         scanner=FakeScanner,
         client_factory=FakeClient,
     )
 
-    async def capacity_only(command: bytes) -> None:
-        assert command.startswith(bytes.fromhex("AAD2"))
-        hardware._parse_notification("BBD200000001060000000000")
+    async def controller(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200000001060000000000")
+            return
+        if command.startswith(bytes.fromhex("AAC0")):
+            hardware._parse_notification("BBC002000000000000000000E3")
+            return
+        raise AssertionError(f"Unexpected command: {command.hex().upper()}")
 
     hardware._connected = True
     hardware._client = type("ConnectedClient", (), {"is_connected": True})()
-    hardware._write_locked = capacity_only  # type: ignore[method-assign]
+    hardware._write_locked = controller  # type: ignore[method-assign]
 
-    with pytest.raises(HardwareUnavailable, match="remaining media storage"):
+    with pytest.raises(HardwareUnavailable, match=r"BBC0 status 02"):
         await hardware.upload_media("too-big.mp3", b"x" * 1025)
+
+    status = hardware.media_status()
+    assert status["capacity_raw"] == 1
+    assert status["capacity_kb_remaining"] is None
 
 
 @pytest.mark.asyncio
