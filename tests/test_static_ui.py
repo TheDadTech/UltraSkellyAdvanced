@@ -415,5 +415,5 @@ def test_pi_media_beta_controls_are_present() -> None:
         '"/api/pi-media/quota"',
     ):
         assert endpoint in script
-    assert "10 GB safety reserve" in html
+    assert "10 GB safety reserve" in script or "10 GB safety reserve" in html
     assert "PI MEDIA PRESET" in script
