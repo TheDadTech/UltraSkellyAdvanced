@@ -2552,6 +2552,14 @@ def create_app(
     async def hardware_status() -> dict[str, object]:
         return hardware.snapshot().to_dict()
 
+    @app.get("/api/hardware/events")
+    async def hardware_events(limit: int = 50) -> dict[str, object]:
+        safe_limit = max(1, min(100, limit))
+        return {
+            "events": hardware.recent_events(safe_limit),
+            "count": len(hardware.recent_events(safe_limit)),
+        }
+
     @app.get("/api/media/status")
     async def media_status() -> dict[str, object]:
         return enrich_media_status(hardware.media_status())
