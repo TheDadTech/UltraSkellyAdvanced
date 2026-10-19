@@ -1599,7 +1599,11 @@ async function refreshMediaFromSkelly() {
   try {
     const body = await request("/api/media/refresh", { method: "POST" });
     renderMediaStatus(body);
-    mediaResult.textContent = `${body.file_count} media file${body.file_count === 1 ? "" : "s"} found.`;
+    const capacity = Number(body.capacity_kb_remaining);
+    const capacityText = Number.isFinite(capacity)
+      ? ` · ${capacity.toLocaleString()} KB media storage remaining`
+      : "";
+    mediaResult.textContent = `${body.file_count} media file${body.file_count === 1 ? "" : "s"} found${capacityText}.`;
     return body;
   } finally {
     refreshMedia.disabled = false;
