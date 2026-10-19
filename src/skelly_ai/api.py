@@ -218,6 +218,10 @@ class MediaEnabledRequest(BaseModel):
     enabled: bool
 
 
+class MediaDeleteRequest(BaseModel):
+    serial: int = Field(ge=1, le=65535)
+
+
 def _listening_head_pose(
     camera: dict[str, object],
     *,
@@ -2647,6 +2651,23 @@ def create_app(
         require_manual_hardware_access()
         try:
             return enrich_media_status(await hardware.set_media_enabled(request.serial, request.enabled))
+        except HardwareUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/media/delete")
+    async def media_delete(request: MediaDeleteRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        if request.serial <= 6:
+            raise HTTPException(
+                status_code=409,
+                detail="Factory media files cannot be deleted",
+            )
+        try:
+            status = await hardware.delete_media(request.serial)
+            serials = load_nag_media_serials()
+            serials.discard(request.serial)
+            save_nag_media_serials(serials)
+            return enrich_media_status(status)
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
