@@ -677,7 +677,10 @@ def test_listening_sensitivity_persists_and_updates_microphone_threshold(tmp_pat
     from skelly_ai.sensors import SensorLab
     from skelly_ai.operation_settings import OperationSettingsStore
 
-    sensors = SensorLab(voice_threshold_dbfs=-38.0)
+    sensors = SensorLab(
+        voice_threshold_dbfs=-38.0,
+        speech_model_path=tmp_path / "models" / "vosk-model-small-en-us-0.15",
+    )
     app = create_app(Settings(data_dir=tmp_path), sensor_lab=sensors)
 
     with TestClient(app) as client:
