@@ -24,7 +24,6 @@ class PiMediaLibrary:
         self.data_dir = Path(data_dir)
         self.media_dir = self.data_dir / "media"
         self.state_path = self.data_dir / "pi-media.json"
-        self.media_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     @staticmethod
     def _default_light() -> dict[str, object]:
@@ -49,6 +48,9 @@ class PiMediaLibrary:
             "jaw_sync": True,
             "nag_response": False,
         }
+
+    def _ensure_media_dir(self) -> None:
+        self.media_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _load(self) -> dict[str, object]:
         if not self.state_path.exists():
@@ -81,6 +83,7 @@ class PiMediaLibrary:
         return clean
 
     def _usage_bytes(self) -> int:
+        self._ensure_media_dir()
         total = 0
         for path in self.media_dir.iterdir():
             if path.is_file() and not path.name.startswith("."):
@@ -91,9 +94,11 @@ class PiMediaLibrary:
         return total
 
     def _disk_free(self) -> int:
+        self._ensure_media_dir()
         return int(shutil.disk_usage(self.media_dir).free)
 
     def _files(self) -> list[dict[str, object]]:
+        self._ensure_media_dir()
         state = self._load()
         saved = state["files"]
         changed = False
@@ -149,6 +154,7 @@ class PiMediaLibrary:
         return self.media_dir / str(entry["name"])
 
     def add(self, name: str, data: bytes) -> dict[str, object]:
+        self._ensure_media_dir()
         clean = self._clean_name(name)
         if not data:
             raise PiMediaError("The audio file is empty")
@@ -176,6 +182,7 @@ class PiMediaLibrary:
         return self.get(clean)
 
     def delete(self, name: str) -> None:
+        self._ensure_media_dir()
         clean = self._clean_name(name)
         path = self.media_dir / clean
         if not path.exists():
