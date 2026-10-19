@@ -527,7 +527,12 @@ class BleSkelly:
         async with self._lock:
             self._chunk_resume_from = None
             start_event = self._prepare_response("BBC0")
-            await self._write_locked(ble_protocol.start_media_transfer(len(data), packet_count, name))
+            start_command = ble_protocol.start_media_transfer(len(data), packet_count, name)
+            self._record(
+                "media_transfer_start",
+                f"name={name};size={len(data)};packets={packet_count};aac0={start_command.hex().upper()}",
+            )
+            await self._write_locked(start_command)
             start = await self._wait_response("BBC0", start_event, 8.0)
             start_status = int(start[4:6], 16) if len(start) >= 6 else 0
             if start_status:
