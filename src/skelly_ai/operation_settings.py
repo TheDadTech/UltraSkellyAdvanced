@@ -38,10 +38,12 @@ class OperationSettings(BaseModel):
     trigger_on_face: bool = True
     trigger_on_motion: bool = True
     nag_mode: Literal["disabled", "media", "ai"] = "disabled"
-    nag_delay_seconds: int = Field(default=5, ge=2, le=30)
+    nag_delay_seconds: int = Field(default=2, ge=1, le=30)
     nag_cooldown_seconds: int = Field(default=30, ge=10, le=120)
     nag_max_per_visitor: int = Field(default=2, ge=1, le=5)
     nag_require_presence: bool = True
+    nag_unattended_enabled: bool = False
+    nag_unattended_interval_seconds: int = Field(default=120, ge=60, le=600)
 
     @field_validator("skelly_name", mode="before")
     @classmethod

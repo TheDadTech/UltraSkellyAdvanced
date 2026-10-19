@@ -263,10 +263,85 @@ def wifi_switch_worker() -> None:
 
 
 def wifi_status() -> None:
+    mode = "hotspot" if hotspot_active() else "home"
     payload: dict[str, object] = {
-        "mode": "hotspot" if hotspot_active() else "home",
+        "mode": mode,
         "hotspot_ssid": HOTSPOT_SSID,
+        "ssid": None,
+        "signal_percent": None,
+        "interface": None,
+        "transport": "offline",
+        "connectivity": "none",
+        "internet": False,
     }
+
+    default_route = run("ip", "-4", "route", "show", "default", check=False, timeout=5)
+    for raw in default_route.stdout.splitlines():
+        fields = raw.split()
+        if "dev" not in fields:
+            continue
+        try:
+            interface = fields[fields.index("dev") + 1]
+        except (ValueError, IndexError):
+            continue
+        payload["interface"] = interface
+        if interface.startswith(("eth", "en")):
+            payload["transport"] = "ethernet"
+        elif interface.startswith(("wlan", "wl")):
+            payload["transport"] = "wifi"
+        else:
+            payload["transport"] = "network"
+        break
+
+    connectivity = run(
+        "nmcli", "networking", "connectivity", "check",
+        check=False, timeout=6,
+    )
+    connectivity_state = connectivity.stdout.strip().lower()
+    if connectivity_state in {"full", "limited", "portal", "none", "unknown"}:
+        payload["connectivity"] = connectivity_state
+        payload["internet"] = connectivity_state == "full"
+
+    if payload["transport"] == "wifi":
+        wifi_device = str(payload["interface"] or "wlan0")
+        result = run(
+            "nmcli", "-t", "--escape", "yes",
+            "-f", "IN-USE,SSID,SIGNAL",
+            "device", "wifi", "list", "ifname", wifi_device, "--rescan", "no",
+            check=False,
+        )
+        for raw in result.stdout.splitlines():
+            if not raw.startswith("*:"):
+                continue
+            try:
+                left, signal_text = raw.rsplit(":", 1)
+                _, ssid = left.split(":", 1)
+                payload["ssid"] = ssid.replace(r"\:", ":").replace(r"\\", "\\")
+                payload["signal_percent"] = max(0, min(100, int(signal_text)))
+            except (ValueError, TypeError):
+                pass
+            break
+    elif mode == "home":
+        # Keep the saved WiFi details useful in Setup even when Ethernet owns
+        # the default route.
+        result = run(
+            "nmcli", "-t", "--escape", "yes",
+            "-f", "IN-USE,SSID,SIGNAL",
+            "device", "wifi", "list", "ifname", "wlan0", "--rescan", "no",
+            check=False,
+        )
+        for raw in result.stdout.splitlines():
+            if not raw.startswith("*:"):
+                continue
+            try:
+                left, signal_text = raw.rsplit(":", 1)
+                _, ssid = left.split(":", 1)
+                payload["ssid"] = ssid.replace(r"\:", ":").replace(r"\\", "\\")
+                payload["signal_percent"] = max(0, min(100, int(signal_text)))
+            except (ValueError, TypeError):
+                pass
+            break
+
     try:
         payload["last_result"] = json.loads(WIFI_RESULT.read_text("utf-8"))
     except (OSError, ValueError):

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.25.7">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.2">
   </head>
   <body>
     <main>
@@ -65,11 +65,11 @@
 
       <section class="status-card" aria-label="Live service status">
         <div class="service-status"><span id="pi-status-light" class="status-light waiting"></span><span><small>PI SERVICE</small><strong id="connection">Connecting…</strong></span></div>
+        <div class="service-status"><span id="wifi-status-light" class="status-light waiting"></span><span><small id="header-network-label">NETWORK</small><strong id="header-wifi-status">checking</strong></span></div>
         <div class="service-status"><span id="prop-status-light" class="status-light waiting"></span><span><small>PROP BLE</small><strong id="header-prop-status">checking</strong></span></div>
         <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small id="header-speaker-label">SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
         <div class="service-status"><span id="dac-status-light" class="status-light waiting"></span><span><small>HEAD + JAW</small><strong id="header-dac-status">checking</strong></span></div>
         <div class="service-status"><span id="ai-status-light" class="status-light waiting"></span><span><small>VISITOR MONITOR</small><strong id="header-ai-status">stopped</strong></span></div>
-        <div class="service-status"><span id="fpp-status-light" class="status-light off"></span><span><small>FPP OVERRIDE</small><strong id="header-fpp-status">disabled</strong></span></div>
       </section>
 
       <nav class="dashboard-tabs" role="tablist" aria-label="UltraSkellyAdvanced dashboard">
@@ -235,14 +235,26 @@
           </div>
           <span id="update-version" class="driver-badge neutral">checking</span>
         </div>
+        <div class="provider-control-grid">
+          <div>
+            <span class="label">Update channel</span>
+            <strong id="update-channel-badge" class="driver-badge">Stable</strong>
+            <p id="update-channel-help" class="muted help-copy">Stable is recommended for normal use.</p>
+          </div>
+          <div class="controls">
+            <button id="enable-beta-channel" type="button" class="secondary">Enable Beta releases</button>
+            <button id="use-stable-channel" type="button" class="secondary" hidden>Use Stable channel</button>
+          </div>
+        </div>
         <div class="controls">
           <button id="check-for-updates" type="button" class="secondary">Check for updates</button>
           <button id="install-update" type="button" hidden>Install update</button>
+          <button id="return-stable-update" type="button" class="disconnect" hidden>Return to Stable</button>
           <button id="rollback-update" type="button" class="disconnect" hidden>Roll back</button>
           <a id="download-update" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>View release</a>
         </div>
         <p id="update-result" class="result" aria-live="polite">Reading update settings…</p>
-        <small class="muted help-copy">USA verifies release checksums, automatically restores a failed update, and keeps one previous known-good app version available for manual rollback.</small>
+        <small class="muted help-copy">Beta releases are opt-in and may contain unfinished features or bugs. USA verifies release checksums, automatically restores a failed update, and keeps one previous known-good app version available for manual rollback.</small>
       </section>
 
       <dialog id="forget-skelly-dialog" class="confirmation-dialog">
@@ -290,6 +302,14 @@
           <button id="add-media" type="button">Add audio file</button>
           <input id="media-file-input" type="file" accept="audio/mpeg,.mp3" hidden>
           <input id="media-filter" type="search" placeholder="Filter by name" aria-label="Filter media files">
+        </div>
+        <div id="media-upload-progress" class="media-upload-progress" hidden>
+          <div class="media-upload-progress-heading">
+            <strong id="media-upload-progress-name">Uploading audio</strong>
+            <span id="media-upload-progress-percent">0%</span>
+          </div>
+          <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
+          <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
         </div>
         <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
         <p id="media-result" class="result" aria-live="polite"></p>
@@ -393,11 +413,13 @@
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
               <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Media — Classic clips</option><option value="ai">AI — generated line</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
-              <label><span>Delay before first lure <output id="nag-delay-value">5s</output></span><input id="nag-delay" type="range" min="2" max="30" step="1" value="5"></label>
+              <label><span>Delay before first lure <output id="nag-delay-value">2s</output></span><input id="nag-delay" type="range" min="1" max="30" step="1" value="2"><small class="help-copy">After a passerby is confirmed, lure them before the first listening window.</small></label>
               <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
               <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
+              <label><span>Unattended interval <output id="nag-unattended-interval-value">2m</output></span><input id="nag-unattended-interval" type="range" min="60" max="600" step="30" value="120"><small class="help-copy">How often Skelly may advertise that people can talk to him when nobody is interacting.</small></label>
             </div>
-            <label class="check-setting"><input id="nag-require-presence" type="checkbox" checked><span><strong>Require visitor presence</strong><small class="help-copy">Luring stops as soon as the visitor session ends.</small></span></label>
+            <label class="check-setting"><input id="nag-require-presence" type="checkbox" checked><span><strong>Require visitor presence for visitor lures</strong><small class="help-copy">Visitor-session lures stop as soon as the visitor leaves.</small></span></label>
+            <label class="check-setting"><input id="nag-unattended-enabled" type="checkbox"><span><strong>Allow unattended timer lures</strong><small class="help-copy">Occasionally calls out even when no visitor is detected. Disabled by default.</small></span></label>
             <div class="controls"><button id="save-visitor-engagement" type="button" class="secondary">Save lure settings</button></div>
             <p id="visitor-engagement-result" class="result" aria-live="polite"></p>
           </details>
@@ -859,11 +881,11 @@
       </section>
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
-    <script src="/static/core/store.js?v=0.27.1"></script>
-    <script src="/static/core/status.js?v=0.27.1"></script>
-    <script src="/static/core/header.js?v=0.27.1"></script>
-    <script src="/static/core/audio.js?v=0.27.1"></script>
-    <script src="/static/core/polling.js?v=0.27.1"></script>
-    <script src="/static/app.js?v=0.27.1"></script>
+    <script src="/static/core/store.js?v=0.27.2"></script>
+    <script src="/static/core/status.js?v=0.27.2"></script>
+    <script src="/static/core/header.js?v=0.27.2"></script>
+    <script src="/static/core/audio.js?v=0.27.2"></script>
+    <script src="/static/core/polling.js?v=0.27.2"></script>
+    <script src="/static/app.js?v=0.27.2"></script>
   </body>
 </html>

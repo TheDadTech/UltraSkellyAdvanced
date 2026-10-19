@@ -78,8 +78,12 @@ def test_protocol_commands_match_verified_controller_frames() -> None:
     assert ble_protocol.query_media_order().hex().upper() == (
         "AAD1000000000000000000"
     )
+    assert ble_protocol.query_media_capacity().hex().upper().startswith("AAD2")
     assert ble_protocol.play_media_file(1).hex().upper() == (
         "AAC60001010000000000E7"
+    )
+    assert ble_protocol.delete_media_file(8, 8).hex().upper().startswith(
+        "AAC7000800000008"
     )
     assert ble_protocol.set_volume(100).hex().upper() == (
         "AAFA640000000000000031"
@@ -102,6 +106,160 @@ def test_protocol_commands_match_verified_controller_frames() -> None:
     assert ble_protocol.probe_movement_value(248).hex().upper().startswith("AACAF8")
     with pytest.raises(ValueError, match="steps of 0x08"):
         ble_protocol.probe_movement_bit(3)
+
+
+@pytest.mark.asyncio
+async def test_ble_file_transfer_logs_start_packet_details() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    async def reject_start(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200001000060000000000")
+            return
+        hardware._parse_notification("BBC002000000000000000000E3")
+
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._write_locked = reject_start  # type: ignore[method-assign]
+
+    with pytest.raises(HardwareUnavailable, match=r"BBC0 status 02"):
+        await hardware.upload_media("test.mp3", b"1234")
+
+    start_events = [
+        event for event in hardware._events
+        if event["action"] == "media_transfer_start"
+    ]
+    assert start_events
+    assert "name=test.mp3" in start_events[-1]["value"]
+    assert "size=4" in start_events[-1]["value"]
+    assert "packets=1" in start_events[-1]["value"]
+    assert "aac0=AAC0" in start_events[-1]["value"]
+
+
+@pytest.mark.asyncio
+async def test_ble_file_transfer_reports_bbc0_rejection_status() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    async def reject_start(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200001000060000000000")
+            return
+        assert command.startswith(bytes.fromhex("AAC0"))
+        hardware._parse_notification("BBC002000000000000000000E3")
+
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._write_locked = reject_start  # type: ignore[method-assign]
+
+    with pytest.raises(HardwareUnavailable, match=r"BBC0 status 02"):
+        await hardware.upload_media("test.mp3", b"1234")
+
+    assert hardware._events[-1]["action"] == "media_transfer_rejected"
+    assert hardware._events[-1]["value"].startswith("BBC0:02:")
+
+
+def test_ble_media_capacity_response_is_exposed() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    hardware._parse_notification("BBD200000170060000000000")
+
+    status = hardware.media_status()
+    assert status["capacity_raw"] == 368
+    assert status["capacity_kb_remaining"] is None
+    assert status["capacity_bytes_remaining"] is None
+    assert status["capacity_file_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_ble_upload_does_not_enforce_unverified_capacity_units() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    async def controller(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200000001060000000000")
+            return
+        if command.startswith(bytes.fromhex("AAC0")):
+            hardware._parse_notification("BBC002000000000000000000E3")
+            return
+        raise AssertionError(f"Unexpected command: {command.hex().upper()}")
+
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._write_locked = controller  # type: ignore[method-assign]
+
+    with pytest.raises(HardwareUnavailable, match=r"BBC0 status 02"):
+        await hardware.upload_media("too-big.mp3", b"x" * 1025)
+
+    status = hardware.media_status()
+    assert status["capacity_raw"] == 1
+    assert status["capacity_kb_remaining"] is None
+
+
+@pytest.mark.asyncio
+async def test_ble_delete_protects_factory_media_and_deletes_user_media() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._media_files = {
+        1: {"serial": 1, "cluster": 1, "name": "Default Sound 1.mp3"},
+        8: {"serial": 8, "cluster": 8, "name": "test.mp3"},
+    }
+
+    with pytest.raises(HardwareUnavailable, match="Factory media files cannot be deleted"):
+        await hardware.delete_media(1)
+
+    async def acknowledge_delete(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAC7")):
+            hardware._parse_notification("BBC700000000000000000000")
+            hardware._media_files.pop(8, None)
+            return
+        if command.startswith(bytes.fromhex("AAD0")):
+            return
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200000170060000000000")
+            return
+        if command.startswith(bytes.fromhex("AAD1")):
+            hardware._parse_notification("BBD100000000000000000000")
+
+    hardware._write_locked = acknowledge_delete  # type: ignore[method-assign]
+    status = await hardware.delete_media(8)
+
+    assert all(int(item["serial"]) != 8 for item in status["files"])
+    assert any(event["action"] == "media_delete" for event in hardware._events)
+
+
+@pytest.mark.asyncio
+async def test_ble_upload_cannot_overwrite_factory_audio_name() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+
+    with pytest.raises(HardwareUnavailable, match="Factory media files cannot be overwritten"):
+        await hardware.upload_media("Default Sound 1.mp3", b"1234")
 
 
 def test_ble_file_transfer_tracks_device_resume_request() -> None:

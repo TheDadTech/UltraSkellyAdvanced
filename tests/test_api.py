@@ -297,6 +297,73 @@ def test_update_status_is_safe_without_a_release_channel() -> None:
     assert check_response.json()["current_version"] == status_response.json()["current_version"]
 
 
+def test_beta_update_channel_requires_explicit_acknowledgement(tmp_path) -> None:
+    app = create_app(Settings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": False},
+        )
+        enabled = client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": True},
+        )
+        persisted = client.get("/api/update/status")
+        stable = client.post(
+            "/api/update/channel",
+            json={"channel": "stable", "acknowledged": True},
+        )
+
+    assert rejected.status_code == 422
+    assert enabled.status_code == 200
+    assert enabled.json()["channel"] == "beta"
+    assert enabled.json()["beta_enabled"] is True
+    assert persisted.json()["channel"] == "beta"
+    assert stable.json()["channel"] == "stable"
+
+
+def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) -> None:
+    class Response:
+        def __init__(self, version: str) -> None:
+            self._version = version
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "version": self._version,
+                "package_url": "https://example.test/update.zip",
+                "sha256": "0" * 64,
+            }
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return Response("0.27.3-beta1")
+
+    monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
+    app = create_app(Settings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        client.post(
+            "/api/update/channel",
+            json={"channel": "beta", "acknowledged": True},
+        )
+        checked = client.post("/api/update/check")
+
+    assert checked.status_code == 200
+    assert checked.json()["channel"] == "beta"
+    assert checked.json()["latest_version"] == "0.27.3-beta1"
+    assert checked.json()["update_available"] is True
+
+
 def test_raw_ble_probe_is_hidden_unless_developer_mode_is_enabled() -> None:
     public_app = create_app(Settings())
 
@@ -610,7 +677,10 @@ def test_listening_sensitivity_persists_and_updates_microphone_threshold(tmp_pat
     from skelly_ai.sensors import SensorLab
     from skelly_ai.operation_settings import OperationSettingsStore
 
-    sensors = SensorLab(voice_threshold_dbfs=-38.0)
+    sensors = SensorLab(
+        voice_threshold_dbfs=-38.0,
+        speech_model_path=tmp_path / "models" / "vosk-model-small-en-us-0.15",
+    )
     app = create_app(Settings(data_dir=tmp_path), sensor_lab=sensors)
 
     with TestClient(app) as client:
@@ -738,6 +808,8 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
                 "nag_cooldown_seconds": 45,
                 "nag_max_per_visitor": 4,
                 "nag_require_presence": True,
+                "nag_unattended_enabled": True,
+                "nag_unattended_interval_seconds": 180,
             }
         )
         saved = client.post("/api/operation/settings", json=settings)
@@ -748,6 +820,36 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
     assert body["nag_delay_seconds"] == 7
     assert body["nag_cooldown_seconds"] == 45
     assert body["nag_max_per_visitor"] == 4
+    assert body["nag_unattended_enabled"] is True
+    assert body["nag_unattended_interval_seconds"] == 180
     persisted = OperationSettingsStore(tmp_path).load()
     assert persisted.nag_mode == "media"
     assert persisted.nag_max_per_visitor == 4
+    assert persisted.nag_unattended_enabled is True
+    assert persisted.nag_unattended_interval_seconds == 180
+
+
+def test_factory_media_delete_is_blocked_by_api(tmp_path) -> None:
+    app = create_app(Settings(data_dir=tmp_path), hardware_client=SimulatedSkelly())
+
+    with TestClient(app) as client:
+        response = client.post("/api/media/delete", json={"serial": 1})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Factory media files cannot be deleted"
+
+
+def test_hardware_events_endpoint_returns_recent_events(tmp_path) -> None:
+    hardware = SimulatedSkelly()
+    hardware._record("diagnostic", "one")
+    hardware._record("diagnostic", "two")
+    app = create_app(Settings(data_dir=tmp_path), hardware_client=hardware)
+
+    with TestClient(app) as client:
+        response = client.get("/api/hardware/events?limit=1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["events"][0]["action"] == "diagnostic"
+    assert body["events"][0]["value"] == "two"

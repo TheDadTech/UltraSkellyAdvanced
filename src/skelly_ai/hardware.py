@@ -118,7 +118,9 @@ class SkellyHardware(Protocol):
     async def edit_media(self, serial: int, action: int, eye: int, head_light: dict[str, object], torso_light: dict[str, object]) -> dict[str, object]: ...
     async def set_media_enabled(self, serial: int, enabled: bool) -> dict[str, object]: ...
     async def upload_media(self, name: str, data: bytes) -> dict[str, object]: ...
+    async def delete_media(self, serial: int) -> dict[str, object]: ...
     def media_status(self) -> dict[str, object]: ...
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]: ...
     def snapshot(self) -> HardwareSnapshot: ...
 
 
@@ -178,6 +180,10 @@ class SimulatedSkelly:
     def _require_connected(self) -> None:
         if not self._connected:
             raise HardwareUnavailable("The simulated Skelly is disconnected")
+
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]:
+        safe_limit = max(1, min(100, int(limit)))
+        return list(self._events)[-safe_limit:]
 
     def snapshot(self) -> HardwareSnapshot:
         return HardwareSnapshot(
@@ -284,6 +290,21 @@ class SimulatedSkelly:
             "file_count": len(self._media_files),
             "playing_serial": self._playing_serial,
             "volume": self._volume,
+            "capacity_raw": None,
+            "capacity_kb_remaining": None,
+            "capacity_bytes_remaining": None,
+            "capacity_file_count": len(self._media_files),
+            "capacity_extra": None,
+            "upload_progress": {
+                "active": False,
+                "phase": "idle",
+                "name": None,
+                "bytes_sent": 0,
+                "bytes_total": 0,
+                "packets_sent": 0,
+                "packets_total": 0,
+                "percent": 0,
+            },
             "lights": self._live_lights,
             "refreshing": False,
             "last_error": None,
@@ -344,4 +365,18 @@ class SimulatedSkelly:
         self._require_connected()
         serial = max((int(item["serial"]) for item in self._media_files), default=0) + 1
         self._media_files.append({"serial": serial, "cluster": serial, "length": len(data), "action": 1, "eye": 1, "name": name, "enabled": True, "lights": [{"effect_mode": 1, "brightness": 200, "r": 255, "g": 0, "b": 0, "cycle": False}, {"effect_mode": 1, "brightness": 200, "r": 0, "g": 255, "b": 0, "cycle": False}]})
+        return self.media_status()
+
+
+    async def delete_media(self, serial: int) -> dict[str, object]:
+        self._require_connected()
+        if 1 <= serial <= 6:
+            raise HardwareUnavailable("Factory media files cannot be deleted")
+        before = len(self._media_files)
+        self._media_files = [
+            item for item in self._media_files if int(item["serial"]) != serial
+        ]
+        if len(self._media_files) == before:
+            raise HardwareUnavailable(f"Media file #{serial} is not available")
+        self._record("media_delete", str(serial))
         return self.media_status()

@@ -111,19 +111,42 @@ class SensorLab:
             return self._device_inventory_cache
 
         cameras: list[dict[str, object]] = []
+        camera_candidates: list[dict[str, object]] = []
+        internal_video_prefixes = (
+            "bcm2835-codec",
+            "bcm2835-isp",
+            "rpi-hevc",
+        )
         for device_path in sorted(Path("/dev").glob("video*")):
             name_path = Path("/sys/class/video4linux") / device_path.name / "name"
             try:
                 name = name_path.read_text("utf-8").strip()
             except OSError:
                 name = device_path.name
-            cameras.append(
-                {
-                    "device": str(device_path),
-                    "name": name,
-                    "active": str(device_path) == self.camera_device,
-                }
+            active = str(device_path) == self.camera_device
+            # The Pi exposes codec/ISP helper nodes as /dev/video* devices.
+            # They are not useful camera choices, but never hide the active
+            # configured device even if its driver name is unusual.
+            if not active and name.casefold().startswith(internal_video_prefixes):
+                continue
+            camera_candidates.append(
+                {"device": str(device_path), "name": name, "active": active}
             )
+
+        # Many USB webcams expose several /dev/video* nodes with the same
+        # physical-device name. Show one friendly entry, preferring the active
+        # node so diagnostics remain truthful.
+        seen_camera_names: set[str] = set()
+        for item in sorted(
+            camera_candidates,
+            key=lambda entry: (not bool(entry["active"]), str(entry["device"])),
+        ):
+            key = str(item["name"]).casefold()
+            if key in seen_camera_names:
+                continue
+            seen_camera_names.add(key)
+            cameras.append(item)
+        cameras.sort(key=lambda entry: str(entry["device"]))
 
         microphones: list[dict[str, object]] = []
         arecord = shutil.which("arecord")
@@ -303,7 +326,13 @@ class SensorLab:
             1,
         )
 
-        encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        # Keep detection/tracking coordinates unchanged, but present camera
+        # previews and saved interaction snapshots in the natural visitor-facing
+        # orientation instead of the mirrored capture view.
+        display_frame = cv2.flip(frame, 1)
+        encoded, jpeg = cv2.imencode(
+            ".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 82]
+        )
         if not encoded:
             raise SensorUnavailable("Unable to encode the camera image")
 

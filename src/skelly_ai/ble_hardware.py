@@ -83,6 +83,19 @@ class BleSkelly:
         self._responses: dict[str, str] = {}
         self._chunk_resume_from: int | None = None
         self._media_order: list[int] = []
+        self._media_capacity_kb: int | None = None
+        self._media_capacity_file_count: int | None = None
+        self._media_capacity_extra: int | None = None
+        self._media_upload_progress: dict[str, object] = {
+            "active": False,
+            "phase": "idle",
+            "name": None,
+            "bytes_sent": 0,
+            "bytes_total": 0,
+            "packets_sent": 0,
+            "packets_total": 0,
+            "percent": 0,
+        }
         self._playing_serial: int | None = None
         self._volume = 100
         self._firmware_version: str | None = None
@@ -123,6 +136,22 @@ class BleSkelly:
         if packet.startswith("BBEE") and len(packet) >= 6:
             self._firmware_version = f"v{int(packet[4:6], 16)}"
             self._record("firmware_version", self._firmware_version)
+            return
+        if packet.startswith("BBD2") and len(packet) >= 22:
+            try:
+                self._media_capacity_kb = int(packet[4:12], 16)
+                self._media_capacity_file_count = int(packet[12:14], 16)
+                self._media_capacity_extra = int(packet[14:22], 16)
+                self._record(
+                    "media_capacity",
+                    (
+                        f"raw_value={self._media_capacity_kb};"
+                        f"files={self._media_capacity_file_count};"
+                        f"extra=0x{self._media_capacity_extra:08X}"
+                    ),
+                )
+            except ValueError:
+                pass
             return
         if packet.startswith("BBD1") and len(packet) >= 6:
             count = int(packet[4:6], 16)
@@ -182,6 +211,10 @@ class BleSkelly:
             self._media_event.set()
         except (ValueError, UnicodeError):
             return
+
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]:
+        safe_limit = max(1, min(100, int(limit)))
+        return list(self._events)[-safe_limit:]
 
     def snapshot(self) -> HardwareSnapshot:
         return HardwareSnapshot(
@@ -420,6 +453,12 @@ class BleSkelly:
             "expected_count": self._media_expected,
             "playing_serial": self._playing_serial,
             "volume": self._volume,
+            "capacity_raw": self._media_capacity_kb,
+            "capacity_kb_remaining": None,
+            "capacity_bytes_remaining": None,
+            "capacity_file_count": self._media_capacity_file_count,
+            "capacity_extra": self._media_capacity_extra,
+            "upload_progress": dict(self._media_upload_progress),
             "refreshing": self._media_refreshing,
             "last_error": self._last_error,
         }
@@ -448,6 +487,13 @@ class BleSkelly:
                         break
         finally:
             self._media_refreshing = False
+        async with self._lock:
+            capacity_event = self._prepare_response("BBD2")
+            await self._write_locked(ble_protocol.query_media_capacity())
+        try:
+            await self._wait_response("BBD2", capacity_event, 2.0)
+        except HardwareUnavailable:
+            pass
         async with self._lock:
             order_event = self._prepare_response("BBD1")
             await self._write_locked(ble_protocol.query_media_order())
@@ -519,51 +565,154 @@ class BleSkelly:
                 item["order"] = order.index(value) + 1 if value in order else None
             return self.media_status()
 
+    async def delete_media(self, serial: int) -> dict[str, object]:
+        if 1 <= serial <= 6:
+            raise HardwareUnavailable("Factory media files cannot be deleted")
+        async with self._lock:
+            self._require_connected()
+            item = self._media_files.get(serial)
+            if item is None:
+                raise HardwareUnavailable(f"Media file #{serial} is not available")
+            delete_event = self._prepare_response("BBC7")
+            await self._write_locked(
+                ble_protocol.delete_media_file(serial, int(item["cluster"]))
+            )
+            try:
+                response = await self._wait_response("BBC7", delete_event, 5.0)
+            except HardwareUnavailable:
+                response = ""
+            if response and len(response) >= 6 and int(response[4:6], 16):
+                raise HardwareUnavailable(
+                    f"Skelly rejected the delete request (BBC7 status {int(response[4:6], 16):02X})"
+                )
+            self._record("media_delete", f"{serial}:{item['name']}")
+        return await self.refresh_media_files(timeout=8.0)
+
     async def upload_media(self, name: str, data: bytes) -> dict[str, object]:
         if not data:
             raise HardwareUnavailable("The selected audio file is empty")
+        protected_names = {
+            *(f"default sound {index}.mp3" for index in range(1, 7)),
+            *(
+                str(item.get("name", "")).strip().lower()
+                for serial, item in self._media_files.items()
+                if 1 <= int(serial) <= 6
+            ),
+        }
+        if name.strip().lower() in protected_names:
+            raise HardwareUnavailable("Factory media files cannot be overwritten")
         chunk_size = 250
         packet_count = (len(data) + chunk_size - 1) // chunk_size
-        async with self._lock:
-            self._chunk_resume_from = None
-            start_event = self._prepare_response("BBC0")
-            await self._write_locked(ble_protocol.start_media_transfer(len(data), packet_count, name))
-            start = await self._wait_response("BBC0", start_event, 8.0)
-            if len(start) >= 6 and int(start[4:6], 16):
-                raise HardwareUnavailable("Skelly rejected the file transfer")
-            written = int(start[6:14], 16) if len(start) >= 14 else 0
-            index = min(packet_count, written // chunk_size)
-            retries = 0
-            while index < packet_count:
-                chunk = data[index * chunk_size : (index + 1) * chunk_size]
-                await self._write_locked(ble_protocol.media_transfer_chunk(index, chunk))
-                await asyncio.sleep(0.05)
-                if self._chunk_resume_from is not None:
-                    resume_from = self._chunk_resume_from
-                    self._chunk_resume_from = None
-                    if not 0 <= resume_from < packet_count:
-                        raise HardwareUnavailable("Skelly requested an invalid audio transfer position")
-                    retries += 1
-                    if retries > 8:
-                        raise HardwareUnavailable("Skelly repeatedly rejected audio chunks; please retry")
-                    index = resume_from
-                    continue
-                index += 1
-            end_event = self._prepare_response("BBC2")
-            await self._write_locked(ble_protocol.end_media_transfer())
-            end = await self._wait_response("BBC2", end_event, 180.0)
-            if len(end) >= 6 and int(end[4:6], 16):
-                resume_from = int(end[6:10], 16) if len(end) >= 10 else 0
-                if not 0 <= resume_from < packet_count:
-                    raise HardwareUnavailable("Skelly reported an incomplete file transfer; please retry")
-                for index in range(resume_from, packet_count):
+        self._media_upload_progress = {
+            "active": True,
+            "phase": "checking_capacity",
+            "name": name,
+            "bytes_sent": 0,
+            "bytes_total": len(data),
+            "packets_sent": 0,
+            "packets_total": packet_count,
+            "percent": 0,
+        }
+        try:
+            async with self._lock:
+                capacity_event = self._prepare_response("BBD2")
+                await self._write_locked(ble_protocol.query_media_capacity())
+                try:
+                    await self._wait_response("BBD2", capacity_event, 2.0)
+                except HardwareUnavailable:
+                    pass
+                self._media_upload_progress["phase"] = "starting"
+                self._chunk_resume_from = None
+                start_event = self._prepare_response("BBC0")
+                start_command = ble_protocol.start_media_transfer(len(data), packet_count, name)
+                self._record(
+                    "media_transfer_start",
+                    f"name={name};size={len(data)};packets={packet_count};aac0={start_command.hex().upper()}",
+                )
+                await self._write_locked(start_command)
+                start = await self._wait_response("BBC0", start_event, 8.0)
+                start_status = int(start[4:6], 16) if len(start) >= 6 else 0
+                if start_status:
+                    self._record(
+                        "media_transfer_rejected",
+                        f"BBC0:{start_status:02X}:{start}",
+                    )
+                    raise HardwareUnavailable(
+                        f"Skelly rejected the file transfer (BBC0 status {start_status:02X})"
+                    )
+                written = int(start[6:14], 16) if len(start) >= 14 else 0
+                index = min(packet_count, written // chunk_size)
+                self._media_upload_progress.update(
+                    phase="transferring",
+                    bytes_sent=min(len(data), index * chunk_size),
+                    packets_sent=index,
+                    percent=min(100, round((index / packet_count) * 100)) if packet_count else 100,
+                )
+                retries = 0
+                while index < packet_count:
                     chunk = data[index * chunk_size : (index + 1) * chunk_size]
                     await self._write_locked(ble_protocol.media_transfer_chunk(index, chunk))
-                    await asyncio.sleep(0.012)
-            confirm_event = self._prepare_response("BBC3")
-            await self._write_locked(ble_protocol.confirm_media_transfer(name))
-            confirm = await self._wait_response("BBC3", confirm_event, 8.0)
-            if len(confirm) >= 6 and int(confirm[4:6], 16):
-                raise HardwareUnavailable("Skelly could not save the uploaded file")
-            self._record("media_upload", f"{name}:{len(data)}")
+                    await asyncio.sleep(0.05)
+                    sent_packets = index + 1
+                    self._media_upload_progress.update(
+                        bytes_sent=min(len(data), sent_packets * chunk_size),
+                        packets_sent=sent_packets,
+                        percent=min(100, round((sent_packets / packet_count) * 100)),
+                    )
+                    if self._chunk_resume_from is not None:
+                        resume_from = self._chunk_resume_from
+                        self._chunk_resume_from = None
+                        if not 0 <= resume_from < packet_count:
+                            raise HardwareUnavailable("Skelly requested an invalid audio transfer position")
+                        retries += 1
+                        if retries > 8:
+                            raise HardwareUnavailable("Skelly repeatedly rejected audio chunks; please retry")
+                        index = resume_from
+                        self._media_upload_progress.update(
+                            bytes_sent=min(len(data), index * chunk_size),
+                            packets_sent=index,
+                            percent=min(100, round((index / packet_count) * 100)),
+                        )
+                        continue
+                    index += 1
+                self._media_upload_progress.update(
+                    phase="finishing",
+                    bytes_sent=len(data),
+                    packets_sent=packet_count,
+                    percent=100,
+                )
+                end_event = self._prepare_response("BBC2")
+                await self._write_locked(ble_protocol.end_media_transfer())
+                end = await self._wait_response("BBC2", end_event, 180.0)
+                if len(end) >= 6 and int(end[4:6], 16):
+                    resume_from = int(end[6:10], 16) if len(end) >= 10 else 0
+                    if not 0 <= resume_from < packet_count:
+                        raise HardwareUnavailable("Skelly reported an incomplete file transfer; please retry")
+                    self._media_upload_progress.update(
+                        phase="transferring",
+                        bytes_sent=min(len(data), resume_from * chunk_size),
+                        packets_sent=resume_from,
+                        percent=min(100, round((resume_from / packet_count) * 100)),
+                    )
+                    for resend_index in range(resume_from, packet_count):
+                        chunk = data[resend_index * chunk_size : (resend_index + 1) * chunk_size]
+                        await self._write_locked(ble_protocol.media_transfer_chunk(resend_index, chunk))
+                        await asyncio.sleep(0.012)
+                        sent_packets = resend_index + 1
+                        self._media_upload_progress.update(
+                            bytes_sent=min(len(data), sent_packets * chunk_size),
+                            packets_sent=sent_packets,
+                            percent=min(100, round((sent_packets / packet_count) * 100)),
+                        )
+                    self._media_upload_progress["phase"] = "finishing"
+                confirm_event = self._prepare_response("BBC3")
+                await self._write_locked(ble_protocol.confirm_media_transfer(name))
+                confirm = await self._wait_response("BBC3", confirm_event, 8.0)
+                if len(confirm) >= 6 and int(confirm[4:6], 16):
+                    raise HardwareUnavailable("Skelly could not save the uploaded file")
+                self._record("media_upload", f"{name}:{len(data)}")
+                self._media_upload_progress.update(active=False, phase="complete", percent=100)
+        except Exception:
+            self._media_upload_progress.update(active=False, phase="failed")
+            raise
         return await self.refresh_media_files(timeout=8.0)

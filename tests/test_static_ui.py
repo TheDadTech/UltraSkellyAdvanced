@@ -127,6 +127,8 @@ def test_guided_operation_interface_is_present() -> None:
         'id="mode-launcher-section"',
         'id="speaker-volume"',
         'id="media-library"',
+        'id="media-upload-progress"',
+        'id="media-upload-progress-bar"',
         'id="pi-status-light"',
         'id="header-speaker-status"',
         'id="top-connect-skelly"',
@@ -203,6 +205,10 @@ def test_classic_and_manual_operator_controls_are_present() -> None:
     assert 'request("/api/media/edit"' in script
     assert 'request("/api/media/enabled"' in script
     assert 'fetch(`/api/media/upload?' in script
+    assert 'request("/api/media/delete"' in script
+    assert 'request("/api/media/status")' in script
+    assert "factory · protected" in script
+    assert "mediaUploadProgressBar" in script
     assert "Operator Mode" in html
     assert "AI Mode — Unmanned" in html
     assert 'request("/api/operator/speak"' in script

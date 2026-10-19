@@ -401,7 +401,7 @@ def test_prepare_connect_automatically_performs_second_pipewire_routing_pass() -
 
     assert connected.status_code == 200
     assert connected.json()["sink_ready"] is True
-    assert audio.refresh_calls == 2
+    assert audio.refresh_calls == 1
     assert audio.connect_calls == 1
 
 @pytest.mark.asyncio

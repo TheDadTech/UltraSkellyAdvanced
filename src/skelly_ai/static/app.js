@@ -8,14 +8,12 @@ const headerSpeakerStatus = document.querySelector("#header-speaker-status");
 const headerSpeakerLabel = document.querySelector("#header-speaker-label");
 const headerDacStatus = document.querySelector("#header-dac-status");
 const headerAiStatus = document.querySelector("#header-ai-status");
-const headerFppStatus = document.querySelector("#header-fpp-status");
 const statusLights = {
   pi: document.querySelector("#pi-status-light"),
   prop: document.querySelector("#prop-status-light"),
   speaker: document.querySelector("#speaker-status-light"),
   dac: document.querySelector("#dac-status-light"),
   ai: document.querySelector("#ai-status-light"),
-  fpp: document.querySelector("#fpp-status-light"),
 };
 const operationSettingsForm = document.querySelector("#operation-settings-form");
 const skellyName = document.querySelector("#skelly-name");
@@ -60,6 +58,12 @@ const refreshMedia = document.querySelector("#refresh-media");
 const addMedia = document.querySelector("#add-media");
 const mediaFileInput = document.querySelector("#media-file-input");
 const mediaFilter = document.querySelector("#media-filter");
+const mediaUploadProgress = document.querySelector("#media-upload-progress");
+const mediaUploadProgressName = document.querySelector("#media-upload-progress-name");
+const mediaUploadProgressPercent = document.querySelector("#media-upload-progress-percent");
+const mediaUploadProgressBar = document.querySelector("#media-upload-progress-bar");
+const mediaUploadProgressPhase = document.querySelector("#media-upload-progress-phase");
+let mediaUploadPollTimer = null;
 const mediaEditor = document.querySelector("#media-editor");
 const mediaEditorForm = document.querySelector("#media-editor-form");
 const mediaEditorResult = document.querySelector("#media-editor-result");
@@ -148,6 +152,11 @@ const checkForUpdates = document.querySelector("#check-for-updates");
 const downloadUpdate = document.querySelector("#download-update");
 const installUpdate = document.querySelector("#install-update");
 const rollbackUpdate = document.querySelector("#rollback-update");
+const returnStableUpdate = document.querySelector("#return-stable-update");
+const updateChannelBadge = document.querySelector("#update-channel-badge");
+const updateChannelHelp = document.querySelector("#update-channel-help");
+const enableBetaChannel = document.querySelector("#enable-beta-channel");
+const useStableChannel = document.querySelector("#use-stable-channel");
 let updateMonitorActive = false;
 const cameraAvailability = document.querySelector("#camera-availability");
 const cameraDevice = document.querySelector("#camera-device");
@@ -179,6 +188,9 @@ const nagCooldownValue = document.querySelector("#nag-cooldown-value");
 const nagMax = document.querySelector("#nag-max");
 const nagMaxValue = document.querySelector("#nag-max-value");
 const nagRequirePresence = document.querySelector("#nag-require-presence");
+const nagUnattendedEnabled = document.querySelector("#nag-unattended-enabled");
+const nagUnattendedInterval = document.querySelector("#nag-unattended-interval");
+const nagUnattendedIntervalValue = document.querySelector("#nag-unattended-interval-value");
 const triggerOnAudio = document.querySelector("#trigger-on-audio");
 const triggerOnFace = document.querySelector("#trigger-on-face");
 const triggerOnMotion = document.querySelector("#trigger-on-motion");
@@ -284,6 +296,9 @@ const setupWifiManual = document.querySelector("#setup-wifi-manual");
 const setupWifiPassword = document.querySelector("#setup-wifi-password");
 const setupWifiResult = document.querySelector("#setup-wifi-result");
 const wifiModeStatus = document.querySelector("#wifi-mode-status");
+const headerWifiStatus = document.querySelector("#header-wifi-status");
+const headerNetworkLabel = document.querySelector("#header-network-label");
+const wifiStatusLight = document.querySelector("#wifi-status-light");
 const sshStatus = document.querySelector("#ssh-status");
 const sshPassword = document.querySelector("#ssh-password");
 const sshPersistent = document.querySelector("#ssh-persistent");
@@ -420,7 +435,7 @@ async function request(path, options = {}) {
 }
 
 function setStatusLight(light, state) {
-  light.classList.remove("ok", "error", "off", "waiting");
+  light.classList.remove("ok", "caution", "error", "off", "waiting");
   light.classList.add(state);
 }
 
@@ -513,10 +528,14 @@ function renderOperation(operation) {
   if (document.activeElement !== listeningSensitivity) listeningSensitivity.value = settings.listening_sensitivity ?? 45;
   listeningSensitivityValue.textContent = listeningSensitivity.value;
   if (document.activeElement !== nagMode) nagMode.value = settings.nag_mode || "disabled";
-  if (document.activeElement !== nagDelay) nagDelay.value = settings.nag_delay_seconds ?? 5;
+  if (document.activeElement !== nagDelay) nagDelay.value = settings.nag_delay_seconds ?? 2;
   if (document.activeElement !== nagCooldown) nagCooldown.value = settings.nag_cooldown_seconds ?? 30;
   if (document.activeElement !== nagMax) nagMax.value = settings.nag_max_per_visitor ?? 2;
   nagRequirePresence.checked = settings.nag_require_presence !== false;
+  nagUnattendedEnabled.checked = settings.nag_unattended_enabled === true;
+  if (document.activeElement !== nagUnattendedInterval) {
+    nagUnattendedInterval.value = settings.nag_unattended_interval_seconds ?? 120;
+  }
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
@@ -534,6 +553,7 @@ function renderOperation(operation) {
   nagDelayValue.textContent = `${nagDelay.value}s`;
   nagCooldownValue.textContent = `${nagCooldown.value}s`;
   nagMaxValue.textContent = nagMax.value;
+  nagUnattendedIntervalValue.textContent = formatLureInterval(nagUnattendedInterval.value);
   brainVoiceButton.disabled = !manualMicrophoneEnabled.checked;
   operationProfileState.textContent = settings.hardware_profile === "dac"
     ? "Advanced: DAC + ESP32"
@@ -610,9 +630,6 @@ function renderStatus(body) {
     statusLights.dac,
     profile === "dac" ? (body.dac.armed ? "ok" : "off") : "ok",
   );
-  const fppAllowed = Boolean(body.operation?.settings?.allow_fpp_override);
-  headerFppStatus.textContent = fppAllowed ? "allowed" : "disabled";
-  setStatusLight(statusLights.fpp, fppAllowed ? "ok" : "off");
   topConnectSkelly.disabled = false;
   topConnectSkelly.dataset.connected = String(body.hardware.connected);
   topConnectSkelly.classList.toggle("disconnect", body.hardware.connected);
@@ -756,13 +773,19 @@ function renderDeviceInventory(listElement, devices, emptyText) {
   devices.forEach((device) => {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${device.name || device.device} (${device.device})`;
+    label.textContent = device.name || device.device;
     item.append(label);
     if (device.active) {
       const active = document.createElement("strong");
       active.className = "driver-badge";
       active.textContent = "ACTIVE";
       item.append(" ", active);
+    }
+    if (device.device) {
+      const detail = document.createElement("small");
+      detail.className = "muted";
+      detail.textContent = device.device;
+      item.append(document.createElement("br"), detail);
     }
     listElement.append(item);
   });
@@ -1221,6 +1244,8 @@ function operationSettingsPayload() {
     nag_cooldown_seconds: Number(nagCooldown.value),
     nag_max_per_visitor: Number(nagMax.value),
     nag_require_presence: nagRequirePresence.checked,
+    nag_unattended_enabled: nagUnattendedEnabled.checked,
+    nag_unattended_interval_seconds: Number(nagUnattendedInterval.value),
   };
 }
 
@@ -1232,10 +1257,17 @@ async function saveOperationSettings() {
   });
 }
 
+function formatLureInterval(value) {
+  const seconds = Number(value);
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 [
   [nagDelay, nagDelayValue, (value) => `${value}s`],
   [nagCooldown, nagCooldownValue, (value) => `${value}s`],
   [nagMax, nagMaxValue, (value) => value],
+  [nagUnattendedInterval, nagUnattendedIntervalValue, formatLureInterval],
 ].forEach(([input, output, format]) => {
   input.addEventListener("input", () => { output.textContent = format(input.value); });
 });
@@ -1506,7 +1538,8 @@ function renderMediaStatus(body) {
     title.textContent = file.name || `Media file ${file.serial}`;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `#${file.serial}${file.order ? ` · order ${file.order}` : ""}`;
+    const isFactoryMedia = Number(file.serial) >= 1 && Number(file.serial) <= 6;
+    meta.textContent = `#${file.serial}${file.order ? ` · order ${file.order}` : ""}${isFactoryMedia ? " · factory · protected" : ""}`;
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -1554,6 +1587,31 @@ function renderMediaStatus(body) {
     edit.textContent = "Edit";
     edit.addEventListener("click", () => openMediaEditor(file));
     actions.append(play, edit);
+    if (!isFactoryMedia) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "warning";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", async () => {
+        const displayName = title.textContent || `media file #${file.serial}`;
+        if (!window.confirm(`Delete ${displayName} from Skelly? This cannot be undone.`)) return;
+        remove.disabled = true;
+        mediaResult.textContent = `Deleting ${displayName} from Skelly...`;
+        try {
+          const updated = await request("/api/media/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ serial: Number(file.serial) }),
+          });
+          renderMediaStatus(updated);
+          mediaResult.textContent = `${displayName} was deleted from Skelly.`;
+        } catch (error) {
+          mediaResult.textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      actions.append(remove);
+    }
     row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, actions);
     bodyRows.append(row);
   });
@@ -1592,12 +1650,62 @@ mediaFilter.addEventListener("input", () => {
   if (currentMediaStatus) renderMediaStatus(currentMediaStatus);
 });
 
+function mediaUploadPhaseText(phase) {
+  return {
+    checking_capacity: "Checking Skelly…",
+    starting: "Starting Bluetooth transfer…",
+    transferring: "Sending audio to Skelly…",
+    finishing: "Finishing and saving on Skelly…",
+    complete: "Upload complete.",
+    failed: "Upload failed.",
+  }[phase] || "Preparing transfer…";
+}
+
+function renderMediaUploadProgress(progress, fallbackName = "") {
+  const value = Math.max(0, Math.min(100, Number(progress?.percent ?? 0)));
+  mediaUploadProgress.hidden = false;
+  mediaUploadProgressName.textContent = progress?.name || fallbackName || "Uploading audio";
+  mediaUploadProgressPercent.textContent = `${Math.round(value)}%`;
+  mediaUploadProgressBar.value = value;
+  mediaUploadProgressBar.textContent = `${Math.round(value)}%`;
+  mediaUploadProgressPhase.textContent = mediaUploadPhaseText(progress?.phase);
+}
+
+async function pollMediaUploadProgress(fallbackName) {
+  try {
+    const body = await request("/api/media/status");
+    renderMediaUploadProgress(body.upload_progress || {}, fallbackName);
+  } catch (_error) {
+    // The upload request remains authoritative; a missed progress poll is harmless.
+  }
+}
+
+function startMediaUploadProgress(name) {
+  if (mediaUploadPollTimer) clearInterval(mediaUploadPollTimer);
+  renderMediaUploadProgress({ name, percent: 0, phase: "starting" }, name);
+  mediaUploadPollTimer = setInterval(() => pollMediaUploadProgress(name), 250);
+}
+
+function finishMediaUploadProgress(success, name) {
+  if (mediaUploadPollTimer) {
+    clearInterval(mediaUploadPollTimer);
+    mediaUploadPollTimer = null;
+  }
+  renderMediaUploadProgress(
+    { name, percent: success ? 100 : Number(mediaUploadProgressBar.value || 0), phase: success ? "complete" : "failed" },
+    name,
+  );
+  setTimeout(() => { mediaUploadProgress.hidden = true; }, success ? 1200 : 2500);
+}
+
 addMedia.addEventListener("click", () => mediaFileInput.click());
 mediaFileInput.addEventListener("change", async () => {
   const file = mediaFileInput.files?.[0];
   if (!file) return;
+  let succeeded = false;
   addMedia.disabled = true;
   mediaResult.textContent = `Uploading ${file.name} over Bluetooth. Keep Skelly powered on...`;
+  startMediaUploadProgress(file.name);
   try {
     const response = await fetch(`/api/media/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST",
@@ -1606,11 +1714,13 @@ mediaFileInput.addEventListener("change", async () => {
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
+    succeeded = true;
     renderMediaStatus(body);
     mediaResult.textContent = `${file.name} was saved on Skelly.`;
   } catch (error) {
     mediaResult.textContent = error.message;
   } finally {
+    finishMediaUploadProgress(succeeded, file.name);
     addMedia.disabled = false;
     mediaFileInput.value = "";
   }
@@ -2535,6 +2645,22 @@ function renderUpdateStatus(body) {
   updateVersion.textContent = `version ${body.current_version}`;
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
+  const betaEnabled = body.channel === "beta";
+  if (updateChannelBadge) {
+    updateChannelBadge.textContent = betaEnabled ? "BETA" : "Stable";
+    updateChannelBadge.classList.toggle("neutral", !betaEnabled);
+  }
+  if (updateChannelHelp) {
+    updateChannelHelp.textContent = betaEnabled
+      ? "Beta releases are enabled on this controller."
+      : "Stable is recommended for normal use.";
+  }
+  if (enableBetaChannel) enableBetaChannel.hidden = betaEnabled;
+  if (useStableChannel) useStableChannel.hidden = !betaEnabled;
+  if (returnStableUpdate) {
+    returnStableUpdate.hidden = !body.return_to_stable_available;
+    returnStableUpdate.textContent = "Return to Stable";
+  }
   installUpdate.hidden = !body.update_available || !body.installable;
   installUpdate.dataset.version = body.latest_version || "";
   const rollback = body.rollback || {};
@@ -2571,6 +2697,63 @@ async function refreshUpdateStatus(check = false) {
   });
   renderUpdateStatus(body);
 }
+
+enableBetaChannel?.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Enable Beta releases on this controller?\n\nBeta builds may contain unfinished features or bugs. Stable remains the recommended channel."
+  );
+  if (!confirmed) return;
+  enableBetaChannel.disabled = true;
+  try {
+    const body = await request("/api/update/channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "beta", acknowledged: true }),
+    });
+    renderUpdateStatus(body);
+  } catch (error) {
+    updateResult.textContent = error.message;
+  } finally {
+    enableBetaChannel.disabled = false;
+  }
+});
+
+useStableChannel?.addEventListener("click", async () => {
+  useStableChannel.disabled = true;
+  try {
+    const body = await request("/api/update/channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "stable", acknowledged: true }),
+    });
+    renderUpdateStatus(body);
+  } catch (error) {
+    updateResult.textContent = error.message;
+  } finally {
+    useStableChannel.disabled = false;
+  }
+});
+
+returnStableUpdate?.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Return this controller to the current Stable release?\n\nUSA will download the published Stable package and restart."
+  );
+  if (!confirmed) return;
+  returnStableUpdate.disabled = true;
+  installUpdate.disabled = true;
+  checkForUpdates.disabled = true;
+  updateResult.textContent = "Downloading and verifying the current Stable release…";
+  try {
+    const status = await request("/api/update/return-stable", { method: "POST" });
+    updateResult.textContent = status.message || "Returning to Stable…";
+    await monitorUpdateInstallation();
+  } catch (error) {
+    updateResult.textContent = error.message;
+    returnStableUpdate.disabled = false;
+    installUpdate.disabled = false;
+    checkForUpdates.disabled = false;
+  }
+});
 
 checkForUpdates.addEventListener("click", async () => {
   checkForUpdates.disabled = true;
@@ -2766,15 +2949,82 @@ async function loadWifiNetworks() {
   return scan.networks;
 }
 
+function wifiSignalLabel(percent) {
+  if (!Number.isFinite(percent)) return "connected";
+  if (percent >= 75) return "Excellent";
+  if (percent >= 50) return "Good";
+  if (percent >= 30) return "Fair";
+  return "Weak";
+}
+
 async function refreshWifiStatus() {
   try {
     const body = await request("/api/system/wifi");
-    wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home WiFi";
-    if (wifiSummary) wifiSummary.textContent = body.mode === "hotspot" ? "Setup hotspot active" : "Connected to home WiFi";
+    const transport = body.transport || "offline";
+    const internet = body.internet === true;
+    wifiModeStatus.textContent = body.mode === "hotspot" ? "USA hotspot" : "home network";
+
+    if (headerNetworkLabel) {
+      headerNetworkLabel.textContent = transport === "ethernet"
+        ? "ETHERNET"
+        : transport === "wifi"
+          ? "WIFI"
+          : "NETWORK";
+    }
+
+    const signal = Number(body.signal_percent);
+    const hasSignal = Number.isFinite(signal);
+    const label = wifiSignalLabel(signal);
+
+    if (wifiSummary) {
+      if (transport === "ethernet") {
+        wifiSummary.textContent = internet
+          ? "Ethernet connected · Internet available"
+          : "Ethernet connected · No Internet";
+      } else if (body.mode === "hotspot" && transport === "offline") {
+        wifiSummary.textContent = "Setup hotspot active";
+      } else if (hasSignal) {
+        wifiSummary.textContent = `${body.ssid || "Home WiFi"} · ${signal}% · ${label}${internet ? "" : " · No Internet"}`;
+      } else if (transport === "wifi") {
+        wifiSummary.textContent = internet
+          ? "Connected to home WiFi"
+          : "WiFi connected · No Internet";
+      } else {
+        wifiSummary.textContent = "No active network route";
+      }
+    }
+
+    if (headerWifiStatus) {
+      if (transport === "ethernet") {
+        headerWifiStatus.textContent = internet ? "connected" : "No Internet";
+      } else if (transport === "wifi") {
+        headerWifiStatus.textContent = internet
+          ? (hasSignal ? `${signal}% ${label}` : "connected")
+          : "No Internet";
+      } else if (body.mode === "hotspot") {
+        headerWifiStatus.textContent = "hotspot";
+      } else {
+        headerWifiStatus.textContent = "offline";
+      }
+    }
+
+    if (!internet) {
+      setStatusLight(wifiStatusLight, "error");
+    } else if (transport === "wifi" && hasSignal && signal < 30) {
+      setStatusLight(wifiStatusLight, "error");
+    } else if (transport === "wifi" && hasSignal && signal < 50) {
+      setStatusLight(wifiStatusLight, "caution");
+    } else {
+      setStatusLight(wifiStatusLight, "ok");
+    }
+
     if (wifiSettingsDetails && body.mode !== "hotspot" && !wifiSettingsDetails.dataset.userOpened) wifiSettingsDetails.open = false;
     if (body.last_result?.message) setupWifiResult.textContent = body.last_result.message;
   } catch {
     wifiModeStatus.textContent = "image only";
+    if (headerNetworkLabel) headerNetworkLabel.textContent = "NETWORK";
+    if (headerWifiStatus) headerWifiStatus.textContent = "unavailable";
+    setStatusLight(wifiStatusLight, "error");
   }
 }
 
