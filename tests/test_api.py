@@ -346,7 +346,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
             return None
 
         async def get(self, _url):
-            return Response("0.27.3-beta2")
+            return Response("0.27.3-beta3")
 
     monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
     app = create_app(Settings(data_dir=tmp_path))
@@ -360,7 +360,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
 
     assert checked.status_code == 200
     assert checked.json()["channel"] == "beta"
-    assert checked.json()["latest_version"] == "0.27.3-beta2"
+    assert checked.json()["latest_version"] == "0.27.3-beta3"
     assert checked.json()["update_available"] is True
 
 
