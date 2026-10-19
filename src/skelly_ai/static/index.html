@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.2">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.3-beta1">
   </head>
   <body>
     <main>
@@ -296,23 +296,45 @@
       </section>
 
       <section id="classic-library-section">
-        <div class="section-heading"><div><h2>Classic media</h2><p class="muted help-copy">Sounds stored inside Skelly, including each file's saved eyes, lights, and movement.</p></div></div>
-        <div class="media-toolbar controls">
-          <button id="refresh-media" type="button" class="secondary">Refresh list</button>
-          <button id="add-media" type="button">Add audio file</button>
-          <input id="media-file-input" type="file" accept="audio/mpeg,.mp3" hidden>
-          <input id="media-filter" type="search" placeholder="Filter by name" aria-label="Filter media files">
+        <div class="section-heading"><div><h2>Classic media</h2><p class="muted help-copy">Choose media stored on Skelly or persistent audio stored on this Pi.</p></div></div>
+        <div class="media-source-tabs" role="tablist" aria-label="Classic media source">
+          <button id="show-skelly-media" type="button" class="secondary selected" aria-pressed="true">Skelly Media</button>
+          <button id="show-pi-media" type="button" class="secondary" aria-pressed="false">Pi Media</button>
         </div>
-        <div id="media-upload-progress" class="media-upload-progress" hidden>
-          <div class="media-upload-progress-heading">
-            <strong id="media-upload-progress-name">Uploading audio</strong>
-            <span id="media-upload-progress-percent">0%</span>
+        <div id="skelly-media-panel">
+          <p class="muted help-copy">Sounds stored inside Skelly, including each file's saved eyes, lights, and movement.</p>
+          <div class="media-toolbar controls">
+            <button id="refresh-media" type="button" class="secondary">Refresh list</button>
+            <button id="add-media" type="button">Add audio file</button>
+            <input id="media-file-input" type="file" accept="audio/mpeg,.mp3" hidden>
+            <input id="media-filter" type="search" placeholder="Filter by name" aria-label="Filter Skelly media files">
           </div>
-          <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
-          <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
+          <div id="media-upload-progress" class="media-upload-progress" hidden>
+            <div class="media-upload-progress-heading">
+              <strong id="media-upload-progress-name">Uploading audio</strong>
+              <span id="media-upload-progress-percent">0%</span>
+            </div>
+            <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
+            <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
+          </div>
+          <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
+          <p id="media-result" class="result" aria-live="polite"></p>
         </div>
-        <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
-        <p id="media-result" class="result" aria-live="polite"></p>
+        <div id="pi-media-panel" hidden>
+          <p class="muted help-copy">Audio stored on the Pi. USA plays it through the selected speaker and can drive jaw, eyes, lights, and movement.</p>
+          <div class="media-toolbar controls">
+            <button id="refresh-pi-media" type="button" class="secondary">Refresh list</button>
+            <button id="add-pi-media" type="button">Add audio file</button>
+            <input id="pi-media-file-input" type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
+            <input id="pi-media-filter" type="search" placeholder="Filter by name" aria-label="Filter Pi media files">
+          </div>
+          <div class="pi-media-storage">
+            <div><strong id="pi-media-usage">0 B used of 3 GB</strong><small id="pi-storage-free" class="muted">Checking Pi storage…</small></div>
+            <div class="pi-media-quota-controls"><label>Media limit <input id="pi-media-quota-gb" type="number" min="1" max="1000" step="1" value="3"> GB</label><button id="save-pi-media-quota" type="button" class="secondary">Set limit</button></div>
+          </div>
+          <div id="pi-media-library" class="media-library"><p class="muted help-copy">No Pi Media loaded yet.</p></div>
+          <p id="pi-media-result" class="result" aria-live="polite"></p>
+        </div>
       </section>
 
       <section id="local-brain-section">
@@ -853,13 +875,14 @@
 
       <dialog id="media-editor" class="media-editor">
         <form id="media-editor-form" method="dialog">
-          <div class="section-heading"><div><p class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
-          <input id="media-edit-serial" type="hidden">
+          <div class="section-heading"><div><p id="media-editor-kicker" class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
+          <input id="media-edit-serial" type="hidden"><input id="media-edit-source" type="hidden" value="skelly"><input id="media-edit-name" type="hidden">
           <div class="preset-grid">
             <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label></fieldset>
             <label>Eye<select id="media-edit-eye"></select></label>
           </div>
-          <label class="check-setting"><input id="media-edit-nag-response" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes this Classic clip eligible when Lure Visitors is set to Media.</small></span></label>
+          <label class="check-setting"><input id="media-edit-nag-response" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes this clip eligible when Lure Visitors is set to Media.</small></span></label>
+          <label id="media-edit-jaw-setting" class="check-setting" hidden><input id="media-edit-jaw-sync" type="checkbox" checked><span><strong>Jaw sync</strong><small class="help-copy">Drive Skelly's jaw from this Pi audio file using the same playback path as AI speech.</small></span></label>
           <div class="light-control-grid">
             <fieldset class="light-control" data-edit-light="head"><legend>Head light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
             <fieldset class="light-control" data-edit-light="torso"><legend>Torso light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
@@ -886,6 +909,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.2"></script>
+    <script src="/static/app.js?v=0.27.3-beta1"></script>
   </body>
 </html>

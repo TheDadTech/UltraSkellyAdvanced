@@ -392,3 +392,28 @@ def test_fallback_ui_uses_active_route_and_neutral_center_copy() -> None:
     assert '"Unmuted · Fallback"' in script
     assert '"0 ms"' in script
     assert 'Start together' not in script
+
+def test_pi_media_beta_controls_are_present() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    for marker in (
+        'id="show-skelly-media"',
+        'id="show-pi-media"',
+        'id="pi-media-panel"',
+        'id="pi-media-library"',
+        'id="pi-media-quota-gb"',
+        'id="media-edit-jaw-sync"',
+    ):
+        assert marker in html
+    for endpoint in (
+        '"/api/pi-media/status"',
+        '"/api/pi-media/upload',
+        '"/api/pi-media/play"',
+        '"/api/pi-media/edit"',
+        '"/api/pi-media/delete"',
+        '"/api/pi-media/quota"',
+    ):
+        assert endpoint in script
+    assert "10 GB safety reserve" in html
+    assert "PI MEDIA PRESET" in script

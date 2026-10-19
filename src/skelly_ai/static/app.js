@@ -67,6 +67,20 @@ let mediaUploadPollTimer = null;
 const mediaEditor = document.querySelector("#media-editor");
 const mediaEditorForm = document.querySelector("#media-editor-form");
 const mediaEditorResult = document.querySelector("#media-editor-result");
+const showSkellyMedia = document.querySelector("#show-skelly-media");
+const showPiMedia = document.querySelector("#show-pi-media");
+const skellyMediaPanel = document.querySelector("#skelly-media-panel");
+const piMediaPanel = document.querySelector("#pi-media-panel");
+const piMediaLibrary = document.querySelector("#pi-media-library");
+const piMediaResult = document.querySelector("#pi-media-result");
+const refreshPiMedia = document.querySelector("#refresh-pi-media");
+const addPiMedia = document.querySelector("#add-pi-media");
+const piMediaFileInput = document.querySelector("#pi-media-file-input");
+const piMediaFilter = document.querySelector("#pi-media-filter");
+const piMediaUsage = document.querySelector("#pi-media-usage");
+const piStorageFree = document.querySelector("#pi-storage-free");
+const piMediaQuotaGb = document.querySelector("#pi-media-quota-gb");
+const savePiMediaQuota = document.querySelector("#save-pi-media-quota");
 const classicLibrarySection = document.querySelector("#classic-library-section");
 const localBrainSection = document.querySelector("#local-brain-section");
 const manualPropControls = document.querySelector("#manual-prop-controls");
@@ -311,6 +325,7 @@ let currentControllerMode = "unknown";
 let currentOperationSettings = null;
 let currentOperationMode = "standby";
 let currentMediaStatus = null;
+let currentPiMediaStatus = null;
 let manualCameraPolling = false;
 let perceptionPollingIntervalMs = null;
 let gestureRequestId = 0;
@@ -1726,6 +1741,180 @@ mediaFileInput.addEventListener("change", async () => {
   }
 });
 
+
+function formatBytes(value) {
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(bytes >= 10 * 1024 ** 3 ? 0 : 1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${Math.round(bytes)} B`;
+}
+
+function renderPiMediaStatus(body) {
+  currentPiMediaStatus = body;
+  piMediaLibrary.replaceChildren();
+  const quota = Number(body.quota_bytes || 3 * 1024 ** 3);
+  const usage = Number(body.usage_bytes || 0);
+  piMediaUsage.textContent = `${formatBytes(usage)} used of ${formatBytes(quota)}`;
+  piStorageFree.textContent = `${formatBytes(body.filesystem_free_bytes)} Pi storage free · 10 GB safety reserve`;
+  piMediaQuotaGb.value = String(Math.max(1, Math.round(quota / 1024 ** 3)));
+  const filter = piMediaFilter.value.trim().toLowerCase();
+  const files = (body.files || []).filter((file) => !filter || String(file.name || "").toLowerCase().includes(filter));
+  if (!files.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = filter ? "No Pi Media files match that filter." : "No Pi Media files yet. Add an audio file.";
+    piMediaLibrary.append(empty);
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "media-table pi-media-table";
+  const head = document.createElement("thead");
+  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
+  const rows = document.createElement("tbody");
+  const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
+  files.forEach((file) => {
+    const row = document.createElement("tr");
+    const enabledCell = document.createElement("td");
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = file.enabled !== false;
+    enabled.addEventListener("change", async () => {
+      try {
+        renderPiMediaStatus(await request("/api/pi-media/edit", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...file, enabled: enabled.checked, head_light: file.lights?.[1], torso_light: file.lights?.[0] }),
+        }));
+      } catch (error) {
+        enabled.checked = !enabled.checked;
+        piMediaResult.textContent = error.message;
+      }
+    });
+    enabledCell.append(enabled);
+    const nameCell = document.createElement("td");
+    const title = document.createElement("strong");
+    title.textContent = file.name;
+    const meta = document.createElement("small");
+    meta.className = "muted";
+    meta.textContent = `${formatBytes(file.size)}${file.nag_response ? " · lure" : ""}`;
+    nameCell.append(title, meta);
+    const lightCell = (light) => {
+      const cell = document.createElement("td");
+      const dot = document.createElement("span");
+      dot.className = "color-dot";
+      dot.style.background = light ? `rgb(${light.r}, ${light.g}, ${light.b})` : "#334155";
+      cell.append(dot);
+      return cell;
+    };
+    const movement = document.createElement("td");
+    movement.textContent = movementNames[Number(file.action)] || `Action ${file.action}`;
+    const eye = document.createElement("td");
+    const eyeImage = document.createElement("img");
+    eyeImage.className = "media-eye";
+    eyeImage.src = `/static/eye_icon_${file.eye || 1}.png`;
+    eyeImage.alt = `Eye ${file.eye || 1}`;
+    eye.append(eyeImage, document.createTextNode(String(file.eye || 1)));
+    const jaw = document.createElement("td");
+    jaw.textContent = file.jaw_sync === false ? "Off" : "On";
+    const actions = document.createElement("td");
+    actions.className = "media-actions";
+    const playing = String(body.playing_name || "") === String(file.name);
+    const play = document.createElement("button");
+    play.type = "button";
+    play.className = "secondary";
+    play.textContent = playing ? "■ Stop" : "▶ Play";
+    play.addEventListener("click", async () => {
+      play.disabled = true;
+      try {
+        renderPiMediaStatus(await request("/api/pi-media/play", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: file.name, enabled: !playing }),
+        }));
+        piMediaResult.textContent = playing ? "Pi Media playback stopped." : `${file.name} is playing from the Pi.`;
+      } catch (error) {
+        piMediaResult.textContent = error.message;
+      } finally {
+        play.disabled = false;
+      }
+    });
+    const edit = document.createElement("button");
+    edit.type = "button"; edit.className = "secondary"; edit.textContent = "Edit";
+    edit.addEventListener("click", () => openMediaEditor(file, "pi"));
+    const remove = document.createElement("button");
+    remove.type = "button"; remove.className = "warning"; remove.textContent = "Delete";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm(`Delete ${file.name} from Pi Media? This cannot be undone.`)) return;
+      try {
+        renderPiMediaStatus(await request("/api/pi-media/delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: file.name }),
+        }));
+        piMediaResult.textContent = `${file.name} was deleted from Pi Media.`;
+      } catch (error) { piMediaResult.textContent = error.message; }
+    });
+    actions.append(play, edit, remove);
+    row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
+    rows.append(row);
+  });
+  table.append(head, rows);
+  piMediaLibrary.append(table);
+}
+
+async function refreshPiMediaStatus() {
+  const body = await request("/api/pi-media/status");
+  renderPiMediaStatus(body);
+  return body;
+}
+
+function selectMediaSource(source) {
+  const pi = source === "pi";
+  skellyMediaPanel.hidden = pi;
+  piMediaPanel.hidden = !pi;
+  showSkellyMedia.classList.toggle("selected", !pi);
+  showPiMedia.classList.toggle("selected", pi);
+  showSkellyMedia.setAttribute("aria-pressed", String(!pi));
+  showPiMedia.setAttribute("aria-pressed", String(pi));
+  if (pi) refreshPiMediaStatus().catch((error) => { piMediaResult.textContent = error.message; });
+}
+
+showSkellyMedia.addEventListener("click", () => selectMediaSource("skelly"));
+showPiMedia.addEventListener("click", () => selectMediaSource("pi"));
+refreshPiMedia.addEventListener("click", async () => {
+  try { await refreshPiMediaStatus(); piMediaResult.textContent = "Pi Media refreshed."; }
+  catch (error) { piMediaResult.textContent = error.message; }
+});
+piMediaFilter.addEventListener("input", () => {
+  if (currentPiMediaStatus) renderPiMediaStatus(currentPiMediaStatus);
+});
+addPiMedia.addEventListener("click", () => piMediaFileInput.click());
+piMediaFileInput.addEventListener("change", async () => {
+  const file = piMediaFileInput.files?.[0];
+  if (!file) return;
+  addPiMedia.disabled = true;
+  piMediaResult.textContent = `Saving ${file.name} to Pi Media…`;
+  try {
+    const response = await fetch(`/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
+    renderPiMediaStatus(body);
+    piMediaResult.textContent = `${file.name} was saved to Pi Media.`;
+  } catch (error) { piMediaResult.textContent = error.message; }
+  finally { addPiMedia.disabled = false; piMediaFileInput.value = ""; }
+});
+savePiMediaQuota.addEventListener("click", async () => {
+  savePiMediaQuota.disabled = true;
+  try {
+    renderPiMediaStatus(await request("/api/pi-media/quota", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quota_gb: Number(piMediaQuotaGb.value) }),
+    }));
+    piMediaResult.textContent = "Pi Media limit updated.";
+  } catch (error) { piMediaResult.textContent = error.message; }
+  finally { savePiMediaQuota.disabled = false; }
+});
+
 function rgbToHex(light, fallback = "#ffffff") {
   if (!light) return fallback;
   return `#${[light.r, light.g, light.b].map((value) => Number(value || 0).toString(16).padStart(2, "0")).join("")}`;
@@ -1744,7 +1933,14 @@ function editLightValues(name) {
   };
 }
 
-function openMediaEditor(file) {
+function openMediaEditor(file, source = "skelly") {
+  const isPi = source === "pi";
+  document.querySelector("#media-edit-source").value = source;
+  document.querySelector("#media-edit-name").value = file.name || "";
+  document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
+  document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
+  document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
+  document.querySelector("#save-media-preset").textContent = isPi ? "Save Pi Media preset" : "Save preset to Skelly";
   document.querySelector("#media-editor-title").textContent = file.name || `Media file ${file.serial}`;
   document.querySelector("#media-edit-serial").value = file.serial;
   const action = Number(file.action ?? 0);
@@ -1783,21 +1979,41 @@ mediaEditorForm.addEventListener("submit", async (event) => {
   submit.disabled = true;
   mediaEditorResult.textContent = "Saving the preset to Skelly...";
   try {
-    const body = await request("/api/media/edit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        serial: Number(document.querySelector("#media-edit-serial").value),
-        action: (document.querySelector("#media-move-head").checked ? 1 : 0)
-          | (document.querySelector("#media-move-arm").checked ? 2 : 0)
-          | (document.querySelector("#media-move-torso").checked ? 4 : 0),
-        nag_response: document.querySelector("#media-edit-nag-response").checked,
-        eye: Number(document.querySelector("#media-edit-eye").value),
-        head_light: editLightValues("head"),
-        torso_light: editLightValues("torso"),
-      }),
-    });
-    renderMediaStatus(body);
+    const source = document.querySelector("#media-edit-source").value;
+    const action = (document.querySelector("#media-move-head").checked ? 1 : 0)
+      | (document.querySelector("#media-move-arm").checked ? 2 : 0)
+      | (document.querySelector("#media-move-torso").checked ? 4 : 0);
+    const common = {
+      action,
+      nag_response: document.querySelector("#media-edit-nag-response").checked,
+      eye: Number(document.querySelector("#media-edit-eye").value),
+      head_light: editLightValues("head"),
+      torso_light: editLightValues("torso"),
+    };
+    if (source === "pi") {
+      const file = (currentPiMediaStatus?.files || []).find((item) => item.name === document.querySelector("#media-edit-name").value);
+      const body = await request("/api/pi-media/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...common,
+          name: document.querySelector("#media-edit-name").value,
+          enabled: file?.enabled !== false,
+          jaw_sync: document.querySelector("#media-edit-jaw-sync").checked,
+        }),
+      });
+      renderPiMediaStatus(body);
+    } else {
+      const body = await request("/api/media/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...common,
+          serial: Number(document.querySelector("#media-edit-serial").value),
+        }),
+      });
+      renderMediaStatus(body);
+    }
     mediaEditorResult.textContent = "Preset saved.";
     setTimeout(() => mediaEditor.close(), 500);
   } catch (error) {
