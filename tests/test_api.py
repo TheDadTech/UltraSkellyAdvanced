@@ -827,3 +827,19 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
     assert persisted.nag_max_per_visitor == 4
     assert persisted.nag_unattended_enabled is True
     assert persisted.nag_unattended_interval_seconds == 180
+
+
+def test_hardware_events_endpoint_returns_recent_events(tmp_path) -> None:
+    hardware = SimulatedSkelly()
+    hardware._record("diagnostic", "one")
+    hardware._record("diagnostic", "two")
+    app = create_app(Settings(data_dir=tmp_path), hardware_client=hardware)
+
+    with TestClient(app) as client:
+        response = client.get("/api/hardware/events?limit=1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["events"][0]["action"] == "diagnostic"
+    assert body["events"][0]["value"] == "two"
