@@ -158,6 +158,7 @@ section {
   box-shadow: 0 0 0 4px rgba(105, 124, 150, 0.12);
 }
 .status-light.ok { background: var(--green); box-shadow: 0 0 0 4px rgba(72, 199, 142, 0.12); }
+.status-light.caution { background: var(--orange-bright); box-shadow: 0 0 0 4px rgba(234, 130, 48, 0.14); }
 .status-light.error { background: var(--red); box-shadow: 0 0 0 4px rgba(220, 101, 113, 0.12); }
 .status-light.off { background: #607189; box-shadow: none; }
 .status-light.waiting { background: var(--amber); animation: thinking-pulse 1s ease-in-out infinite alternate; }
