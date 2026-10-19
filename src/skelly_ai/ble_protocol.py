@@ -82,6 +82,14 @@ def play_media_file(serial: int, enabled: bool = True) -> bytes:
     return build_command("AAC6", f"{serial:04X}{1 if enabled else 0:02X}")
 
 
+def delete_media_file(serial: int, cluster: int) -> bytes:
+    if not 0 <= serial <= 0xFFFF:
+        raise ValueError("Media serial must fit in two bytes")
+    if not 0 <= cluster <= 0xFFFFFFFF:
+        raise ValueError("Media cluster must fit in four bytes")
+    return build_command("AAC7", f"{serial:04X}{cluster:08X}")
+
+
 def set_volume(volume: int) -> bytes:
     if not 0 <= volume <= 100:
         raise ValueError("Skelly volume must be between 0 and 100")
