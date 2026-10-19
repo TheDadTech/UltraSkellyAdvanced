@@ -290,6 +290,7 @@ class SimulatedSkelly:
             "file_count": len(self._media_files),
             "playing_serial": self._playing_serial,
             "volume": self._volume,
+            "capacity_raw": None,
             "capacity_kb_remaining": None,
             "capacity_bytes_remaining": None,
             "capacity_file_count": len(self._media_files),
