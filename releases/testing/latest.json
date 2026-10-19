@@ -1,8 +1,8 @@
 {
-  "version": "0.27.2-beta3",
+  "version": "0.27.2-beta4",
   "channel": "testing",
-  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.27.2-beta3",
-  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.27.2-beta3",
-  "package_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.27.2-beta3/UltraSkellyAdvanced-0.27.2-beta3.zip",
-  "sha256": "3d8d219a0dbfc1e99d6bdfb6299ec7b618ed382790bfbbdd65b71332dc1b298e"
+  "download_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.27.2-beta4",
+  "release_notes_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/tag/v0.27.2-beta4",
+  "package_url": "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.27.2-beta4/UltraSkellyAdvanced-0.27.2-beta4.zip",
+  "sha256": "f3886f08be41caecac89d231d397cdabe040de4ca0a0fc80e9f8bc84695cd329"
 }
