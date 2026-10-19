@@ -829,6 +829,16 @@ def test_visitor_nag_settings_persist(tmp_path) -> None:
     assert persisted.nag_unattended_interval_seconds == 180
 
 
+def test_factory_media_delete_is_blocked_by_api(tmp_path) -> None:
+    app = create_app(Settings(data_dir=tmp_path), hardware_client=SimulatedSkelly())
+
+    with TestClient(app) as client:
+        response = client.post("/api/media/delete", json={"serial": 1})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Factory media files cannot be deleted"
+
+
 def test_hardware_events_endpoint_returns_recent_events(tmp_path) -> None:
     hardware = SimulatedSkelly()
     hardware._record("diagnostic", "one")
