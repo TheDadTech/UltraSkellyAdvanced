@@ -236,6 +236,7 @@ class PiMediaEditRequest(BaseModel):
     head_light: LightSettings = Field(default_factory=LightSettings)
     torso_light: LightSettings = Field(default_factory=LightSettings)
     jaw_sync: bool = True
+    movement_activity: Literal["low", "normal", "high"] = "normal"
     nag_response: bool = False
 
 
@@ -1009,12 +1010,59 @@ def create_app(
             255: Movement.ALL,
         }.get(int(action), Movement.ALL)
 
+    def pi_media_movement_bits(action: int) -> int:
+        return 7 if int(action) == 255 else int(action) & 7
+
+    def movement_for_pi_bits(bits: int) -> Movement:
+        return movement_for_pi_action(bits)
+
+    async def run_pi_media_movement(
+        action: int,
+        activity: str,
+    ) -> None:
+        bits = pi_media_movement_bits(action)
+        if bits == 0:
+            return
+        ranges = {
+            "low": {1: (5.0, 9.0), 2: (15.0, 25.0), 4: (10.0, 18.0)},
+            "normal": {1: (2.0, 5.0), 2: (8.0, 15.0), 4: (5.0, 10.0)},
+            "high": {1: (1.5, 3.0), 2: (5.0, 9.0), 4: (3.0, 6.0)},
+        }
+        timing = ranges.get(activity, ranges["normal"])
+        selected = [bit for bit in (1, 2, 4) if bits & bit]
+        loop = asyncio.get_running_loop()
+
+        # Preserve the familiar immediate opening motion, then keep scheduling
+        # only the movement types selected for this Pi Media preset.
+        await hardware.arm_movement(True)
+        await hardware.set_movement(movement_for_pi_bits(bits))
+        due = {
+            bit: loop.time() + random.uniform(*timing[bit])
+            for bit in selected
+        }
+        while True:
+            next_time = min(due.values())
+            await asyncio.sleep(max(0.0, next_time - loop.time()))
+            now = loop.time()
+            # Nearby triggers are combined so movement looks organic instead of
+            # sending several motor commands back-to-back.
+            firing = [
+                bit for bit in selected
+                if due[bit] <= now + 0.75
+            ]
+            firing_bits = 0
+            for bit in firing:
+                firing_bits |= bit
+                due[bit] = now + random.uniform(*timing[bit])
+            await hardware.set_movement(movement_for_pi_bits(firing_bits))
+
     async def run_pi_media(name: str) -> dict[str, object]:
         nonlocal pi_media_playing_name
         entry = pi_media.get(name)
         if entry.get("enabled", True) is False:
             raise PiMediaError("That Pi media preset is disabled")
         pi_media_playing_name = str(entry["name"])
+        movement_task: asyncio.Task | None = None
         try:
             await hardware.set_eye_index(int(entry.get("eye", 1)))
             lights = entry.get("lights") or []
@@ -1030,12 +1078,16 @@ def create_app(
                     int(light.get("effect_mode", 1)),
                     bool(light.get("cycle", False)),
                 )
-            movement = movement_for_pi_action(int(entry.get("action", 255)))
-            if movement is Movement.NONE:
-                await hardware.stop()
+            action = int(entry.get("action", 255))
+            if pi_media_movement_bits(action):
+                movement_task = asyncio.create_task(
+                    run_pi_media_movement(
+                        action,
+                        str(entry.get("movement_activity", "normal")),
+                    )
+                )
             else:
-                await hardware.arm_movement(True)
-                await hardware.set_movement(movement)
+                await hardware.stop()
             await prepare_pi_media_audio_output()
             return await local_speech.play_audio_file(
                 pi_media.path_for(name),
@@ -1044,6 +1096,12 @@ def create_app(
                 jaw_follow=bool(entry.get("jaw_sync", True)),
             )
         finally:
+            if movement_task is not None:
+                movement_task.cancel()
+                try:
+                    await movement_task
+                except asyncio.CancelledError:
+                    pass
             try:
                 await hardware.stop()
             except HardwareUnavailable:
@@ -2876,6 +2934,7 @@ def create_app(
                         request.head_light.model_dump(),
                     ],
                     "jaw_sync": request.jaw_sync,
+                    "movement_activity": request.movement_activity,
                     "nag_response": request.nag_response,
                 },
             )

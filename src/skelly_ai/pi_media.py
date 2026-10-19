@@ -46,6 +46,7 @@ class PiMediaLibrary:
             "eye": 1,
             "lights": [cls._default_light(), cls._default_light()],
             "jaw_sync": True,
+            "movement_activity": "normal",
             "nag_response": False,
         }
 

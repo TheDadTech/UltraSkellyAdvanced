@@ -19,14 +19,16 @@ def test_pi_media_add_edit_delete(tmp_path: Path, monkeypatch) -> None:
     added = library.add("hello.mp3", b"ID3" + b"x" * 200)
     assert added["name"] == "hello.mp3"
     assert added["jaw_sync"] is True
+    assert added["movement_activity"] == "normal"
 
     updated = library.update(
         "hello.mp3",
-        {"action": 3, "eye": 4, "jaw_sync": False, "nag_response": True},
+        {"action": 3, "eye": 4, "jaw_sync": False, "movement_activity": "high", "nag_response": True},
     )
     assert updated["action"] == 3
     assert updated["eye"] == 4
     assert updated["jaw_sync"] is False
+    assert updated["movement_activity"] == "high"
     assert updated["nag_response"] is True
 
     library.delete("hello.mp3")

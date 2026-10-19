@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.3-beta1">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.3-beta2">
   </head>
   <body>
     <main>
@@ -878,7 +878,7 @@
           <div class="section-heading"><div><p id="media-editor-kicker" class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
           <input id="media-edit-serial" type="hidden"><input id="media-edit-source" type="hidden" value="skelly"><input id="media-edit-name" type="hidden">
           <div class="preset-grid">
-            <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label></fieldset>
+            <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label><label id="media-movement-activity-setting" class="movement-activity-setting" hidden><span>Movement activity</span><select id="media-movement-activity"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select><small class="help-copy">Controls how often selected movements retrigger while Pi Media plays.</small></label></fieldset>
             <label>Eye<select id="media-edit-eye"></select></label>
           </div>
           <label class="check-setting"><input id="media-edit-nag-response" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes this clip eligible when Lure Visitors is set to Media.</small></span></label>
@@ -909,6 +909,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.3-beta1"></script>
+    <script src="/static/app.js?v=0.27.3-beta2"></script>
   </body>
 </html>

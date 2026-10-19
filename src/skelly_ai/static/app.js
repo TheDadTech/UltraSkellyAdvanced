@@ -1796,7 +1796,7 @@ function renderPiMediaStatus(body) {
     title.textContent = file.name;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `${formatBytes(file.size)}${file.nag_response ? " · lure" : ""}`;
+    meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -1940,6 +1940,8 @@ function openMediaEditor(file, source = "skelly") {
   document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
   document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
   document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
+  document.querySelector("#media-movement-activity-setting").hidden = !isPi;
+  document.querySelector("#media-movement-activity").value = file.movement_activity || "normal";
   document.querySelector("#save-media-preset").textContent = isPi ? "Save Pi Media preset" : "Save preset to Skelly";
   document.querySelector("#media-editor-title").textContent = file.name || `Media file ${file.serial}`;
   document.querySelector("#media-edit-serial").value = file.serial;
@@ -2000,6 +2002,7 @@ mediaEditorForm.addEventListener("submit", async (event) => {
           name: document.querySelector("#media-edit-name").value,
           enabled: file?.enabled !== false,
           jaw_sync: document.querySelector("#media-edit-jaw-sync").checked,
+          movement_activity: document.querySelector("#media-movement-activity").value,
         }),
       });
       renderPiMediaStatus(body);

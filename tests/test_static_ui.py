@@ -404,6 +404,7 @@ def test_pi_media_beta_controls_are_present() -> None:
         'id="pi-media-library"',
         'id="pi-media-quota-gb"',
         'id="media-edit-jaw-sync"',
+        'id="media-movement-activity"',
     ):
         assert marker in html
     for endpoint in (
@@ -417,3 +418,4 @@ def test_pi_media_beta_controls_are_present() -> None:
         assert endpoint in script
     assert "10 GB safety reserve" in script or "10 GB safety reserve" in html
     assert "PI MEDIA PRESET" in script
+    assert "movement_activity" in script
