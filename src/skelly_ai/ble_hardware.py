@@ -568,9 +568,39 @@ class BleSkelly:
                 item["order"] = order.index(value) + 1 if value in order else None
             return self.media_status()
 
+    async def delete_media(self, serial: int) -> dict[str, object]:
+        if 1 <= serial <= 6:
+            raise HardwareUnavailable("Factory media files cannot be deleted")
+        async with self._lock:
+            self._require_connected()
+            item = self._media_files.get(serial)
+            if item is None:
+                raise HardwareUnavailable(f"Media file #{serial} is not available")
+            delete_event = self._prepare_response("BBC7")
+            await self._write_locked(
+                ble_protocol.delete_media_file(serial, int(item["cluster"]))
+            )
+            try:
+                response = await self._wait_response("BBC7", delete_event, 5.0)
+            except HardwareUnavailable:
+                response = ""
+            if response and len(response) >= 6 and int(response[4:6], 16):
+                raise HardwareUnavailable(
+                    f"Skelly rejected the delete request (BBC7 status {int(response[4:6], 16):02X})"
+                )
+            self._record("media_delete", f"{serial}:{item['name']}")
+        return await self.refresh_media_files(timeout=8.0)
+
     async def upload_media(self, name: str, data: bytes) -> dict[str, object]:
         if not data:
             raise HardwareUnavailable("The selected audio file is empty")
+        protected_names = {
+            str(item.get("name", "")).strip().lower()
+            for serial, item in self._media_files.items()
+            if 1 <= int(serial) <= 6
+        }
+        if name.strip().lower() in protected_names:
+            raise HardwareUnavailable("Factory media files cannot be overwritten")
         chunk_size = 250
         packet_count = (len(data) + chunk_size - 1) // chunk_size
         self._media_upload_progress = {
@@ -591,14 +621,6 @@ class BleSkelly:
                     await self._wait_response("BBD2", capacity_event, 2.0)
                 except HardwareUnavailable:
                     pass
-                if (
-                    self._media_capacity_kb is not None
-                    and len(data) > self._media_capacity_kb * 1024
-                ):
-                    raise HardwareUnavailable(
-                        "The selected audio file is larger than Skelly's remaining "
-                        f"media storage ({self._media_capacity_kb} KB available)"
-                    )
                 self._media_upload_progress["phase"] = "starting"
                 self._chunk_resume_from = None
                 start_event = self._prepare_response("BBC0")
