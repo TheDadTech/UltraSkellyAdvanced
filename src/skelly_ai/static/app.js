@@ -58,6 +58,12 @@ const refreshMedia = document.querySelector("#refresh-media");
 const addMedia = document.querySelector("#add-media");
 const mediaFileInput = document.querySelector("#media-file-input");
 const mediaFilter = document.querySelector("#media-filter");
+const mediaUploadProgress = document.querySelector("#media-upload-progress");
+const mediaUploadProgressName = document.querySelector("#media-upload-progress-name");
+const mediaUploadProgressPercent = document.querySelector("#media-upload-progress-percent");
+const mediaUploadProgressBar = document.querySelector("#media-upload-progress-bar");
+const mediaUploadProgressPhase = document.querySelector("#media-upload-progress-phase");
+let mediaUploadPollTimer = null;
 const mediaEditor = document.querySelector("#media-editor");
 const mediaEditorForm = document.querySelector("#media-editor-form");
 const mediaEditorResult = document.querySelector("#media-editor-result");
@@ -1532,7 +1538,8 @@ function renderMediaStatus(body) {
     title.textContent = file.name || `Media file ${file.serial}`;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `#${file.serial}${file.order ? ` · order ${file.order}` : ""}`;
+    const isFactoryMedia = Number(file.serial) >= 1 && Number(file.serial) <= 6;
+    meta.textContent = `#${file.serial}${file.order ? ` · order ${file.order}` : ""}${isFactoryMedia ? " · factory · protected" : ""}`;
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -1580,6 +1587,31 @@ function renderMediaStatus(body) {
     edit.textContent = "Edit";
     edit.addEventListener("click", () => openMediaEditor(file));
     actions.append(play, edit);
+    if (!isFactoryMedia) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "warning";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", async () => {
+        const displayName = title.textContent || `media file #${file.serial}`;
+        if (!window.confirm(`Delete ${displayName} from Skelly? This cannot be undone.`)) return;
+        remove.disabled = true;
+        mediaResult.textContent = `Deleting ${displayName} from Skelly...`;
+        try {
+          const updated = await request("/api/media/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ serial: Number(file.serial) }),
+          });
+          renderMediaStatus(updated);
+          mediaResult.textContent = `${displayName} was deleted from Skelly.`;
+        } catch (error) {
+          mediaResult.textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      actions.append(remove);
+    }
     row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, actions);
     bodyRows.append(row);
   });
@@ -1599,11 +1631,7 @@ async function refreshMediaFromSkelly() {
   try {
     const body = await request("/api/media/refresh", { method: "POST" });
     renderMediaStatus(body);
-    const capacity = Number(body.capacity_kb_remaining);
-    const capacityText = Number.isFinite(capacity)
-      ? ` · ${capacity.toLocaleString()} KB media storage remaining`
-      : "";
-    mediaResult.textContent = `${body.file_count} media file${body.file_count === 1 ? "" : "s"} found${capacityText}.`;
+    mediaResult.textContent = `${body.file_count} media file${body.file_count === 1 ? "" : "s"} found.`;
     return body;
   } finally {
     refreshMedia.disabled = false;
@@ -1622,12 +1650,62 @@ mediaFilter.addEventListener("input", () => {
   if (currentMediaStatus) renderMediaStatus(currentMediaStatus);
 });
 
+function mediaUploadPhaseText(phase) {
+  return {
+    checking_capacity: "Checking Skelly…",
+    starting: "Starting Bluetooth transfer…",
+    transferring: "Sending audio to Skelly…",
+    finishing: "Finishing and saving on Skelly…",
+    complete: "Upload complete.",
+    failed: "Upload failed.",
+  }[phase] || "Preparing transfer…";
+}
+
+function renderMediaUploadProgress(progress, fallbackName = "") {
+  const value = Math.max(0, Math.min(100, Number(progress?.percent ?? 0)));
+  mediaUploadProgress.hidden = false;
+  mediaUploadProgressName.textContent = progress?.name || fallbackName || "Uploading audio";
+  mediaUploadProgressPercent.textContent = `${Math.round(value)}%`;
+  mediaUploadProgressBar.value = value;
+  mediaUploadProgressBar.textContent = `${Math.round(value)}%`;
+  mediaUploadProgressPhase.textContent = mediaUploadPhaseText(progress?.phase);
+}
+
+async function pollMediaUploadProgress(fallbackName) {
+  try {
+    const body = await request("/api/media/status");
+    renderMediaUploadProgress(body.upload_progress || {}, fallbackName);
+  } catch (_error) {
+    // The upload request remains authoritative; a missed progress poll is harmless.
+  }
+}
+
+function startMediaUploadProgress(name) {
+  if (mediaUploadPollTimer) clearInterval(mediaUploadPollTimer);
+  renderMediaUploadProgress({ name, percent: 0, phase: "starting" }, name);
+  mediaUploadPollTimer = setInterval(() => pollMediaUploadProgress(name), 250);
+}
+
+function finishMediaUploadProgress(success, name) {
+  if (mediaUploadPollTimer) {
+    clearInterval(mediaUploadPollTimer);
+    mediaUploadPollTimer = null;
+  }
+  renderMediaUploadProgress(
+    { name, percent: success ? 100 : Number(mediaUploadProgressBar.value || 0), phase: success ? "complete" : "failed" },
+    name,
+  );
+  setTimeout(() => { mediaUploadProgress.hidden = true; }, success ? 1200 : 2500);
+}
+
 addMedia.addEventListener("click", () => mediaFileInput.click());
 mediaFileInput.addEventListener("change", async () => {
   const file = mediaFileInput.files?.[0];
   if (!file) return;
+  let succeeded = false;
   addMedia.disabled = true;
   mediaResult.textContent = `Uploading ${file.name} over Bluetooth. Keep Skelly powered on...`;
+  startMediaUploadProgress(file.name);
   try {
     const response = await fetch(`/api/media/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST",
@@ -1636,11 +1714,13 @@ mediaFileInput.addEventListener("change", async () => {
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
+    succeeded = true;
     renderMediaStatus(body);
     mediaResult.textContent = `${file.name} was saved on Skelly.`;
   } catch (error) {
     mediaResult.textContent = error.message;
   } finally {
+    finishMediaUploadProgress(succeeded, file.name);
     addMedia.disabled = false;
     mediaFileInput.value = "";
   }
