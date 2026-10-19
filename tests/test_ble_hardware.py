@@ -78,6 +78,7 @@ def test_protocol_commands_match_verified_controller_frames() -> None:
     assert ble_protocol.query_media_order().hex().upper() == (
         "AAD1000000000000000000"
     )
+    assert ble_protocol.query_media_capacity().hex().upper().startswith("AAD2")
     assert ble_protocol.play_media_file(1).hex().upper() == (
         "AAC60001010000000000E7"
     )
@@ -113,6 +114,9 @@ async def test_ble_file_transfer_logs_start_packet_details() -> None:
     )
 
     async def reject_start(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200001000060000000000")
+            return
         hardware._parse_notification("BBC002000000000000000000E3")
 
     hardware._connected = True
@@ -142,6 +146,9 @@ async def test_ble_file_transfer_reports_bbc0_rejection_status() -> None:
     )
 
     async def reject_start(command: bytes) -> None:
+        if command.startswith(bytes.fromhex("AAD2")):
+            hardware._parse_notification("BBD200001000060000000000")
+            return
         assert command.startswith(bytes.fromhex("AAC0"))
         hardware._parse_notification("BBC002000000000000000000E3")
 
@@ -154,6 +161,41 @@ async def test_ble_file_transfer_reports_bbc0_rejection_status() -> None:
 
     assert hardware._events[-1]["action"] == "media_transfer_rejected"
     assert hardware._events[-1]["value"].startswith("BBC0:02:")
+
+
+def test_ble_media_capacity_response_is_exposed() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    hardware._parse_notification("BBD200000170060000000000")
+
+    status = hardware.media_status()
+    assert status["capacity_kb_remaining"] == 368
+    assert status["capacity_bytes_remaining"] == 368 * 1024
+    assert status["capacity_file_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_ble_upload_rejects_file_larger_than_reported_capacity() -> None:
+    hardware = BleSkelly(
+        address=FakeDevice.address,
+        scanner=FakeScanner,
+        client_factory=FakeClient,
+    )
+
+    async def capacity_only(command: bytes) -> None:
+        assert command.startswith(bytes.fromhex("AAD2"))
+        hardware._parse_notification("BBD200000001060000000000")
+
+    hardware._connected = True
+    hardware._client = type("ConnectedClient", (), {"is_connected": True})()
+    hardware._write_locked = capacity_only  # type: ignore[method-assign]
+
+    with pytest.raises(HardwareUnavailable, match="remaining media storage"):
+        await hardware.upload_media("too-big.mp3", b"x" * 1025)
 
 
 def test_ble_file_transfer_tracks_device_resume_request() -> None:
