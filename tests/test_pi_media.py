@@ -13,8 +13,9 @@ def test_pi_media_defaults_to_three_gib_and_ten_gib_reserve(tmp_path: Path) -> N
     assert status["file_count"] == 0
 
 
-def test_pi_media_add_edit_delete(tmp_path: Path) -> None:
+def test_pi_media_add_edit_delete(tmp_path: Path, monkeypatch) -> None:
     library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
     added = library.add("hello.mp3", b"ID3" + b"x" * 200)
     assert added["name"] == "hello.mp3"
     assert added["jaw_sync"] is True
@@ -32,8 +33,9 @@ def test_pi_media_add_edit_delete(tmp_path: Path) -> None:
     assert library.status()["file_count"] == 0
 
 
-def test_pi_media_rejects_duplicate_and_unsupported_files(tmp_path: Path) -> None:
+def test_pi_media_rejects_duplicate_and_unsupported_files(tmp_path: Path, monkeypatch) -> None:
     library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
     library.add("hello.wav", b"RIFF" + b"x" * 200)
     with pytest.raises(PiMediaError, match="already exists"):
         library.add("hello.wav", b"RIFF" + b"y" * 200)
