@@ -83,6 +83,9 @@ class BleSkelly:
         self._responses: dict[str, str] = {}
         self._chunk_resume_from: int | None = None
         self._media_order: list[int] = []
+        self._media_capacity_kb: int | None = None
+        self._media_capacity_file_count: int | None = None
+        self._media_capacity_extra: int | None = None
         self._playing_serial: int | None = None
         self._volume = 100
         self._firmware_version: str | None = None
@@ -123,6 +126,22 @@ class BleSkelly:
         if packet.startswith("BBEE") and len(packet) >= 6:
             self._firmware_version = f"v{int(packet[4:6], 16)}"
             self._record("firmware_version", self._firmware_version)
+            return
+        if packet.startswith("BBD2") and len(packet) >= 22:
+            try:
+                self._media_capacity_kb = int(packet[4:12], 16)
+                self._media_capacity_file_count = int(packet[12:14], 16)
+                self._media_capacity_extra = int(packet[14:22], 16)
+                self._record(
+                    "media_capacity",
+                    (
+                        f"remaining_kb={self._media_capacity_kb};"
+                        f"files={self._media_capacity_file_count};"
+                        f"extra=0x{self._media_capacity_extra:08X}"
+                    ),
+                )
+            except ValueError:
+                pass
             return
         if packet.startswith("BBD1") and len(packet) >= 6:
             count = int(packet[4:6], 16)
@@ -424,6 +443,14 @@ class BleSkelly:
             "expected_count": self._media_expected,
             "playing_serial": self._playing_serial,
             "volume": self._volume,
+            "capacity_kb_remaining": self._media_capacity_kb,
+            "capacity_bytes_remaining": (
+                self._media_capacity_kb * 1024
+                if self._media_capacity_kb is not None
+                else None
+            ),
+            "capacity_file_count": self._media_capacity_file_count,
+            "capacity_extra": self._media_capacity_extra,
             "refreshing": self._media_refreshing,
             "last_error": self._last_error,
         }
@@ -452,6 +479,13 @@ class BleSkelly:
                         break
         finally:
             self._media_refreshing = False
+        async with self._lock:
+            capacity_event = self._prepare_response("BBD2")
+            await self._write_locked(ble_protocol.query_media_capacity())
+        try:
+            await self._wait_response("BBD2", capacity_event, 2.0)
+        except HardwareUnavailable:
+            pass
         async with self._lock:
             order_event = self._prepare_response("BBD1")
             await self._write_locked(ble_protocol.query_media_order())
@@ -529,6 +563,20 @@ class BleSkelly:
         chunk_size = 250
         packet_count = (len(data) + chunk_size - 1) // chunk_size
         async with self._lock:
+            capacity_event = self._prepare_response("BBD2")
+            await self._write_locked(ble_protocol.query_media_capacity())
+            try:
+                await self._wait_response("BBD2", capacity_event, 2.0)
+            except HardwareUnavailable:
+                pass
+            if (
+                self._media_capacity_kb is not None
+                and len(data) > self._media_capacity_kb * 1024
+            ):
+                raise HardwareUnavailable(
+                    "The selected audio file is larger than Skelly's remaining "
+                    f"media storage ({self._media_capacity_kb} KB available)"
+                )
             self._chunk_resume_from = None
             start_event = self._prepare_response("BBC0")
             start_command = ble_protocol.start_media_transfer(len(data), packet_count, name)
