@@ -72,6 +72,10 @@ def query_media_order() -> bytes:
     return build_command("AAD1")
 
 
+def query_media_capacity() -> bytes:
+    return build_command("AAD2")
+
+
 def play_media_file(serial: int, enabled: bool = True) -> bytes:
     if not 0 <= serial <= 0xFFFF:
         raise ValueError("Media serial must fit in two bytes")
