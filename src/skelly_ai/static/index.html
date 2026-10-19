@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.2">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.2-beta6">
   </head>
   <body>
     <main>
@@ -302,6 +302,14 @@
           <button id="add-media" type="button">Add audio file</button>
           <input id="media-file-input" type="file" accept="audio/mpeg,.mp3" hidden>
           <input id="media-filter" type="search" placeholder="Filter by name" aria-label="Filter media files">
+        </div>
+        <div id="media-upload-progress" class="media-upload-progress" hidden>
+          <div class="media-upload-progress-heading">
+            <strong id="media-upload-progress-name">Uploading audio</strong>
+            <span id="media-upload-progress-percent">0%</span>
+          </div>
+          <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
+          <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
         </div>
         <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
         <p id="media-result" class="result" aria-live="polite"></p>
@@ -878,6 +886,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.2"></script>
+    <script src="/static/app.js?v=0.27.2-beta6"></script>
   </body>
 </html>
