@@ -183,6 +183,10 @@ class BleSkelly:
         except (ValueError, UnicodeError):
             return
 
+    def recent_events(self, limit: int = 50) -> list[dict[str, str]]:
+        safe_limit = max(1, min(100, int(limit)))
+        return list(self._events)[-safe_limit:]
+
     def snapshot(self) -> HardwareSnapshot:
         return HardwareSnapshot(
             driver="ble",
