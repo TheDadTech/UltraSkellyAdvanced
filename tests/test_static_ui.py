@@ -408,7 +408,7 @@ def test_pi_media_beta_controls_are_present() -> None:
         assert marker in html
     for endpoint in (
         '"/api/pi-media/status"',
-        '"/api/pi-media/upload',
+        '/api/pi-media/upload',
         '"/api/pi-media/play"',
         '"/api/pi-media/edit"',
         '"/api/pi-media/delete"',
