@@ -255,7 +255,7 @@ class SensorLab:
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             self._face_detector = cv2.CascadeClassifier(cascade_path)
         faces = self._face_detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=8, minSize=(60, 60)
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(50, 50)
         )
 
         if self._hog is None:

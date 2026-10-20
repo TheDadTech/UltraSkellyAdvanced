@@ -441,5 +441,5 @@ def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() 
     sensors = (ROOT / "src" / "skelly_ai" / "sensors.py").read_text(encoding="utf-8")
     assert "display_frame = cv2.flip(frame, 1)" in sensors
     assert 'cv2.putText(\n                display_frame,\n                "face presence"' in sensors
-    assert "minNeighbors=8" in sensors
-    assert "minSize=(60, 60)" in sensors
+    assert "minNeighbors=6" in sensors
+    assert "minSize=(50, 50)" in sensors
