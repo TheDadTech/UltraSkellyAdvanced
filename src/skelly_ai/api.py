@@ -4,6 +4,7 @@ import json
 import os
 import re
 import random
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -54,6 +55,7 @@ from .hardware import (
     SimulatedSkelly,
 )
 from .perception import PerceptionEngine
+from .pi_media import PiMediaError, PiMediaLibrary
 from .operation_settings import (
     OperationSettings,
     OperationSettingsStore,
@@ -220,6 +222,31 @@ class MediaEnabledRequest(BaseModel):
 
 class MediaDeleteRequest(BaseModel):
     serial: int = Field(ge=1, le=65535)
+
+
+class PiMediaPlayRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+
+
+class PiMediaEditRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+    action: int = Field(default=255, ge=0, le=255)
+    eye: int = Field(default=1, ge=1, le=18)
+    head_light: LightSettings = Field(default_factory=LightSettings)
+    torso_light: LightSettings = Field(default_factory=LightSettings)
+    jaw_sync: bool = True
+    movement_activity: Literal["low", "normal", "high"] = "normal"
+    nag_response: bool = False
+
+
+class PiMediaDeleteRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+
+
+class PiMediaQuotaRequest(BaseModel):
+    quota_gb: int = Field(ge=1, le=1000)
 
 
 def _listening_head_pose(
@@ -391,6 +418,9 @@ def create_app(
         ),
     )
     nag_media_path = app_settings.data_dir / "nag-media.json"
+    pi_media = PiMediaLibrary(app_settings.data_dir)
+    pi_media_task: asyncio.Task | None = None
+    pi_media_playing_name: str | None = None
 
     def load_nag_media_serials() -> set[int]:
         if not nag_media_path.exists():
@@ -949,6 +979,152 @@ def create_app(
         except DacUnavailable:
             pass
 
+    async def prepare_pi_media_audio_output() -> None:
+        operation_settings = operation_store.load()
+        if operation_settings.audio_output == "external_bluetooth":
+            external_snapshot = external_audio.snapshot()
+            if not (
+                external_snapshot.connected
+                and (external_snapshot.sink_name or external_snapshot.sink_id)
+            ):
+                try:
+                    external_snapshot = await external_audio.refresh()
+                except AudioOutputUnavailable:
+                    external_snapshot = external_audio.snapshot()
+                if not (
+                    external_snapshot.connected
+                    and (external_snapshot.sink_name or external_snapshot.sink_id)
+                ):
+                    await ensure_skelly_fallback_audio_ready(operation_settings)
+        apply_audio_output_settings()
+
+    def movement_for_pi_action(action: int) -> Movement:
+        return {
+            0: Movement.NONE,
+            1: Movement.HEAD_ONLY,
+            2: Movement.ARMS_ONLY,
+            3: Movement.HEAD_AND_ARMS,
+            4: Movement.TORSO_ONLY,
+            5: Movement.HEAD_AND_TORSO,
+            6: Movement.TORSO_AND_ARMS,
+            7: Movement.ALL,
+            255: Movement.ALL,
+        }.get(int(action), Movement.ALL)
+
+    def pi_media_movement_bits(action: int) -> int:
+        return 7 if int(action) == 255 else int(action) & 7
+
+    def movement_for_pi_bits(bits: int) -> Movement:
+        return movement_for_pi_action(bits)
+
+    async def run_pi_media_movement(
+        action: int,
+        activity: str,
+    ) -> None:
+        bits = pi_media_movement_bits(action)
+        if bits == 0:
+            return
+        ranges = {
+            "low": {1: (5.0, 9.0), 2: (15.0, 25.0), 4: (10.0, 18.0)},
+            "normal": {1: (2.0, 5.0), 2: (8.0, 15.0), 4: (5.0, 10.0)},
+            "high": {1: (1.5, 3.0), 2: (5.0, 9.0), 4: (3.0, 6.0)},
+        }
+        timing = ranges.get(activity, ranges["normal"])
+        selected = [bit for bit in (1, 2, 4) if bits & bit]
+        loop = asyncio.get_running_loop()
+
+        # Preserve the familiar immediate opening motion, then keep scheduling
+        # only the movement types selected for this Pi Media preset.
+        await hardware.arm_movement(True)
+        await hardware.set_movement(movement_for_pi_bits(bits))
+        due = {
+            bit: loop.time() + random.uniform(*timing[bit])
+            for bit in selected
+        }
+        while True:
+            next_time = min(due.values())
+            await asyncio.sleep(max(0.0, next_time - loop.time()))
+            now = loop.time()
+            # Nearby triggers are combined so movement looks organic instead of
+            # sending several motor commands back-to-back.
+            firing = [
+                bit for bit in selected
+                if due[bit] <= now + 0.75
+            ]
+            firing_bits = 0
+            for bit in firing:
+                firing_bits |= bit
+                due[bit] = now + random.uniform(*timing[bit])
+            await hardware.set_movement(movement_for_pi_bits(firing_bits))
+
+    async def run_pi_media(name: str) -> dict[str, object]:
+        nonlocal pi_media_playing_name
+        entry = pi_media.get(name)
+        if entry.get("enabled", True) is False:
+            raise PiMediaError("That Pi media preset is disabled")
+        pi_media_playing_name = str(entry["name"])
+        movement_task: asyncio.Task | None = None
+        try:
+            await hardware.set_eye_index(int(entry.get("eye", 1)))
+            lights = entry.get("lights") or []
+            torso = lights[0] if len(lights) > 0 else {}
+            head = lights[1] if len(lights) > 1 else {}
+            for channel, light in ((0, torso), (1, head)):
+                await hardware.set_lighting(
+                    channel,
+                    int(light.get("brightness", 255)),
+                    int(light.get("r", 255)),
+                    int(light.get("g", 0)),
+                    int(light.get("b", 0)),
+                    int(light.get("effect_mode", 1)),
+                    bool(light.get("cycle", False)),
+                )
+            action = int(entry.get("action", 255))
+            if pi_media_movement_bits(action):
+                movement_task = asyncio.create_task(
+                    run_pi_media_movement(
+                        action,
+                        str(entry.get("movement_activity", "normal")),
+                    )
+                )
+            else:
+                await hardware.stop()
+            await prepare_pi_media_audio_output()
+            return await local_speech.play_audio_file(
+                pi_media.path_for(name),
+                dac,
+                engine=f"pi-media:{name}",
+                jaw_follow=bool(entry.get("jaw_sync", True)),
+            )
+        finally:
+            if movement_task is not None:
+                movement_task.cancel()
+                try:
+                    await movement_task
+                except asyncio.CancelledError:
+                    pass
+            try:
+                await hardware.stop()
+            except HardwareUnavailable:
+                pass
+            pi_media_playing_name = None
+
+    async def stop_pi_media() -> None:
+        nonlocal pi_media_task, pi_media_playing_name
+        task = pi_media_task
+        pi_media_task = None
+        pi_media_playing_name = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        try:
+            await hardware.stop()
+        except HardwareUnavailable:
+            pass
+
     interaction_snapshot_dir = app_settings.data_dir / "interaction-snapshots"
     interaction_snapshot_limit = 100
 
@@ -988,23 +1164,48 @@ def create_app(
                 try:
                     media_status = await hardware.refresh_media_files()
                 except HardwareUnavailable:
-                    return None
-            eligible = [
-                item
+                    media_status = {"files": []}
+            eligible: list[dict[str, object]] = [
+                {**item, "_source": "skelly"}
                 for item in enrich_media_status(media_status).get("files", [])
                 if isinstance(item, dict)
                 and item.get("nag_response") is True
                 and item.get("enabled", True) is not False
             ]
+            eligible.extend(
+                {**item, "_source": "pi"}
+                for item in pi_media.status().get("files", [])
+                if isinstance(item, dict)
+                and item.get("nag_response") is True
+                and item.get("enabled", True) is not False
+            )
             if not eligible:
                 return None
-            previous = getattr(perform_visitor_nag, "_last_media_serial", None)
-            alternatives = [item for item in eligible if int(item.get("serial", -1)) != previous]
+            previous = getattr(perform_visitor_nag, "_last_media_key", None)
+            keyed = [
+                (
+                    f"pi:{item.get('name')}"
+                    if item.get("_source") == "pi"
+                    else f"skelly:{item.get('serial')}"
+                )
+                for item in eligible
+            ]
+            alternatives = [
+                item for item, key in zip(eligible, keyed, strict=False)
+                if key != previous
+            ]
             selected = random.choice(alternatives or eligible)
+            if selected.get("_source") == "pi":
+                name = str(selected["name"])
+                await run_pi_media(name)
+                key = f"pi:{name}"
+                setattr(perform_visitor_nag, "_last_media_key", key)
+                return {"performed": True, "mode": "media", "source": "pi", "name": name}
             serial = int(selected["serial"])
             await hardware.play_media(serial, True)
-            setattr(perform_visitor_nag, "_last_media_serial", serial)
-            return {"performed": True, "mode": "media", "serial": serial}
+            key = f"skelly:{serial}"
+            setattr(perform_visitor_nag, "_last_media_key", key)
+            return {"performed": True, "mode": "media", "source": "skelly", "serial": serial}
 
         prompt = (
             (
@@ -1808,14 +2009,24 @@ def create_app(
     async def update_status() -> dict[str, object]:
         return update_status_payload()
 
-    async def read_update_manifest(channel: str | None = None) -> dict[str, object]:
+    async def read_update_manifest(
+        channel: str | None = None,
+        *,
+        official_stable: bool = False,
+    ) -> dict[str, object]:
         selected_channel = channel or load_update_channel()
-        manifest_url = manifest_url_for_channel(selected_channel)
+        manifest_url = (
+            official_stable_manifest_url
+            if official_stable and selected_channel == "stable"
+            else manifest_url_for_channel(selected_channel)
+        )
         if not manifest_url:
             raise HTTPException(status_code=409, detail="No USA release channel is configured")
+        separator = "&" if "?" in manifest_url else "?"
+        request_url = f"{manifest_url}{separator}usa_cache_bust={time.time_ns()}"
         try:
             async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                response = await client.get(manifest_url)
+                response = await client.get(request_url)
                 response.raise_for_status()
                 manifest = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -1902,7 +2113,7 @@ def create_app(
                 status_code=409,
                 detail="This Pi is already running a stable release",
             )
-        manifest = await read_update_manifest("stable")
+        manifest = await read_update_manifest("stable", official_stable=True)
         stable_version = str(manifest.get("version") or "").strip()
         if not stable_version:
             raise HTTPException(status_code=502, detail="The stable manifest has no version")
@@ -2684,6 +2895,82 @@ def create_app(
             return await hardware.upload_media(clean_name, data)
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/pi-media/status")
+    async def pi_media_status() -> dict[str, object]:
+        return pi_media.status(playing_name=pi_media_playing_name)
+
+    @app.post("/api/pi-media/upload")
+    async def pi_media_upload(request: Request, filename: str) -> dict[str, object]:
+        require_manual_hardware_access()
+        data = await request.body()
+        try:
+            pi_media.add(filename, data)
+            return pi_media.status(playing_name=pi_media_playing_name)
+        except PiMediaError as exc:
+            detail = str(exc)
+            status_code = 409 if "already exists" in detail else 413 if "exceed" in detail or "512 MB" in detail or "reserve" in detail else 422
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    @app.post("/api/pi-media/play")
+    async def pi_media_play(request: PiMediaPlayRequest) -> dict[str, object]:
+        nonlocal pi_media_task
+        require_manual_hardware_access()
+        await stop_pi_media()
+        if request.enabled:
+            try:
+                pi_media.get(request.name)
+            except PiMediaError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            pi_media_task = asyncio.create_task(run_pi_media(request.name))
+            pi_media_task.add_done_callback(
+                lambda task: task.exception()
+                if not task.cancelled() and task.exception() is not None
+                else None
+            )
+        return pi_media.status(playing_name=request.name if request.enabled else None)
+
+    @app.post("/api/pi-media/edit")
+    async def pi_media_edit(request: PiMediaEditRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            pi_media.update(
+                request.name,
+                {
+                    "enabled": request.enabled,
+                    "action": request.action,
+                    "eye": request.eye,
+                    "lights": [
+                        request.torso_light.model_dump(),
+                        request.head_light.model_dump(),
+                    ],
+                    "jaw_sync": request.jaw_sync,
+                    "movement_activity": request.movement_activity,
+                    "nag_response": request.nag_response,
+                },
+            )
+            return pi_media.status(playing_name=pi_media_playing_name)
+        except PiMediaError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/pi-media/delete")
+    async def pi_media_delete(request: PiMediaDeleteRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        if pi_media_playing_name == request.name:
+            await stop_pi_media()
+        try:
+            pi_media.delete(request.name)
+            return pi_media.status(playing_name=pi_media_playing_name)
+        except PiMediaError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/pi-media/quota")
+    async def pi_media_quota(request: PiMediaQuotaRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            return pi_media.set_quota_gb(request.quota_gb)
+        except PiMediaError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/dac/status")
     async def dac_status() -> dict[str, object]:

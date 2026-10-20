@@ -53,6 +53,7 @@ class Movement(StrEnum):
     NONE = "none"
     HEAD_ONLY = "head_only"
     ARMS_ONLY = "arms_only"
+    HEAD_AND_ARMS = "head_and_arms"
     TORSO_ONLY = "torso_only"
     HEAD_AND_TORSO = "head_and_torso"
     TORSO_AND_ARMS = "torso_and_arms"
@@ -63,6 +64,7 @@ MOVEMENT_ACTION = {
     Movement.NONE: 0,
     Movement.HEAD_ONLY: 1,
     Movement.ARMS_ONLY: 2,
+    Movement.HEAD_AND_ARMS: 3,
     Movement.TORSO_ONLY: 4,
     Movement.HEAD_AND_TORSO: 5,
     Movement.TORSO_AND_ARMS: 6,

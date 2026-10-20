@@ -392,3 +392,46 @@ def test_fallback_ui_uses_active_route_and_neutral_center_copy() -> None:
     assert '"Unmuted · Fallback"' in script
     assert '"0 ms"' in script
     assert 'Start together' not in script
+
+def test_pi_media_beta_controls_are_present() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    for marker in (
+        'id="show-skelly-media"',
+        'id="show-pi-media"',
+        'id="pi-media-panel"',
+        'id="pi-media-library"',
+        'id="pi-media-quota-gb"',
+        'id="media-edit-jaw-sync"',
+        'id="media-movement-activity"',
+    ):
+        assert marker in html
+    for endpoint in (
+        '"/api/pi-media/status"',
+        '/api/pi-media/upload',
+        '"/api/pi-media/play"',
+        '"/api/pi-media/edit"',
+        '"/api/pi-media/delete"',
+        '"/api/pi-media/quota"',
+    ):
+        assert endpoint in script
+    assert "10 GB safety reserve" in script or "10 GB safety reserve" in html
+    assert "PI MEDIA PRESET" in script
+    assert "movement_activity" in script
+    assert 'class="media-source-switch"' in html
+    assert 'class="media-source-segmented"' in html
+    assert 'role="radio"' in html
+    assert 'usa.classic.mediaSource' in script
+    assert "localStorage.setItem" in script
+    assert "restoreMediaSource()" in script
+
+
+def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> None:
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    helper = (ROOT / "deploy" / "usa-system-helper.py").read_text(encoding="utf-8")
+    assert "const raw = await response.text()" in script
+    assert "JSON.parse(raw)" in script
+    assert 'body = { detail: raw.trim()' in script
+    assert 'action == "update-clean-stage"' in helper
+    assert "def update_clean_stage" in helper

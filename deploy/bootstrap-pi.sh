@@ -38,6 +38,7 @@ sudo apt-get install -y \
   curl \
   dnsmasq-base \
   espeak-ng \
+  ffmpeg \
   firmware-brcm80211 \
   libspa-0.2-bluetooth \
   network-manager \

@@ -254,6 +254,85 @@ class LocalSpeech:
             finally:
                 wav_path.unlink(missing_ok=True)
 
+    async def play_audio_file(
+        self,
+        source_path: Path,
+        jaw: JawController,
+        *,
+        engine: str = "pi-media",
+        jaw_follow: bool = True,
+    ) -> dict[str, object]:
+        """Play a persistent Pi media file through the proven speech/jaw path."""
+
+        if not source_path.is_file():
+            raise SpeechUnavailable("The Pi media file no longer exists")
+        status = self.status()
+        if not status["player_available"]:
+            raise SpeechUnavailable("pw-play is not installed on this Pi")
+
+        async with self._lock:
+            descriptor, filename = tempfile.mkstemp(
+                prefix="skelly-pi-media-", suffix=".wav"
+            )
+            os.close(descriptor)
+            wav_path = Path(filename)
+            try:
+                if source_path.suffix.casefold() == ".wav":
+                    shutil.copyfile(source_path, wav_path)
+                else:
+                    converter = shutil.which("ffmpeg")
+                    if converter is None:
+                        raise SpeechUnavailable(
+                            "ffmpeg is required to play non-WAV Pi media"
+                        )
+                    process = await asyncio.create_subprocess_exec(
+                        converter,
+                        "-nostdin",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(source_path),
+                        "-c:a",
+                        "pcm_s16le",
+                        str(wav_path),
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        _, stderr = await asyncio.wait_for(
+                            process.communicate(), timeout=120
+                        )
+                    except TimeoutError as exc:
+                        process.kill()
+                        await process.wait()
+                        raise SpeechUnavailable(
+                            "Pi media conversion timed out"
+                        ) from exc
+                    if process.returncode != 0:
+                        detail = stderr.decode(errors="replace").strip()
+                        raise SpeechUnavailable(
+                            detail or "ffmpeg could not decode this Pi media file"
+                        )
+
+                self._prepend_wake_signal(wav_path)
+                envelope, duration = self._jaw_envelope(wav_path)
+                wav_path.chmod(0o644)
+                return await self._play(
+                    wav_path,
+                    envelope,
+                    duration,
+                    jaw,
+                    engine=engine,
+                    cloud_used=False,
+                    jaw_follow_override=jaw_follow,
+                )
+            except (OSError, wave.Error) as exc:
+                raise SpeechUnavailable("The Pi media audio file is invalid") from exc
+            finally:
+                wav_path.unlink(missing_ok=True)
+
     async def play_wav_bytes(
         self,
         audio: bytes,
@@ -724,14 +803,20 @@ class LocalSpeech:
         *,
         engine: str = "espeak-ng",
         cloud_used: bool = False,
+        jaw_follow_override: bool | None = None,
     ) -> dict[str, object]:
         loop = asyncio.get_running_loop()
+        jaw_follow_enabled = (
+            self._jaw_follow_speech
+            if jaw_follow_override is None
+            else bool(jaw_follow_override)
+        )
 
         if self._playback_target_required and not self._playback_target:
             raise SpeechUnavailable("External Bluetooth is connected, but its PipeWire audio output is not ready")
         mirror_process = None
         mirror_stock_jaw = bool(
-            self._jaw_follow_speech
+            jaw_follow_enabled
             and self._jaw_mirror_target
             and not jaw.snapshot().armed
         )
@@ -771,7 +856,7 @@ class LocalSpeech:
                 mirror_process = await start_mirror()
 
         jaw_animated = bool(jaw.snapshot().armed)
-        jaw_animated = jaw_animated and self._jaw_follow_speech and self._jaw_activity_percent > 0
+        jaw_animated = jaw_animated and jaw_follow_enabled and self._jaw_activity_percent > 0
         jaw_error: str | None = None
         last_state = False
         started = loop.time()
@@ -830,7 +915,7 @@ class LocalSpeech:
             "speaker_preroll_ms": round(self._speaker_preroll_seconds * 1000),
             "jaw_animated": jaw_animated,
             "jaw_mirrored_to_skelly": mirror_stock_jaw,
-            "jaw_follow_speech": self._jaw_follow_speech,
+            "jaw_follow_speech": jaw_follow_enabled,
             "jaw_sync_offset_ms": round(self._jaw_sync_offset_seconds * 1000),
             "jaw_error": jaw_error,
             "cloud_used": cloud_used,

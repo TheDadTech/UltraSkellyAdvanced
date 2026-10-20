@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -185,3 +186,71 @@ def test_manual_rollback_starts_allowlisted_helper(tmp_path: Path, monkeypatch: 
 
     assert status["state"] == "rolling_back"
     assert helper_calls == [["sudo", "-n", str(tmp_path / "helper"), "update-rollback", "0.25.5"]]
+
+
+@pytest.mark.asyncio
+async def test_stage_cleanup_falls_back_to_privileged_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = make_release(tmp_path)
+    content = archive.read_bytes()
+    data_dir = tmp_path / "data"
+    stage = data_dir / "updates" / "0.25.1"
+    stage.mkdir(parents=True)
+    (stage / "root-owned-marker").write_text("stale", encoding="utf-8")
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def aiter_bytes(self):
+            yield content
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def stream(self, *_args, **_kwargs):
+            return Response()
+
+    original_rmtree = shutil.rmtree
+    first_remove = True
+    helper_calls: list[list[str]] = []
+
+    def guarded_rmtree(path, *args, **kwargs):
+        nonlocal first_remove
+        if Path(path) == stage and first_remove:
+            first_remove = False
+            raise PermissionError("simulated root-owned staging file")
+        return original_rmtree(path, *args, **kwargs)
+
+    def fake_run(args, **_kwargs):
+        helper_calls.append(args)
+        if args[3:5] == ["update-clean-stage", "0.25.1"]:
+            original_rmtree(stage)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("skelly_ai.updates.httpx.AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setattr("skelly_ai.updates.shutil.rmtree", guarded_rmtree)
+    monkeypatch.setattr("skelly_ai.updates.subprocess.run", fake_run)
+    manager = UpdateManager(data_dir, tmp_path / "helper")
+
+    await manager.stage_and_start(
+        {
+            "version": "0.25.1",
+            "package_url": "https://example.test/usa.zip",
+            "sha256": hashlib.sha256(content).hexdigest(),
+        },
+        current_version="0.25.0",
+    )
+
+    assert any(call[3:5] == ["update-clean-stage", "0.25.1"] for call in helper_calls)
