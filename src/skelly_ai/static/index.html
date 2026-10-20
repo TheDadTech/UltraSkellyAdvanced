@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.3-beta2">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.3-beta3">
   </head>
   <body>
     <main>
@@ -297,9 +297,12 @@
 
       <section id="classic-library-section">
         <div class="section-heading"><div><h2>Classic media</h2><p class="muted help-copy">Choose media stored on Skelly or persistent audio stored on this Pi.</p></div></div>
-        <div class="media-source-tabs" role="tablist" aria-label="Classic media source">
-          <button id="show-skelly-media" type="button" class="secondary selected" aria-pressed="true">Skelly Media</button>
-          <button id="show-pi-media" type="button" class="secondary" aria-pressed="false">Pi Media</button>
+        <div class="media-source-switch" role="group" aria-label="Classic media source">
+          <span class="media-source-switch-label">Media source</span>
+          <div class="media-source-segmented" role="radiogroup" aria-label="Select media source">
+            <button id="show-skelly-media" type="button" role="radio" aria-checked="true" class="selected">Skelly</button>
+            <button id="show-pi-media" type="button" role="radio" aria-checked="false">Pi</button>
+          </div>
         </div>
         <div id="skelly-media-panel">
           <p class="muted help-copy">Sounds stored inside Skelly, including each file's saved eyes, lights, and movement.</p>
@@ -909,6 +912,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.3-beta2"></script>
+    <script src="/static/app.js?v=0.27.3-beta3"></script>
   </body>
 </html>

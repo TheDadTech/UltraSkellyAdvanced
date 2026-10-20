@@ -419,3 +419,9 @@ def test_pi_media_beta_controls_are_present() -> None:
     assert "10 GB safety reserve" in script or "10 GB safety reserve" in html
     assert "PI MEDIA PRESET" in script
     assert "movement_activity" in script
+    assert 'class="media-source-switch"' in html
+    assert 'class="media-source-segmented"' in html
+    assert 'role="radio"' in html
+    assert 'usa.classic.mediaSource' in script
+    assert "localStorage.setItem" in script
+    assert "restoreMediaSource()" in script

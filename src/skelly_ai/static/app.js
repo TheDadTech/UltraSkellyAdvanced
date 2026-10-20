@@ -1866,19 +1866,38 @@ async function refreshPiMediaStatus() {
   return body;
 }
 
-function selectMediaSource(source) {
-  const pi = source === "pi";
+const MEDIA_SOURCE_STORAGE_KEY = "usa.classic.mediaSource";
+
+function selectMediaSource(source, { persist = true } = {}) {
+  const normalized = source === "pi" ? "pi" : "skelly";
+  const pi = normalized === "pi";
   skellyMediaPanel.hidden = pi;
   piMediaPanel.hidden = !pi;
   showSkellyMedia.classList.toggle("selected", !pi);
   showPiMedia.classList.toggle("selected", pi);
-  showSkellyMedia.setAttribute("aria-pressed", String(!pi));
-  showPiMedia.setAttribute("aria-pressed", String(pi));
+  showSkellyMedia.setAttribute("aria-checked", String(!pi));
+  showPiMedia.setAttribute("aria-checked", String(pi));
+  if (persist) {
+    try { window.localStorage.setItem(MEDIA_SOURCE_STORAGE_KEY, normalized); }
+    catch (_error) { /* Persistence is optional; the selector still works. */ }
+  }
   if (pi) refreshPiMediaStatus().catch((error) => { piMediaResult.textContent = error.message; });
+}
+
+function restoreMediaSource() {
+  let source = "skelly";
+  try {
+    const saved = window.localStorage.getItem(MEDIA_SOURCE_STORAGE_KEY);
+    if (saved === "pi" || saved === "skelly") source = saved;
+  } catch (_error) {
+    // Browser storage can be unavailable in private/locked-down modes.
+  }
+  selectMediaSource(source, { persist: false });
 }
 
 showSkellyMedia.addEventListener("click", () => selectMediaSource("skelly"));
 showPiMedia.addEventListener("click", () => selectMediaSource("pi"));
+restoreMediaSource();
 refreshPiMedia.addEventListener("click", async () => {
   try { await refreshPiMediaStatus(); piMediaResult.textContent = "Pi Media refreshed."; }
   catch (error) { piMediaResult.textContent = error.message; }
