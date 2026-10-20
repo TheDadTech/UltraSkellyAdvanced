@@ -425,3 +425,13 @@ def test_pi_media_beta_controls_are_present() -> None:
     assert 'usa.classic.mediaSource' in script
     assert "localStorage.setItem" in script
     assert "restoreMediaSource()" in script
+
+
+def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> None:
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    helper = (ROOT / "deploy" / "usa-system-helper.py").read_text(encoding="utf-8")
+    assert "const raw = await response.text()" in script
+    assert "JSON.parse(raw)" in script
+    assert 'body = { detail: raw.trim()' in script
+    assert 'action == "update-clean-stage"' in helper
+    assert "def update_clean_stage" in helper

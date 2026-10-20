@@ -444,7 +444,15 @@ initializeDashboardTabs();
 
 async function request(path, options = {}) {
   const response = await fetch(path, options);
-  const body = await response.json();
+  const raw = await response.text();
+  let body = {};
+  if (raw) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = { detail: raw.trim() || `Request failed (${response.status})` };
+    }
+  }
   if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
   return body;
 }

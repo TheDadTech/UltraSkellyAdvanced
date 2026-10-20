@@ -439,6 +439,16 @@ def update_status(state: str, message: str, version: str) -> None:
     write_json(UPDATE_STATUS, {"state": state, "message": message, "version": version})
 
 
+def update_clean_stage(version: str) -> None:
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version):
+        raise SystemExit("Invalid update version")
+    stage = (UPDATE_ROOT / version).resolve()
+    if stage.parent != UPDATE_ROOT.resolve():
+        raise SystemExit("The update staging path is not permitted")
+    if stage.exists():
+        shutil.rmtree(stage)
+
+
 def update_install(version: str, source_text: str, current_version: str) -> None:
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version):
         raise SystemExit("Invalid update version")
@@ -895,6 +905,8 @@ def main() -> None:
     elif action == "ssh-disable": ssh_disable()
     elif action == "first-boot-reset": first_boot_reset()
     elif action == "first-boot-reset-worker": first_boot_reset_worker()
+    elif action == "update-clean-stage" and len(sys.argv) == 3:
+        update_clean_stage(sys.argv[2])
     elif action == "update-install" and len(sys.argv) == 5:
         update_install(sys.argv[2], sys.argv[3], sys.argv[4])
     elif action == "update-install-worker" and len(sys.argv) == 5:

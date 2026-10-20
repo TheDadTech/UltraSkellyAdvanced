@@ -95,7 +95,23 @@ class UpdateManager:
         archive = stage / "release.zip"
         source = stage / "source"
         if stage.exists():
-            shutil.rmtree(stage)
+            try:
+                shutil.rmtree(stage)
+            except OSError:
+                result = subprocess.run(
+                    ["sudo", "-n", str(self.helper), "update-clean-stage", version],
+                    text=True,
+                    capture_output=True,
+                    timeout=45,
+                    check=False,
+                )
+                if result.returncode or stage.exists():
+                    message = (
+                        result.stderr
+                        or result.stdout
+                        or "The previous update staging files could not be cleared"
+                    ).strip()
+                    raise UpdateError(message)
         stage.mkdir(parents=True, mode=0o700)
         self._write_status("downloading", f"Downloading USA {version}…", version)
 

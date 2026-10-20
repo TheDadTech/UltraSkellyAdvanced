@@ -4,6 +4,7 @@ import json
 import os
 import re
 import random
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -2008,14 +2009,24 @@ def create_app(
     async def update_status() -> dict[str, object]:
         return update_status_payload()
 
-    async def read_update_manifest(channel: str | None = None) -> dict[str, object]:
+    async def read_update_manifest(
+        channel: str | None = None,
+        *,
+        official_stable: bool = False,
+    ) -> dict[str, object]:
         selected_channel = channel or load_update_channel()
-        manifest_url = manifest_url_for_channel(selected_channel)
+        manifest_url = (
+            official_stable_manifest_url
+            if official_stable and selected_channel == "stable"
+            else manifest_url_for_channel(selected_channel)
+        )
         if not manifest_url:
             raise HTTPException(status_code=409, detail="No USA release channel is configured")
+        separator = "&" if "?" in manifest_url else "?"
+        request_url = f"{manifest_url}{separator}usa_cache_bust={time.time_ns()}"
         try:
             async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                response = await client.get(manifest_url)
+                response = await client.get(request_url)
                 response.raise_for_status()
                 manifest = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -2102,7 +2113,7 @@ def create_app(
                 status_code=409,
                 detail="This Pi is already running a stable release",
             )
-        manifest = await read_update_manifest("stable")
+        manifest = await read_update_manifest("stable", official_stable=True)
         stable_version = str(manifest.get("version") or "").strip()
         if not stable_version:
             raise HTTPException(status_code=502, detail="The stable manifest has no version")
