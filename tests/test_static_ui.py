@@ -435,3 +435,11 @@ def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> N
     assert 'body = { detail: raw.trim()' in script
     assert 'action == "update-clean-stage"' in helper
     assert "def update_clean_stage" in helper
+
+
+def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() -> None:
+    sensors = (ROOT / "src" / "skelly_ai" / "sensors.py").read_text(encoding="utf-8")
+    assert "display_frame = cv2.flip(frame, 1)" in sensors
+    assert 'cv2.putText(\n                display_frame,\n                "face presence"' in sensors
+    assert "minNeighbors=8" in sensors
+    assert "minSize=(60, 60)" in sensors
