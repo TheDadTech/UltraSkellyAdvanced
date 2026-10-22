@@ -1224,6 +1224,21 @@ def create_app(
         result = await respond_automatically(prompt, [])
         return {"performed": True, "mode": "ai", "response": result.get("spoken_response")}
 
+    async def perform_welcome() -> dict[str, object] | None:
+        settings = operation_store.load()
+        message = settings.welcome_message.strip()
+        if not settings.welcome_enabled or not message:
+            return None
+        try:
+            speech = await speak_selected(message)
+        except SpeechUnavailable as exc:
+            return {"performed": False, "error": str(exc)}
+        return {
+            "performed": bool(speech.get("spoken")),
+            "message": message,
+            "speech": speech,
+        }
+
     async def perform_visitor_nag(
         nag_count: int, session_elapsed: float, since_last_nag: float | None
     ) -> dict[str, object] | None:
@@ -1278,6 +1293,7 @@ def create_app(
         session_ended=end_local_session,
         phase_cue=show_local_phase_cue,
         nagger=perform_visitor_nag,
+        welcomer=perform_welcome,
         unattended_nagger=perform_unattended_nag,
         unattended_lure_settings=unattended_lure_settings,
         snapshotter=save_interaction_snapshot,

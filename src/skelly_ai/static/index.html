@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.5">
+    <link rel="stylesheet" href="/static/styles.css?v=0.27.6">
   </head>
   <body>
     <main>
@@ -434,6 +434,13 @@
             <label class="trigger-choice"><input id="trigger-on-motion" type="checkbox" checked><span class="trigger-live-dot" id="trigger-motion-dot" aria-hidden="true"></span><strong>Motion</strong></label>
             <small id="trigger-source-result" class="muted" aria-live="polite"></small>
           </div>
+          <details class="provider-details visitor-engagement-details">
+            <summary>Welcome Message</summary>
+            <label class="check-setting"><input id="welcome-enabled" type="checkbox"><span><strong>Greet a newly detected visitor</strong><small class="help-copy">Plays once when Face or Motion starts a new visitor session. Audio-triggered sessions skip the welcome so Skelly never talks over someone who already spoke.</small></span></label>
+            <label><span>Welcome line</span><input id="welcome-message" type="text" maxlength="180" value="Well, well... somebody wandered into the wrong yard." autocomplete="off"><small class="help-copy">Uses the currently selected speaking voice.</small></label>
+            <div class="controls"><button id="save-welcome-message" type="button" class="secondary">Save welcome message</button></div>
+            <p id="welcome-message-result" class="result" aria-live="polite"></p>
+          </details>
           <details class="provider-details visitor-engagement-details">
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
@@ -912,6 +919,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.5"></script>
+    <script src="/static/app.js?v=0.27.6"></script>
   </body>
 </html>

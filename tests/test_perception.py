@@ -439,3 +439,36 @@ async def test_monitor_accepts_single_word_with_visual_confirmation() -> None:
 
     assert responses[0] == "hello"
     assert stopped["events"][0]["transcript"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_visual_session_uses_welcome_once_before_first_listen() -> None:
+    sensors = FakeSensors([True, True, True, True, False, False, False, False])
+    welcomes = 0
+
+    async def welcome():
+        nonlocal welcomes
+        welcomes += 1
+        return {"performed": True}
+
+    engine = PerceptionEngine(
+        sensors,
+        show_locked=lambda: False,
+        welcomer=welcome,
+        camera_interval_seconds=0.01,
+        conversation_turn_delay_seconds=0.005,
+        presence_confirmations=2,
+        clear_confirmations=2,
+        record_seconds=5,
+        listen_retry_seconds=0.01,
+    )
+    await engine.start()
+    await wait_until(lambda: sensors.transcription_calls >= 1)
+    await engine.stop()
+    assert welcomes == 1
+
+
+def test_active_conversation_turn_delay_defaults_under_half_second() -> None:
+    import inspect
+    signature = inspect.signature(PerceptionEngine)
+    assert signature.parameters["conversation_turn_delay_seconds"].default <= 0.5

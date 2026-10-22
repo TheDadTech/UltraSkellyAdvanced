@@ -443,3 +443,14 @@ def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() 
     assert 'cv2.putText(\n                display_frame,\n                "face presence"' in sensors
     assert "minNeighbors=6" in sensors
     assert "minSize=(50, 50)" in sensors
+
+
+def test_welcome_message_ui_is_exposed_and_persisted() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="welcome-enabled"' in html
+    assert 'id="welcome-message"' in html
+    assert 'id="save-welcome-message"' in html
+    assert "welcome_enabled" in script
+    assert "welcome_message" in script
+    assert "welcoming:" in script

@@ -346,7 +346,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
             return None
 
         async def get(self, _url):
-            return Response("0.27.6-beta1")
+            return Response("0.27.7-beta1")
 
     monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
     app = create_app(Settings(data_dir=tmp_path))
@@ -360,7 +360,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
 
     assert checked.status_code == 200
     assert checked.json()["channel"] == "beta"
-    assert checked.json()["latest_version"] == "0.27.6-beta1"
+    assert checked.json()["latest_version"] == "0.27.7-beta1"
     assert checked.json()["update_available"] is True
 
 
@@ -853,3 +853,27 @@ def test_hardware_events_endpoint_returns_recent_events(tmp_path) -> None:
     assert body["count"] == 1
     assert body["events"][0]["action"] == "diagnostic"
     assert body["events"][0]["value"] == "two"
+
+
+def test_character_prompt_prioritizes_answer_over_personality() -> None:
+    from skelly_ai.brain import build_system_prompt
+    prompt = build_system_prompt("Skelly", "sarcastic")
+    assert "Answer the visitor's actual question directly and accurately" in prompt
+    assert "For factual questions, the response must contain the factual answer." in prompt
+    assert "Never replace the answer with a joke" in prompt
+
+
+def test_welcome_message_settings_persist(tmp_path) -> None:
+    from skelly_ai.operation_settings import OperationSettingsStore
+    app = create_app(Settings(data_dir=tmp_path))
+    with TestClient(app) as client:
+        settings = client.get("/api/operation/status").json()["settings"]
+        settings["welcome_enabled"] = True
+        settings["welcome_message"] = "Greetings, brave visitor."
+        saved = client.post("/api/operation/settings", json=settings)
+    assert saved.status_code == 200
+    assert saved.json()["welcome_enabled"] is True
+    assert saved.json()["welcome_message"] == "Greetings, brave visitor."
+    persisted = OperationSettingsStore(tmp_path).load()
+    assert persisted.welcome_enabled is True
+    assert persisted.welcome_message == "Greetings, brave visitor."

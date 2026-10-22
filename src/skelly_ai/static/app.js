@@ -194,6 +194,10 @@ const microphoneWouldTrigger = document.querySelector("#microphone-would-trigger
 const microphoneThresholdMarker = document.querySelector("#microphone-threshold-marker");
 const listeningSensitivity = document.querySelector("#listening-sensitivity");
 const listeningSensitivityValue = document.querySelector("#listening-sensitivity-value");
+const welcomeEnabled = document.querySelector("#welcome-enabled");
+const welcomeMessage = document.querySelector("#welcome-message");
+const saveWelcomeMessage = document.querySelector("#save-welcome-message");
+const welcomeMessageResult = document.querySelector("#welcome-message-result");
 const nagMode = document.querySelector("#nag-mode");
 const nagDelay = document.querySelector("#nag-delay");
 const nagDelayValue = document.querySelector("#nag-delay-value");
@@ -562,6 +566,10 @@ function renderOperation(operation) {
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
+  if (welcomeEnabled) welcomeEnabled.checked = settings.welcome_enabled === true;
+  if (welcomeMessage && document.activeElement !== welcomeMessage) {
+    welcomeMessage.value = settings.welcome_message || "Well, well... somebody wandered into the wrong yard.";
+  }
   if (audioOutputSelect && document.activeElement !== audioOutputSelect && !audioOutputSelectionLocked()) {
     audioOutputSelect.value = settings.audio_output || "skelly";
   }
@@ -1262,6 +1270,8 @@ function operationSettingsPayload() {
     trigger_on_audio: triggerOnAudio.checked,
     trigger_on_face: triggerOnFace.checked,
     trigger_on_motion: triggerOnMotion.checked,
+    welcome_enabled: welcomeEnabled?.checked === true,
+    welcome_message: welcomeMessage?.value.trim() || "",
     nag_mode: nagMode.value,
     nag_delay_seconds: Number(nagDelay.value),
     nag_cooldown_seconds: Number(nagCooldown.value),
@@ -1312,6 +1322,24 @@ function formatLureInterval(value) {
     }
   });
 });
+
+if (saveWelcomeMessage) {
+  saveWelcomeMessage.addEventListener("click", async () => {
+    saveWelcomeMessage.disabled = true;
+    welcomeMessageResult.textContent = "Saving welcome message...";
+    try {
+      await saveOperationSettings();
+      await refreshStatus();
+      welcomeMessageResult.textContent = welcomeEnabled?.checked
+        ? "Welcome message saved."
+        : "Welcome message disabled.";
+    } catch (error) {
+      welcomeMessageResult.textContent = error.message;
+    } finally {
+      saveWelcomeMessage.disabled = false;
+    }
+  });
+}
 
 saveVisitorEngagement.addEventListener("click", async () => {
   saveVisitorEngagement.disabled = true;
