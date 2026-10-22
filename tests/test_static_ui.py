@@ -454,3 +454,30 @@ def test_welcome_message_ui_is_exposed_and_persisted() -> None:
     assert "welcome_enabled" in script
     assert "welcome_message" in script
     assert "welcoming:" in script
+
+
+def test_pi_media_upload_progress_controls():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src/skelly_ai/static/index.html").read_text()
+    script = (root / "src/skelly_ai/static/app.js").read_text()
+
+    controls = [
+        "pi-media-upload-progress",
+        "pi-media-upload-name",
+        "pi-media-upload-percent",
+        "pi-media-upload-bar",
+        "pi-media-upload-phase",
+        "pi-media-upload-cancel",
+    ]
+
+    for control in controls:
+        assert html.count(f'id="{control}"') == 1
+
+    assert 'new XMLHttpRequest()' in script
+    assert 'xhr.upload.addEventListener("progress"' in script
+    assert 'activePiUpload.abort()' in script
+    assert '"Processing on Pi…"' in script
+    assert 'xhr.addEventListener("error"' in script
+    assert 'xhr.addEventListener("timeout"' in script

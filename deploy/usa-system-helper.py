@@ -522,6 +522,32 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
                     payload = json.loads(response.read().decode("utf-8"))
                     observed = str(payload.get("version") or "")
                     if observed == version:
+                        # Verify nginx configuration and the public dashboard
+                        # before marking the update successful.
+                        nginx_check = run(
+                            "nginx", "-t",
+                            check=False,
+                            timeout=10,
+                        )
+                        if nginx_check.returncode != 0:
+                            raise RuntimeError(
+                                "nginx configuration validation failed: "
+                                + error_text(nginx_check)
+                            )
+
+                        with urllib.request.urlopen(
+                            "http://127.0.0.1/",
+                            timeout=5,
+                        ) as dashboard_response:
+                            dashboard_html = dashboard_response.read(262144)
+                            if (
+                                dashboard_response.status != 200
+                                or b"<!doctype html" not in dashboard_html.lower()
+                            ):
+                                raise RuntimeError(
+                                    "nginx dashboard health check failed"
+                                )
+
                         write_json(ROLLBACK_STATE, {
                             "available": True,
                             "previous_version": current_version,

@@ -107,3 +107,111 @@ async def test_stream_upload_rejects_duplicate(tmp_path, monkeypatch):
         await library.add_stream("existing.mp3", chunks())
 
     assert (library.media_dir / "existing.mp3").read_bytes() == b"ID3"
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_concurrent_duplicate(tmp_path, monkeypatch):
+    import asyncio
+
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    async def chunks():
+        yield b"ID3"
+        await asyncio.sleep(0)
+        yield b"x" * 100
+
+    results = await asyncio.gather(
+        library.add_stream("same.mp3", chunks()),
+        library.add_stream("same.mp3", chunks()),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert sum(isinstance(result, PiMediaError) for result in results) == 1
+    assert library.status()["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_metadata_failure(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    def fail_save(state):
+        raise OSError("Simulated metadata failure")
+
+    monkeypatch.setattr(library, "_save", fail_save)
+
+    async def chunks():
+        yield b"ID3"
+        yield b"x" * 100
+
+    with pytest.raises(OSError, match="metadata failure"):
+        await library.add_stream("failure.mp3", chunks())
+
+    assert not (library.media_dir / "failure.mp3").exists()
+    assert not list(library.media_dir.glob(".*.upload"))
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_concurrent_quota(tmp_path, monkeypatch):
+    import asyncio
+
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    # Simulate storage with only 150 bytes of remaining quota.
+    original_status = library.status
+
+    def limited_status(*args, **kwargs):
+        status = original_status(*args, **kwargs)
+        status["quota_remaining_bytes"] = max(
+            0, 150 - int(status["usage_bytes"])
+        )
+        return status
+
+    monkeypatch.setattr(library, "status", limited_status)
+
+    async def chunks():
+        yield b"x" * 100
+        await asyncio.sleep(0)
+
+    results = await asyncio.gather(
+        library.add_stream("first.mp3", chunks()),
+        library.add_stream("second.mp3", chunks()),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert sum(isinstance(result, PiMediaError) for result in results) == 1
+    assert library.status()["file_count"] == 1
+    assert library.status()["usage_bytes"] == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_cancellation_cleanup(tmp_path, monkeypatch):
+    import asyncio
+
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    started = asyncio.Event()
+
+    async def chunks():
+        yield b"ID3"
+        started.set()
+        await asyncio.sleep(3600)
+
+    task = asyncio.create_task(
+        library.add_stream("cancelled.mp3", chunks())
+    )
+
+    await asyncio.wait_for(started.wait(), timeout=5)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not (library.media_dir / "cancelled.mp3").exists()
+    assert not list(library.media_dir.glob(".*.upload"))
+    assert library.status()["file_count"] == 0

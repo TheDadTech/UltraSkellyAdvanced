@@ -336,6 +336,19 @@
             <div class="pi-media-quota-controls"><label>Media limit <input id="pi-media-quota-gb" type="number" min="1" max="1000" step="1" value="3"> GB</label><button id="save-pi-media-quota" type="button" class="secondary">Set limit</button></div>
           </div>
           <div id="pi-media-library" class="media-library"><p class="muted help-copy">No Pi Media loaded yet.</p></div>
+          <div id="pi-media-upload-progress" class="media-upload-progress" hidden>
+            <div class="media-upload-progress-heading">
+              <strong id="pi-media-upload-name">Uploading audio</strong>
+              <span id="pi-media-upload-percent">0%</span>
+            </div>
+            <progress id="pi-media-upload-bar" max="100" value="0">0%</progress>
+            <div class="controls">
+              <span id="pi-media-upload-phase" class="muted">Preparing upload…</span>
+              <button id="pi-media-upload-cancel" type="button" class="secondary">
+                Cancel upload
+              </button>
+            </div>
+          </div>
           <p id="pi-media-result" class="result" aria-live="polite"></p>
         </div>
       </section>

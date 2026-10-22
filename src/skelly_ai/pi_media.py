@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -24,6 +26,7 @@ class PiMediaLibrary:
         self.data_dir = Path(data_dir)
         self.media_dir = self.data_dir / "media"
         self.state_path = self.data_dir / "pi-media.json"
+        self._upload_lock = asyncio.Lock()
 
     @staticmethod
     def _default_light() -> dict[str, object]:
@@ -186,54 +189,78 @@ class PiMediaLibrary:
         return self.get(clean)
 
     async def add_stream(self, name: str, chunks) -> dict[str, object]:
-        """Store an async upload stream without loading the entire file into RAM."""
+        """Safely store an upload without buffering the full file in RAM."""
         import uuid
 
-        clean = self._clean_name(name)
-        self._ensure_media_dir()
-        destination = self.media_dir / clean
-
-        if destination.exists():
-            raise PiMediaError("A Pi media file with that name already exists")
-
-        status = self.status()
-        allowed = min(
-            self.MAX_FILE_BYTES,
-            int(status["quota_remaining_bytes"]),
-            max(0, int(status["filesystem_free_bytes"]) - self.RESERVE_BYTES),
-        )
-
-        temporary = self.media_dir / f".{uuid.uuid4().hex}.upload"
-        total = 0
-
-        try:
-            with temporary.open("xb") as output:
-                temporary.chmod(0o600)
-                async for chunk in chunks:
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > self.MAX_FILE_BYTES:
-                        raise PiMediaError("A single Pi media file may not exceed 512 MB")
-                    if total > allowed:
-                        raise PiMediaError(
-                            "This upload would exceed the Pi Media quota or filesystem safety reserve"
-                        )
-                    output.write(chunk)
-
-            if total == 0:
-                raise PiMediaError("The audio file is empty")
+        async with self._upload_lock:
+            clean = self._clean_name(name)
+            self._ensure_media_dir()
+            destination = self.media_dir / clean
 
             if destination.exists():
                 raise PiMediaError("A Pi media file with that name already exists")
 
-            temporary.replace(destination)
-            state = self._load()
-            state["files"][clean] = self._default_entry(clean, total)
-            self._save(state)
-            return self.get(clean)
-        finally:
-            temporary.unlink(missing_ok=True)
+            status = self.status()
+            allowed = min(
+                self.MAX_FILE_BYTES,
+                int(status["quota_remaining_bytes"]),
+                max(0, int(status["filesystem_free_bytes"]) - self.RESERVE_BYTES),
+            )
+
+            temporary = self.media_dir / f".{uuid.uuid4().hex}.upload"
+            total = 0
+            published = False
+
+            try:
+                with temporary.open("xb") as output:
+                    temporary.chmod(0o600)
+                    async for chunk in chunks:
+                        if not chunk:
+                            continue
+
+                        total += len(chunk)
+
+                        if total > self.MAX_FILE_BYTES:
+                            raise PiMediaError(
+                                "A single Pi media file may not exceed 512 MB"
+                            )
+
+                        if total > allowed:
+                            raise PiMediaError(
+                                "This upload would exceed the Pi Media quota "
+                                "or filesystem safety reserve"
+                            )
+
+                        output.write(chunk)
+
+                if total == 0:
+                    raise PiMediaError("The audio file is empty")
+
+                # Hard-link publication fails if the destination exists.
+                # Both paths are inside the same filesystem.
+                try:
+                    await asyncio.to_thread(
+                        os.link, temporary, destination
+                    )
+                except FileExistsError as exc:
+                    raise PiMediaError(
+                        "A Pi media file with that name already exists"
+                    ) from exc
+
+                published = True
+
+                state = self._load()
+                state["files"][clean] = self._default_entry(clean, total)
+                self._save(state)
+
+                return self.get(clean)
+
+            except BaseException:
+                if published:
+                    destination.unlink(missing_ok=True)
+                raise
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def delete(self, name: str) -> None:
         self._ensure_media_dir()

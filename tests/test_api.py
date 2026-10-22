@@ -877,3 +877,76 @@ def test_welcome_message_settings_persist(tmp_path) -> None:
     persisted = OperationSettingsStore(tmp_path).load()
     assert persisted.welcome_enabled is True
     assert persisted.welcome_message == "Greetings, brave visitor."
+
+
+def test_pi_media_upload_api_success_duplicate_and_invalid(tmp_path, monkeypatch):
+    from skelly_ai.pi_media import PiMediaLibrary
+
+    # Keep the existing 10 GB disk reserve from blocking our
+    # small simulated upload tests.
+    monkeypatch.setattr(
+        PiMediaLibrary,
+        "_disk_free",
+        lambda self: 20 * 1024 ** 3,
+    )
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/pi-media/upload?filename=greeting.mp3",
+            content=b"ID3" + b"x" * 1024,
+            headers={"Content-Type": "audio/mpeg"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert any(
+            item["name"] == "greeting.mp3"
+            for item in response.json()["files"]
+        )
+
+        saved = tmp_path / "media" / "greeting.mp3"
+        assert saved.read_bytes() == b"ID3" + b"x" * 1024
+
+        duplicate = client.post(
+            "/api/pi-media/upload?filename=greeting.mp3",
+            content=b"ID3duplicate",
+        )
+        assert duplicate.status_code == 409
+
+        # A duplicate must not overwrite the original file.
+        assert saved.read_bytes() == b"ID3" + b"x" * 1024
+
+        invalid = client.post(
+            "/api/pi-media/upload?filename=malware.exe",
+            content=b"not audio",
+        )
+        assert invalid.status_code == 422
+
+        status = client.get("/api/pi-media/status")
+        assert status.status_code == 200
+        assert status.json()["file_count"] == 1
+
+
+def test_pi_media_upload_api_rejects_oversized(tmp_path, monkeypatch):
+    from skelly_ai.pi_media import PiMediaLibrary
+
+    monkeypatch.setattr(
+        PiMediaLibrary, "_disk_free",
+        lambda self: 20 * 1024 ** 3,
+    )
+    monkeypatch.setattr(PiMediaLibrary, "MAX_FILE_BYTES", 100)
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/pi-media/upload?filename=oversized.mp3",
+            content=b"x" * 150,
+            headers={"Content-Type": "audio/mpeg"},
+        )
+
+        assert response.status_code == 413, response.text
+        assert not (tmp_path / "media" / "oversized.mp3").exists()
+        assert not list((tmp_path / "media").glob(".*.upload"))
+        assert client.get("/api/pi-media/status").json()["file_count"] == 0

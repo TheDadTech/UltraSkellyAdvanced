@@ -1942,23 +1942,126 @@ refreshPiMedia.addEventListener("click", async () => {
 piMediaFilter.addEventListener("input", () => {
   if (currentPiMediaStatus) renderPiMediaStatus(currentPiMediaStatus);
 });
-addPiMedia.addEventListener("click", () => piMediaFileInput.click());
-piMediaFileInput.addEventListener("change", async () => {
-  const file = piMediaFileInput.files?.[0];
-  if (!file) return;
-  addPiMedia.disabled = true;
-  piMediaResult.textContent = `Saving ${file.name} to Pi Media…`;
-  try {
-    const response = await fetch(`/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`, {
-      method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
-    renderPiMediaStatus(body);
-    piMediaResult.textContent = `${file.name} was saved to Pi Media.`;
-  } catch (error) { piMediaResult.textContent = error.message; }
-  finally { addPiMedia.disabled = false; piMediaFileInput.value = ""; }
+const piUploadProgress = document.querySelector("#pi-media-upload-progress");
+const piUploadName = document.querySelector("#pi-media-upload-name");
+const piUploadPercent = document.querySelector("#pi-media-upload-percent");
+const piUploadBar = document.querySelector("#pi-media-upload-bar");
+const piUploadPhase = document.querySelector("#pi-media-upload-phase");
+const piUploadCancel = document.querySelector("#pi-media-upload-cancel");
+
+let activePiUpload = null;
+
+function updatePiUploadProgress(percent, phase) {
+  const value = Math.min(100, Math.max(0, Math.round(percent)));
+  piUploadPercent.textContent = `${value}%`;
+  piUploadBar.value = value;
+  piUploadBar.textContent = `${value}%`;
+  piUploadPhase.textContent = phase;
+}
+
+addPiMedia.addEventListener("click", () => {
+  if (!activePiUpload) piMediaFileInput.click();
 });
+
+piUploadCancel.addEventListener("click", () => {
+  if (activePiUpload) activePiUpload.abort();
+});
+
+piMediaFileInput.addEventListener("change", () => {
+  const file = piMediaFileInput.files?.[0];
+  if (!file || activePiUpload) return;
+
+  const xhr = new XMLHttpRequest();
+  activePiUpload = xhr;
+
+  addPiMedia.disabled = true;
+  piUploadProgress.hidden = false;
+  piUploadName.textContent = file.name;
+  piUploadCancel.disabled = false;
+  piMediaResult.textContent = "";
+  updatePiUploadProgress(0, "Preparing upload…");
+
+  const finish = (message, phase, success = false) => {
+    if (activePiUpload !== xhr) return;
+
+    activePiUpload = null;
+    addPiMedia.disabled = false;
+    piMediaFileInput.value = "";
+    piUploadCancel.disabled = true;
+    piMediaResult.textContent = message;
+
+    if (success) {
+      updatePiUploadProgress(100, phase);
+    } else {
+      piUploadPhase.textContent = phase;
+    }
+  };
+
+  xhr.upload.addEventListener("progress", (event) => {
+    if (!event.lengthComputable) {
+      piUploadPhase.textContent = "Uploading…";
+      return;
+    }
+
+    const percent = (event.loaded / event.total) * 100;
+    updatePiUploadProgress(
+      percent,
+      percent >= 100 ? "Processing on Pi…" : "Uploading to Pi…"
+    );
+  });
+
+  xhr.upload.addEventListener("load", () => {
+    if (activePiUpload === xhr) {
+      updatePiUploadProgress(100, "Processing on Pi…");
+    }
+  });
+
+  xhr.addEventListener("load", () => {
+    let body = {};
+    try {
+      body = JSON.parse(xhr.responseText || "{}");
+    } catch (_) {
+      // nginx may return HTML for 413, 502, or 504 errors.
+    }
+
+    if (xhr.status >= 200 && xhr.status < 300) {
+      renderPiMediaStatus(body);
+      finish(`${file.name} was saved to Pi Media.`, "Upload complete.", true);
+    } else {
+      const detail = body.detail ||
+        (xhr.status === 413 ? "File exceeds the upload limit." :
+         xhr.status === 502 || xhr.status === 504 ?
+         "Skelly did not respond. Check System Health." :
+         `Upload failed (HTTP ${xhr.status}).`);
+
+      finish(detail, "Upload failed.");
+    }
+  });
+
+  xhr.addEventListener("error", () => {
+    finish("Network error. Check your connection to Skelly.", "Upload failed.");
+  });
+
+  xhr.addEventListener("abort", () => {
+    finish("Upload cancelled.", "Cancelled.");
+  });
+
+  xhr.addEventListener("timeout", () => {
+    finish("Upload timed out. Try again.", "Timed out.");
+  });
+
+  xhr.open(
+    "POST",
+    `/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`
+  );
+  xhr.timeout = 600000;
+  xhr.setRequestHeader(
+    "Content-Type",
+    file.type || "application/octet-stream"
+  );
+  xhr.send(file);
+});
+
 savePiMediaQuota.addEventListener("click", async () => {
   savePiMediaQuota.disabled = true;
   try {
