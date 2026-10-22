@@ -436,6 +436,8 @@ def test_pi_media_beta_controls_are_present() -> None:
 def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> None:
     script = (STATIC / "app.js").read_text(encoding="utf-8")
     helper = (ROOT / "deploy" / "usa-system-helper.py").read_text(encoding="utf-8")
+    nginx = (ROOT / "deploy" / "usa-nginx.conf").read_text(encoding="utf-8")
+    assert "client_max_body_size 512m;" in nginx
     assert "const raw = await response.text()" in script
     assert "JSON.parse(raw)" in script
     assert 'body = { detail: raw.trim()' in script
