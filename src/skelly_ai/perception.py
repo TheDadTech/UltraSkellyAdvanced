@@ -503,7 +503,8 @@ class PerceptionEngine:
                         )
                         continue
 
-                    self._clear_streak = 0
+                    if trigger_settings.get("audio", False) and microphone.get("voice_active"):
+                        self._clear_streak = 0
                     snapshot_url: str | None = None
                     if self._snapshotter is not None:
                         try:

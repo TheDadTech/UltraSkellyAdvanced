@@ -908,6 +908,7 @@ function renderPerceptionStatus(body) {
     scanning: ["idle", "WAITING FOR A VISITOR", "Skelly is watching for someone to approach."],
     confirming_presence: ["detected", "VISITOR DETECTED", "Hold still for just a moment."],
     visitor_confirmed: ["detected", "GET READY TO SPEAK", "Skelly has seen you."],
+    welcoming: ["detected", "GREETING VISITOR", "Skelly is playing the saved welcome line."],
     waiting_to_listen: ["detected", "GET READY TO SPEAK", "The microphone will open momentarily."],
     listening: ["listening", "SPEAK NOW — I'M LISTENING", "Skelly's green eyes also mean the microphone is open."],
     thinking: ["thinking", "THINKING…", "Skelly's spiral eyes mean your answer is being prepared."],
