@@ -43,3 +43,67 @@ def test_pi_media_rejects_duplicate_and_unsupported_files(tmp_path: Path, monkey
         library.add("hello.wav", b"RIFF" + b"y" * 200)
     with pytest.raises(PiMediaError, match="supports"):
         library.add("hello.exe", b"x")
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_success(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    async def chunks():
+        yield b"ID3"
+        yield b"x" * 1024
+
+    result = await library.add_stream("stream.mp3", chunks())
+
+    assert result["size"] == 1027
+    assert (library.media_dir / "stream.mp3").read_bytes() == b"ID3" + b"x" * 1024
+    assert library.status()["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_rejects_oversized_file(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+    monkeypatch.setattr(library, "MAX_FILE_BYTES", 100)
+
+    async def chunks():
+        yield b"x" * 60
+        yield b"x" * 60
+
+    with pytest.raises(PiMediaError, match="512 MB"):
+        await library.add_stream("large.mp3", chunks())
+
+    assert not (library.media_dir / "large.mp3").exists()
+    assert not list(library.media_dir.glob(".*.upload"))
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_cleans_up_interruption(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    async def chunks():
+        yield b"ID3"
+        raise ConnectionError("Upload interrupted")
+
+    with pytest.raises(ConnectionError, match="interrupted"):
+        await library.add_stream("interrupted.mp3", chunks())
+
+    assert not (library.media_dir / "interrupted.mp3").exists()
+    assert not list(library.media_dir.glob(".*.upload"))
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_rejects_duplicate(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+    library.add("existing.mp3", b"ID3")
+
+    async def chunks():
+        yield b"another file"
+
+    with pytest.raises(PiMediaError, match="already exists"):
+        await library.add_stream("existing.mp3", chunks())
+
+    assert (library.media_dir / "existing.mp3").read_bytes() == b"ID3"

@@ -2919,9 +2919,8 @@ def create_app(
     @app.post("/api/pi-media/upload")
     async def pi_media_upload(request: Request, filename: str) -> dict[str, object]:
         require_manual_hardware_access()
-        data = await request.body()
         try:
-            pi_media.add(filename, data)
+            await pi_media.add_stream(filename, request.stream())
             return pi_media.status(playing_name=pi_media_playing_name)
         except PiMediaError as exc:
             detail = str(exc)
