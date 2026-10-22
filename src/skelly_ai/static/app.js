@@ -81,6 +81,12 @@ const piMediaUsage = document.querySelector("#pi-media-usage");
 const piStorageFree = document.querySelector("#pi-storage-free");
 const piMediaQuotaGb = document.querySelector("#pi-media-quota-gb");
 const savePiMediaQuota = document.querySelector("#save-pi-media-quota");
+const piMediaTtsForm = document.querySelector("#pi-media-tts-form");
+const piMediaTtsName = document.querySelector("#pi-media-tts-name");
+const piMediaTtsText = document.querySelector("#pi-media-tts-text");
+const piMediaTtsLure = document.querySelector("#pi-media-tts-lure");
+const generatePiMediaTts = document.querySelector("#generate-pi-media-tts");
+const piMediaTtsResult = document.querySelector("#pi-media-tts-result");
 const classicLibrarySection = document.querySelector("#classic-library-section");
 const localBrainSection = document.querySelector("#local-brain-section");
 const manualPropControls = document.querySelector("#manual-prop-controls");
@@ -1807,7 +1813,7 @@ function renderPiMediaStatus(body) {
   const table = document.createElement("table");
   table.className = "media-table pi-media-table";
   const head = document.createElement("thead");
-  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
+  head.innerHTML = "<tr><th>Enabled</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
   const rows = document.createElement("tbody");
   const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
   files.forEach((file) => {
@@ -1952,7 +1958,12 @@ piMediaFileInput.addEventListener("change", async () => {
     const response = await fetch(`/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
     });
-    const body = await response.json();
+    const raw = await response.text();
+    let body = {};
+    if (raw) {
+      try { body = JSON.parse(raw); }
+      catch { body = { detail: raw.trim() || `Upload failed (${response.status})` }; }
+    }
     if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
     renderPiMediaStatus(body);
     piMediaResult.textContent = `${file.name} was saved to Pi Media.`;
@@ -1970,6 +1981,38 @@ savePiMediaQuota.addEventListener("click", async () => {
   } catch (error) { piMediaResult.textContent = error.message; }
   finally { savePiMediaQuota.disabled = false; }
 });
+
+if (piMediaTtsForm) {
+  piMediaTtsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = piMediaTtsName.value.trim();
+    const text = piMediaTtsText.value.trim();
+    if (!name || !text) return;
+    generatePiMediaTts.disabled = true;
+    piMediaTtsResult.textContent = "Generating TTS with the selected voice…";
+    try {
+      const body = await request("/api/pi-media/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          text,
+          nag_response: piMediaTtsLure.checked,
+        }),
+      });
+      renderPiMediaStatus(body);
+      piMediaTtsResult.textContent =
+        `${body.generated_name || name} saved to Pi Media using ${body.voice_provider || "the selected voice"}. Replays use the saved local file.`;
+      piMediaTtsName.value = "";
+      piMediaTtsText.value = "";
+      piMediaTtsLure.checked = false;
+    } catch (error) {
+      piMediaTtsResult.textContent = error.message;
+    } finally {
+      generatePiMediaTts.disabled = false;
+    }
+  });
+}
 
 function rgbToHex(light, fallback = "#ffffff") {
   if (!light) return fallback;
@@ -1993,7 +2036,7 @@ function openMediaEditor(file, source = "skelly") {
   const isPi = source === "pi";
   document.querySelector("#media-edit-source").value = source;
   document.querySelector("#media-edit-name").value = file.name || "";
-  document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
+  document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "LAB PRESET";
   document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
   document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
   document.querySelector("#media-movement-activity-setting").hidden = !isPi;
