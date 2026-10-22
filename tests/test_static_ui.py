@@ -355,7 +355,6 @@ def test_build2_visitor_engagement_and_classic_movement_controls_present() -> No
         'id="media-move-arm"',
         'id="media-move-torso"',
         'id="media-move-all"',
-        'id="media-edit-nag-response"',
     ):
         assert marker in html
     assert 'nag_response:' in js
@@ -481,3 +480,43 @@ def test_pi_media_upload_progress_controls():
     assert '"Processing on Pi…"' in script
     assert 'xhr.addEventListener("error"' in script
     assert 'xhr.addEventListener("timeout"' in script
+
+
+
+def test_pi_media_lure_assignment_moved_to_table():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src/skelly_ai/static/index.html").read_text()
+    script = (root / "src/skelly_ai/static/app.js").read_text()
+
+    # Lure must no longer appear in the shared Edit dialog.
+    assert 'id="media-edit-nag-response"' not in html
+
+    # Pi Media must provide its own Lure column.
+    assert '<th>Jaw</th><th>Lure</th><th>Actions</th>' in script
+    assert 'lureCell.append(lure)' in script
+    assert 'movement, eye, jaw, lureCell, actions' in script
+
+    # Assignment must be saved through the existing Pi Media API.
+    assert 'nag_response: lure.checked' in script
+    assert 'nag_response: file?.nag_response === true' in script
+    assert '"/api/pi-media/edit"' in script
+
+
+def test_pi_media_editable_display_name():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src/skelly_ai/static"
+    html = (root / "index.html").read_text()
+    script = (root / "app.js").read_text()
+
+    assert html.count('id="pi-media-display-name"') == 1
+    assert html.count('id="pi-media-display-name-setting"') == 1
+
+    assert 'file.display_name || file.name' in script
+    assert 'display_name: document.querySelector("#pi-media-display-name").value.trim()' in script
+    assert 'title.textContent = file.display_name || file.name' in script
+
+    # Original filename stays available for playback and file identity.
+    assert 'document.querySelector("#media-edit-name").value = file.name || ""' in script

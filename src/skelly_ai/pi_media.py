@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 
@@ -43,6 +44,8 @@ class PiMediaLibrary:
     def _default_entry(cls, name: str, size: int) -> dict[str, object]:
         return {
             "name": name,
+            "id": uuid.uuid4().hex,
+            "display_name": name,
             "size": int(size),
             "enabled": True,
             "action": 255,
@@ -117,6 +120,17 @@ class PiMediaLibrary:
             entry = dict(saved.get(path.name) or self._default_entry(path.name, path.stat().st_size))
             entry["name"] = path.name
             entry["size"] = path.stat().st_size
+
+            # Migrate existing clips without changing their filename,
+            # settings, or playback references.
+            if not entry.get("id"):
+                entry["id"] = uuid.uuid4().hex
+                changed = True
+
+            if not isinstance(entry.get("display_name"), str) or not entry["display_name"].strip():
+                entry["display_name"] = path.name
+                changed = True
+
             saved[path.name] = entry
             result.append(entry)
         for stale in set(saved) - present:
@@ -276,6 +290,24 @@ class PiMediaLibrary:
     def update(self, name: str, values: dict[str, object]) -> dict[str, object]:
         clean = self._clean_name(name)
         current = self.get(clean)
+        if "display_name" in values:
+            display_name = values["display_name"]
+            if (
+                not isinstance(display_name, str)
+                or not display_name.strip()
+                or len(display_name.strip()) > 120
+            ):
+                raise PiMediaError(
+                    "Media Name must contain 1 to 120 characters"
+                )
+            values = dict(values)
+            values["display_name"] = display_name.strip()
+
+        # The filename and permanent ID must not be overwritten.
+        values = {
+            key: value for key, value in values.items()
+            if key not in {"id", "name"}
+        }
         current.update(values)
         current["name"] = clean
         state = self._load()

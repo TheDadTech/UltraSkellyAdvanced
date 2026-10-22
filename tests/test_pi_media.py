@@ -215,3 +215,121 @@ async def test_stream_upload_cancellation_cleanup(tmp_path, monkeypatch):
     assert not (library.media_dir / "cancelled.mp3").exists()
     assert not list(library.media_dir.glob(".*.upload"))
     assert library.status()["file_count"] == 0
+
+
+def test_lure_assignment_preserves_other_preset_settings(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    library.add("lure-test.mp3", b"ID3" + b"x" * 100)
+
+    original_lights = [
+        {"effect_mode": 2, "brightness": 150,
+         "r": 255, "g": 20, "b": 0, "cycle": False},
+        {"effect_mode": 3, "brightness": 200,
+         "r": 0, "g": 80, "b": 255, "cycle": True},
+    ]
+
+    library.update("lure-test.mp3", {
+        "action": 5,
+        "eye": 7,
+        "jaw_sync": False,
+        "movement_activity": "high",
+        "lights": original_lights,
+        "nag_response": False,
+    })
+
+    updated = library.update("lure-test.mp3", {
+        "nag_response": True
+    })
+
+    assert updated["nag_response"] is True
+    assert updated["action"] == 5
+    assert updated["eye"] == 7
+    assert updated["jaw_sync"] is False
+    assert updated["movement_activity"] == "high"
+    assert updated["lights"] == original_lights
+
+    # Confirm settings survive a fresh library instance.
+    reloaded = PiMediaLibrary(tmp_path).get("lure-test.mp3")
+    assert reloaded["nag_response"] is True
+    assert reloaded["lights"] == original_lights
+    assert reloaded["action"] == 5
+    assert reloaded["eye"] == 7
+    assert reloaded["jaw_sync"] is False
+
+
+def test_pi_media_display_name_and_stable_id(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    original = library.add("scary_laugh.mp3", b"ID3test")
+
+    clip_id = original["id"]
+    assert clip_id
+    assert original["display_name"] == "scary_laugh.mp3"
+
+    updated = library.update(
+        "scary_laugh.mp3",
+        {"display_name": "Evil Laugh"},
+    )
+
+    assert updated["display_name"] == "Evil Laugh"
+    assert updated["name"] == "scary_laugh.mp3"
+    assert updated["id"] == clip_id
+
+    reloaded = PiMediaLibrary(tmp_path).get("scary_laugh.mp3")
+    assert reloaded["display_name"] == "Evil Laugh"
+    assert reloaded["id"] == clip_id
+    assert reloaded["name"] == "scary_laugh.mp3"
+
+
+def test_pi_media_migrates_legacy_metadata(tmp_path, monkeypatch):
+    import json
+
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    library.media_dir.mkdir(parents=True)
+    (library.media_dir / "old_clip.mp3").write_bytes(b"ID3old")
+
+    legacy = {
+        "quota_bytes": 3 * GIB,
+        "files": {
+            "old_clip.mp3": {
+                "name": "old_clip.mp3",
+                "size": 6,
+                "action": 5,
+                "eye": 7,
+                "jaw_sync": False,
+                "nag_response": True,
+            }
+        },
+    }
+
+    library.state_path.write_text(json.dumps(legacy))
+
+    migrated = library.get("old_clip.mp3")
+    assert migrated["id"]
+    assert migrated["display_name"] == "old_clip.mp3"
+    assert migrated["action"] == 5
+    assert migrated["eye"] == 7
+    assert migrated["jaw_sync"] is False
+    assert migrated["nag_response"] is True
+
+    # A second library instance must see the same permanent ID.
+    second = PiMediaLibrary(tmp_path).get("old_clip.mp3")
+    assert second["id"] == migrated["id"]
+
+
+def test_pi_media_rejects_invalid_display_name(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    library.add("test.mp3", b"ID3")
+
+    with pytest.raises(PiMediaError, match="Media Name"):
+        library.update("test.mp3", {"display_name": "   "})
+
+    with pytest.raises(PiMediaError, match="Media Name"):
+        library.update("test.mp3", {"display_name": "x" * 121})

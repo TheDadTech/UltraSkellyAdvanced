@@ -231,6 +231,7 @@ class PiMediaPlayRequest(BaseModel):
 
 class PiMediaEditRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
     enabled: bool = True
     action: int = Field(default=255, ge=0, le=255)
     eye: int = Field(default=1, ge=1, le=18)
@@ -2961,6 +2962,7 @@ def create_app(
                     ],
                     "jaw_sync": request.jaw_sync,
                     "movement_activity": request.movement_activity,
+                    **({"display_name": request.display_name} if request.display_name is not None else {}),
                     "nag_response": request.nag_response,
                 },
             )

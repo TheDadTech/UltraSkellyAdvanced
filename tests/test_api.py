@@ -950,3 +950,52 @@ def test_pi_media_upload_api_rejects_oversized(tmp_path, monkeypatch):
         assert not (tmp_path / "media" / "oversized.mp3").exists()
         assert not list((tmp_path / "media").glob(".*.upload"))
         assert client.get("/api/pi-media/status").json()["file_count"] == 0
+
+
+def test_pi_media_display_name_api(tmp_path, monkeypatch):
+    from skelly_ai.pi_media import PiMediaLibrary, GIB
+
+    monkeypatch.setattr(
+        PiMediaLibrary, "_disk_free", lambda self: 20 * GIB
+    )
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+
+    with TestClient(app) as client:
+        upload = client.post(
+            "/api/pi-media/upload?filename=welcome.mp3",
+            content=b"ID3test",
+        )
+        assert upload.status_code == 200, upload.text
+
+        original = upload.json()["files"][0]
+        clip_id = original["id"]
+
+        edited = client.post(
+            "/api/pi-media/edit",
+            json={
+                "name": "welcome.mp3",
+                "display_name": "Welcome Visitors",
+                "action": 5,
+                "eye": 7,
+                "jaw_sync": False,
+                "nag_response": True,
+            },
+        )
+
+        assert edited.status_code == 200, edited.text
+        clip = edited.json()["files"][0]
+
+        assert clip["display_name"] == "Welcome Visitors"
+        assert clip["name"] == "welcome.mp3"
+        assert clip["id"] == clip_id
+        assert clip["action"] == 5
+        assert clip["eye"] == 7
+        assert clip["jaw_sync"] is False
+        assert clip["nag_response"] is True
+
+        assert (tmp_path / "media" / "welcome.mp3").exists()
+
+        reloaded = client.get("/api/pi-media/status").json()["files"][0]
+        assert reloaded["id"] == clip_id
+        assert reloaded["display_name"] == "Welcome Visitors"

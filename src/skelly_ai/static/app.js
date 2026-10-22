@@ -1807,7 +1807,7 @@ function renderPiMediaStatus(body) {
   const table = document.createElement("table");
   table.className = "media-table pi-media-table";
   const head = document.createElement("thead");
-  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
+  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Lure</th><th>Actions</th></tr>";
   const rows = document.createElement("tbody");
   const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
   files.forEach((file) => {
@@ -1830,10 +1830,10 @@ function renderPiMediaStatus(body) {
     enabledCell.append(enabled);
     const nameCell = document.createElement("td");
     const title = document.createElement("strong");
-    title.textContent = file.name;
+    title.textContent = file.display_name || file.name;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
+    meta.textContent = `${file.name} · ${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -1853,6 +1853,36 @@ function renderPiMediaStatus(body) {
     eye.append(eyeImage, document.createTextNode(String(file.eye || 1)));
     const jaw = document.createElement("td");
     jaw.textContent = file.jaw_sync === false ? "Off" : "On";
+    const lureCell = document.createElement("td");
+    const lure = document.createElement("input");
+    lure.type = "checkbox";
+    lure.checked = file.nag_response === true;
+    lure.setAttribute("aria-label", `Use ${file.name} as lure response`);
+
+    lure.addEventListener("change", async () => {
+      lure.disabled = true;
+      try {
+        renderPiMediaStatus(await request("/api/pi-media/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...file,
+            nag_response: lure.checked,
+            head_light: file.lights?.[1],
+            torso_light: file.lights?.[0],
+          }),
+        }));
+        piMediaResult.textContent =
+          `${file.name} ${lure.checked ? "enabled" : "disabled"} for lure playback.`;
+      } catch (error) {
+        lure.checked = !lure.checked;
+        piMediaResult.textContent = error.message;
+      } finally {
+        lure.disabled = false;
+      }
+    });
+    lureCell.append(lure);
+
     const actions = document.createElement("td");
     actions.className = "media-actions";
     const playing = String(body.playing_name || "") === String(file.name);
@@ -1890,7 +1920,7 @@ function renderPiMediaStatus(body) {
       } catch (error) { piMediaResult.textContent = error.message; }
     });
     actions.append(play, edit, remove);
-    row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
+    row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, lureCell, actions);
     rows.append(row);
   });
   table.append(head, rows);
@@ -2096,6 +2126,9 @@ function openMediaEditor(file, source = "skelly") {
   const isPi = source === "pi";
   document.querySelector("#media-edit-source").value = source;
   document.querySelector("#media-edit-name").value = file.name || "";
+  document.querySelector("#pi-media-display-name-setting").hidden = !isPi;
+  document.querySelector("#pi-media-display-name").value =
+    file.display_name || file.name || "";
   document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
   document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
   document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
@@ -2109,7 +2142,6 @@ function openMediaEditor(file, source = "skelly") {
   document.querySelector("#media-move-arm").checked = Boolean(action & 2);
   document.querySelector("#media-move-torso").checked = Boolean(action & 4);
   document.querySelector("#media-move-all").checked = (action & 7) === 7 || action === 255;
-  document.querySelector("#media-edit-nag-response").checked = file.nag_response === true;
   document.querySelector("#media-edit-eye").value = String(file.eye || 1);
   [["head", file.lights?.[1], "#00ff62"], ["torso", file.lights?.[0], "#3300ff"]].forEach(([name, light, fallback]) => {
     const block = document.querySelector(`[data-edit-light="${name}"]`);
@@ -2146,7 +2178,6 @@ mediaEditorForm.addEventListener("submit", async (event) => {
       | (document.querySelector("#media-move-torso").checked ? 4 : 0);
     const common = {
       action,
-      nag_response: document.querySelector("#media-edit-nag-response").checked,
       eye: Number(document.querySelector("#media-edit-eye").value),
       head_light: editLightValues("head"),
       torso_light: editLightValues("torso"),
@@ -2159,7 +2190,9 @@ mediaEditorForm.addEventListener("submit", async (event) => {
         body: JSON.stringify({
           ...common,
           name: document.querySelector("#media-edit-name").value,
+          display_name: document.querySelector("#pi-media-display-name").value.trim(),
           enabled: file?.enabled !== false,
+          nag_response: file?.nag_response === true,
           jaw_sync: document.querySelector("#media-edit-jaw-sync").checked,
           movement_activity: document.querySelector("#media-movement-activity").value,
         }),
