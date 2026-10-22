@@ -627,9 +627,15 @@ class PerceptionEngine:
                     self._next_listen_at = (
                         time.monotonic() + self._conversation_turn_delay_seconds
                     )
-                    # Once a conversation is active, reopen the listening path
-                    # quickly instead of idling for the full camera cadence.
-                    await asyncio.sleep(self._conversation_turn_delay_seconds)
+                    # Reopen quickly, but do not sleep through the whole turn delay.
+                    # Short loop ticks let departure confirmation accumulate clear
+                    # camera frames before another microphone capture.
+                    await asyncio.sleep(
+                        min(
+                            self._camera_interval_seconds,
+                            max(0.0, self._conversation_turn_delay_seconds),
+                        )
+                    )
                 except SensorUnavailable as exc:
                     self._last_error = str(exc)
                     self._phase = "sensor_error"
