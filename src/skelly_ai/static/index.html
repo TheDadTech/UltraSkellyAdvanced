@@ -207,7 +207,7 @@
         <form id="operation-settings-form" class="operation-settings-form">
           <label><span>Skelly Name</span><input id="skelly-name" type="text" minlength="1" maxlength="30" value="Skelly" autocomplete="off"><small class="help-copy">The name the AI uses for itself during conversations.</small></label>
           <label><span>Hardware setup</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label>
-          <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">Classic Mode</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
+          <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">Lab Mode</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
           <label class="check-setting"><input id="auto-start-operation" type="checkbox"><span><strong>Start automatically when this Pi boots</strong><small class="help-copy">Uses the saved default mode. Remain idle disables automatic startup.</small></span></label>
           <label id="fpp-override-setting" class="check-setting" hidden><input id="allow-fpp-override" type="checkbox"><span><strong>Allow FPP/xLights override</strong><small class="help-copy">When enabled, a show can temporarily take priority and release local DAC output.</small></span></label>
           <button type="submit">Save installation choices</button>
@@ -286,7 +286,7 @@
           </div>
         </div>
         <div class="mode-card-grid">
-          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>Classic Mode</h3><p>Play Skelly’s saved media with its built-in animations.</p><button type="button" data-start-operation="classic">Start Classic</button></article>
+          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>Lab Mode</h3><p>Build, test, and play Skelly or Pi media with lights, movement, jaw sync, and TTS.</p><button type="button" data-start-operation="classic">Start Lab Mode</button></article>
           <article class="mode-card featured" data-mode-card="ai"><span class="mode-icon">◎</span><h3>AI Mode <small>UNMANNED</small></h3><p>Detect visitors, listen, answer, track, and animate automatically.</p><button type="button" data-start-operation="ai">Start AI Mode</button></article>
           <article class="mode-card" data-mode-card="manual"><span class="mode-icon">✦</span><h3>Operator Mode <small>MANNED</small></h3><p>Type Skelly’s dialogue and puppeteer gestures, eyes, lights, and movement live.</p><button type="button" data-start-operation="manual">Start Operator Mode</button></article>
         </div>
@@ -296,8 +296,8 @@
       </section>
 
       <section id="classic-library-section">
-        <div class="section-heading"><div><h2>Classic media</h2><p class="muted help-copy">Choose media stored on Skelly or persistent audio stored on this Pi.</p></div></div>
-        <div class="media-source-switch" role="group" aria-label="Classic media source">
+        <div class="section-heading"><div><p class="section-kicker">THE LAB</p><h2>Media &amp; Effects</h2><p class="muted help-copy">Build, test, and reuse media stored on Skelly or persistent audio stored on this Pi.</p></div></div>
+        <div class="media-source-switch" role="group" aria-label="Lab media source">
           <span class="media-source-switch-label">Media source</span>
           <div class="media-source-segmented" role="radiogroup" aria-label="Select media source">
             <button id="show-skelly-media" type="button" role="radio" aria-checked="true" class="selected">Skelly</button>
@@ -320,7 +320,7 @@
             <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
             <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
           </div>
-          <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
+          <div id="media-library" class="media-library"><p class="muted help-copy">Start Lab Mode, then refresh the list.</p></div>
           <p id="media-result" class="result" aria-live="polite"></p>
         </div>
         <div id="pi-media-panel" hidden>
@@ -331,6 +331,16 @@
             <input id="pi-media-file-input" type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
             <input id="pi-media-filter" type="search" placeholder="Filter by name" aria-label="Filter Pi media files">
           </div>
+          <details class="provider-details">
+            <summary>Create TTS Media</summary>
+            <form id="pi-media-tts-form" class="operation-settings-form">
+              <label><span>Clip name</span><input id="pi-media-tts-name" type="text" maxlength="150" placeholder="Talk-to-me" required><small class="help-copy">Saved as a WAV file in Pi Media.</small></label>
+              <label><span>Text to speak</span><textarea id="pi-media-tts-text" rows="3" maxlength="600" required placeholder="Hey, you can talk to me."></textarea><small class="help-copy">Uses the currently selected voice. Cloud credits are used only when this clip is generated; replaying the saved clip is local.</small></label>
+              <label class="check-setting"><input id="pi-media-tts-lure" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes the generated clip immediately eligible when Lure Visitors is set to Media.</small></span></label>
+              <div class="controls"><button id="generate-pi-media-tts" type="submit">Generate &amp; Save TTS</button></div>
+              <p id="pi-media-tts-result" class="result" aria-live="polite"></p>
+            </form>
+          </details>
           <div class="pi-media-storage">
             <div><strong id="pi-media-usage">0 B used of 3 GB</strong><small id="pi-storage-free" class="muted">Checking Pi storage…</small></div>
             <div class="pi-media-quota-controls"><label>Media limit <input id="pi-media-quota-gb" type="number" min="1" max="1000" step="1" value="3"> GB</label><button id="save-pi-media-quota" type="button" class="secondary">Set limit</button></div>
@@ -435,16 +445,9 @@
             <small id="trigger-source-result" class="muted" aria-live="polite"></small>
           </div>
           <details class="provider-details visitor-engagement-details">
-            <summary>Welcome Message</summary>
-            <label class="check-setting"><input id="welcome-enabled" type="checkbox"><span><strong>Greet a newly detected visitor</strong><small class="help-copy">Plays once when Face or Motion starts a new visitor session. Audio-triggered sessions skip the welcome so Skelly never talks over someone who already spoke.</small></span></label>
-            <label><span>Welcome line</span><input id="welcome-message" type="text" maxlength="180" value="Well, well... somebody wandered into the wrong yard." autocomplete="off"><small class="help-copy">Uses the currently selected speaking voice.</small></label>
-            <div class="controls"><button id="save-welcome-message" type="button" class="secondary">Save welcome message</button></div>
-            <p id="welcome-message-result" class="result" aria-live="polite"></p>
-          </details>
-          <details class="provider-details visitor-engagement-details">
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
-              <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Media — Classic clips</option><option value="ai">AI — generated line</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
+              <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Media — Lab clips</option><option value="ai">AI — generated line</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
               <label><span>Delay before first lure <output id="nag-delay-value">2s</output></span><input id="nag-delay" type="range" min="1" max="30" step="1" value="2"><small class="help-copy">After a passerby is confirmed, lure them before the first listening window.</small></label>
               <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
               <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
@@ -885,7 +888,7 @@
 
       <dialog id="media-editor" class="media-editor">
         <form id="media-editor-form" method="dialog">
-          <div class="section-heading"><div><p id="media-editor-kicker" class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
+          <div class="section-heading"><div><p id="media-editor-kicker" class="section-kicker">LAB PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
           <input id="media-edit-serial" type="hidden"><input id="media-edit-source" type="hidden" value="skelly"><input id="media-edit-name" type="hidden">
           <div class="preset-grid">
             <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label><label id="media-movement-activity-setting" class="movement-activity-setting" hidden><span>Movement activity</span><select id="media-movement-activity"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select><small class="help-copy">Controls how often selected movements retrigger while Pi Media plays.</small></label></fieldset>
