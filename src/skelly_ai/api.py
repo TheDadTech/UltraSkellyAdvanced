@@ -252,6 +252,7 @@ class PiMediaQuotaRequest(BaseModel):
 class PiMediaTtsRequest(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     text: str = Field(min_length=1, max_length=600)
+    nag_response: bool = False
 
 
 def _listening_head_pose(
@@ -2975,6 +2976,8 @@ def create_app(
                         volume_percent=settings.elevenlabs_volume_percent,
                     )
             pi_media.add(filename, audio)
+            if request.nag_response:
+                pi_media.update(filename, {"nag_response": True})
         except (CloudSpeechUnavailable, SpeechUnavailable, PiMediaError) as exc:
             detail = str(exc)
             status_code = 409 if "already exists" in detail else 422
