@@ -249,6 +249,11 @@ class PiMediaQuotaRequest(BaseModel):
     quota_gb: int = Field(ge=1, le=1000)
 
 
+class PiMediaTtsRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=600)
+
+
 def _listening_head_pose(
     camera: dict[str, object],
     *,
@@ -1293,7 +1298,9 @@ def create_app(
         session_ended=end_local_session,
         phase_cue=show_local_phase_cue,
         nagger=perform_visitor_nag,
-        welcomer=perform_welcome,
+        # Welcome playback is intentionally paused. The saved fields remain for
+        # rollback compatibility while Lure Visitors handles first-contact audio.
+        welcomer=None,
         unattended_nagger=perform_unattended_nag,
         unattended_lure_settings=unattended_lure_settings,
         snapshotter=save_interaction_snapshot,
@@ -2927,6 +2934,56 @@ def create_app(
             detail = str(exc)
             status_code = 409 if "already exists" in detail else 413 if "exceed" in detail or "512 MB" in detail or "reserve" in detail else 422
             raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    @app.post("/api/pi-media/tts")
+    async def pi_media_tts(request: PiMediaTtsRequest) -> dict[str, object]:
+        require_manual_hardware_access()
+        text = " ".join(request.text.split())
+        filename = request.name.strip()
+        if not filename.casefold().endswith(".wav"):
+            filename += ".wav"
+
+        settings = provider_store.load()
+        try:
+            if settings.voice_provider == "local":
+                apply_local_voice_settings(settings)
+                audio = await local_speech.generate_wav_bytes(text)
+            else:
+                credentials = credential_store.load()
+                if settings.voice_provider == "groq":
+                    if credentials.groq_api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Save a Groq API key in Setup or choose Local Voice"
+                        )
+                    audio = await groq_voice.generate(
+                        credentials.groq_api_key,
+                        text,
+                        settings.groq_voice,
+                        settings.groq_voice_style,
+                    )
+                else:
+                    if credentials.api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Save an ElevenLabs API key in Setup or choose Local Voice"
+                        )
+                    audio = await elevenlabs_voice.generate(
+                        credentials.api_key,
+                        text,
+                        settings.elevenlabs_voice_id,
+                        model=settings.elevenlabs_model,
+                        speed=settings.elevenlabs_speed,
+                        volume_percent=settings.elevenlabs_volume_percent,
+                    )
+            pi_media.add(filename, audio)
+        except (CloudSpeechUnavailable, SpeechUnavailable, PiMediaError) as exc:
+            detail = str(exc)
+            status_code = 409 if "already exists" in detail else 422
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+
+        result = pi_media.status(playing_name=pi_media_playing_name)
+        result["generated_name"] = filename
+        result["voice_provider"] = settings.voice_provider
+        return result
 
     @app.post("/api/pi-media/play")
     async def pi_media_play(request: PiMediaPlayRequest) -> dict[str, object]:
