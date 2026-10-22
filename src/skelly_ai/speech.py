@@ -214,6 +214,27 @@ class LocalSpeech:
         if process.returncode == 0:
             self._jaw_mirror_level_cache = desired
 
+    async def generate_wav_bytes(self, text: str) -> bytes:
+        """Generate the configured local voice once for persistent Pi Media."""
+
+        clean_text = " ".join(text.split())
+        if not clean_text:
+            raise SpeechUnavailable("The local speech response is empty")
+        if not self.status()["generator_available"]:
+            raise SpeechUnavailable("espeak-ng is not installed on this Pi")
+
+        async with self._lock:
+            descriptor, filename = tempfile.mkstemp(
+                prefix="skelly-tts-media-", suffix=".wav"
+            )
+            os.close(descriptor)
+            wav_path = Path(filename)
+            try:
+                await self._generate(clean_text, wav_path)
+                return wav_path.read_bytes()
+            finally:
+                wav_path.unlink(missing_ok=True)
+
     async def speak(
         self,
         text: str,

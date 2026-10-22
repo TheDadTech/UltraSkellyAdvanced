@@ -414,10 +414,16 @@ def test_pi_media_beta_controls_are_present() -> None:
         '"/api/pi-media/edit"',
         '"/api/pi-media/delete"',
         '"/api/pi-media/quota"',
+        '"/api/pi-media/tts"',
     ):
         assert endpoint in script
     assert "10 GB safety reserve" in script or "10 GB safety reserve" in html
     assert "PI MEDIA PRESET" in script
+    assert 'id="pi-media-tts-form"' in html
+    assert 'id="generate-pi-media-tts"' in html
+    assert "Generate &amp; Save TTS" in html
+    assert "Replays use the saved local file" in script
+    assert "<th>Enabled</th>" in script
     assert "movement_activity" in script
     assert 'class="media-source-switch"' in html
     assert 'class="media-source-segmented"' in html
@@ -430,8 +436,35 @@ def test_pi_media_beta_controls_are_present() -> None:
 def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> None:
     script = (STATIC / "app.js").read_text(encoding="utf-8")
     helper = (ROOT / "deploy" / "usa-system-helper.py").read_text(encoding="utf-8")
+    nginx = (ROOT / "deploy" / "usa-nginx.conf").read_text(encoding="utf-8")
+    assert "client_max_body_size 512m;" in nginx
     assert "const raw = await response.text()" in script
     assert "JSON.parse(raw)" in script
     assert 'body = { detail: raw.trim()' in script
     assert 'action == "update-clean-stage"' in helper
     assert "def update_clean_stage" in helper
+
+
+def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() -> None:
+    sensors = (ROOT / "src" / "skelly_ai" / "sensors.py").read_text(encoding="utf-8")
+    assert "display_frame = cv2.flip(frame, 1)" in sensors
+    assert 'cv2.putText(\n                display_frame,\n                "face presence"' in sensors
+    assert "minNeighbors=6" in sensors
+    assert "minSize=(50, 50)" in sensors
+
+
+def test_welcome_message_ui_is_retired_but_legacy_settings_remain_compatible() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="welcome-enabled"' not in html
+    assert 'id="welcome-message"' not in html
+    assert 'id="save-welcome-message"' not in html
+    assert "welcome_enabled" in script
+    assert "welcome_message" in script
+
+
+def test_lab_labels_replace_classic_media_copy() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert "<h3>Lab Mode</h3>" in html
+    assert "<h2>Media &amp; Effects</h2>" in html
+    assert "THE LAB" in html
