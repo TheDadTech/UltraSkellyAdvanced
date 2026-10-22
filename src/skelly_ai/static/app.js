@@ -489,7 +489,7 @@ function updateModeVisibility(activeMode, profile) {
 
 function operationModeName(mode) {
   return {
-    classic: "Classic Mode",
+    classic: "Lab Mode",
     ai: "AI Mode",
     manual: "Operator Mode",
     idle: "Remain idle",
@@ -1565,7 +1565,7 @@ function renderMediaStatus(body) {
     empty.className = "muted";
     empty.textContent = filter ? "No stored files match that filter." : body.available
       ? "No media files reported yet. Press Refresh media list."
-      : "Connect the prop and start Classic mode first.";
+      : "Connect the prop and start Lab Mode first.";
     mediaLibrary.append(empty);
     return;
   }
