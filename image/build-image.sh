@@ -62,9 +62,11 @@ sed -i \
 # final export. It is only a first-boot changelog cache, so let pi-gen attempt
 # it briefly and continue if emulation cannot finish it.
 PI_GEN_FINALISE="${PI_GEN_DIR}/export-image/05-finalise/01-run.sh"
-sed -i \
-  's@python3 -m apt_listchanges.populate_database --profile apt@timeout -k 30s 5m python3 -m apt_listchanges.populate_database --profile apt || true@' \
-  "${PI_GEN_FINALISE}"
+if ! grep -Fq 'timeout -k 30s 5m python3 -m apt_listchanges.populate_database' "${PI_GEN_FINALISE}"; then
+  sed -i \
+    's@python3 -m apt_listchanges.populate_database --profile apt@timeout -k 30s 5m python3 -m apt_listchanges.populate_database --profile apt || true@' \
+    "${PI_GEN_FINALISE}"
+fi
 
 rm -rf "${CUSTOM_STAGE}"
 cp -a "${SCRIPT_DIR}/pi-gen-stage" "${CUSTOM_STAGE}"

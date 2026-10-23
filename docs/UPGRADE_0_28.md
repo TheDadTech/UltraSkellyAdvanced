@@ -38,13 +38,13 @@ copy remains available. Do not restore during other file transfers.
 
 ## Protected tools
 
-TTS, backups, and manual ZIP tools share the existing operator Basic credentials:
+TTS and backups share the existing operator Basic credentials:
 `SKELLY_TTS_USERNAME` (default `operator`) and `SKELLY_TTS_PASSWORD` (12+ characters).
-Without credentials configured, these routes accept only direct loopback access.
+Without credentials configured, TTS and backup routes accept only direct loopback access.
 Proxy/LAN access requires credentials. Existing ordinary control/setup routes
 retain their previous access policy. Use HTTPS for network access.
 
-Use **System & Tools → Sign in to protected tools**. Credentials remain in tab
+A sign-in dialog appears only when a protected action requires it. Credentials remain in tab
 memory and are cleared by reload; they are never stored in localStorage. The
 GUI loads protected audio into an in-memory browser preview. This flow works
 without relying on a native browser Basic-auth dialog. The backup password is
@@ -56,6 +56,10 @@ Use Check for updates to see installed and latest detected versions, reachabilit
 and last successful check. Stable is the default. Beta remains explicit opt-in;
 beta checks also fetch stable metadata. Connectivity checks do not install or
 contact voice providers. Failed checks retain the last known successful versions.
+
+Manual ZIP updates do not require the controller access password. They retain
+the existing local-network setup boundary, same-origin checks, package
+verification, explicit install confirmation and rollback.
 
 For a manual update, download the official USA release ZIP and its SHA-256 from
 the project's release page. Upload the ZIP, enter its version and published

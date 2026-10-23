@@ -31,7 +31,10 @@ def release(version='0.28.1'):
 
 def test_backup_api_authenticated_round_trip_and_no_secret_in_preview(tmp_path):
     with client_for(tmp_path) as c:
-        assert c.get('/api/backup/inventory').status_code == 401
+        challenge = c.get('/api/backup/inventory')
+        assert challenge.status_code == 401 and 'Basic' in challenge.headers['www-authenticate']
+        interactive = c.get('/api/backup/inventory', headers={'X-USA-Interactive-Auth':'1'})
+        assert interactive.status_code == 401 and 'www-authenticate' not in interactive.headers
         headers = {'X-Backup-Password': PASSWORD}
         r = c.post('/api/backup/download', headers=headers, auth=AUTH)
         assert r.status_code == 200 and r.headers['cache-control'] == 'no-store'
@@ -60,14 +63,15 @@ def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
     headers = {'X-USA-Version':'0.28.1', 'X-USA-SHA256':hashlib.sha256(data).hexdigest()}
     with client_for(tmp_path) as c:
         monkeypatch.setattr('skelly_ai.api.httpx.AsyncClient', lambda **kwargs: pytest.fail('manual ZIP must not contact GitHub'))
-        assert c.post('/api/update/manual/verify', content=data, headers=headers).status_code == 401
-        r=c.post('/api/update/manual/verify', content=data, headers=headers, auth=AUTH)
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'Origin':'https://other.invalid'}).status_code == 403
+        r=c.post('/api/update/manual/verify', content=data, headers=headers)
         assert r.status_code == 200, r.text
+        assert 'www-authenticate' not in r.headers
         token=r.json()['token']
-        assert c.post('/api/update/manual/install', json={'token':token}, auth=AUTH).status_code == 409
-        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-SHA256':'0'*64}, auth=AUTH).status_code == 422
-        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.27.4'}, auth=AUTH).status_code == 409
-        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.1-beta1'}, auth=AUTH).status_code == 409
+        assert c.post('/api/update/manual/install', json={'token':token}).status_code == 409
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-SHA256':'0'*64}).status_code == 422
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.27.4'}).status_code == 409
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.1-beta1'}).status_code == 409
 
 
 def test_manual_install_uses_existing_helper_path_and_verified_bytes(tmp_path, monkeypatch):

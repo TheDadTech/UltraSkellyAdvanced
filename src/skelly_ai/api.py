@@ -1419,7 +1419,7 @@ def create_app(
 
     @app.middleware("http")
     async def protect_tts(request: Request, call_next):
-        if request.url.path.startswith(("/api/pi-media/tts/", "/api/backup/", "/api/update/manual/")):
+        if request.url.path.startswith(("/api/pi-media/tts/", "/api/backup/")):
             # Use the actual peer, never caller-controlled forwarding headers.
             password = app_settings.tts_password
             if password is None:
@@ -1439,7 +1439,7 @@ def create_app(
                 except (ValueError, UnicodeError):
                     valid = False
                 if not valid:
-                    return JSONResponse(status_code=401, content={"detail": "TTS authentication required"}, headers={"WWW-Authenticate": 'Basic realm="TTS", charset="UTF-8"'})
+                    return JSONResponse(status_code=401, content={"detail": "TTS authentication required"}, headers={} if request.headers.get("x-usa-interactive-auth") == "1" else {"WWW-Authenticate": 'Basic realm="TTS", charset="UTF-8"'})
             origin = request.headers.get("origin")
             if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
                 return JSONResponse(status_code=403, content={"detail": "Cross-origin TTS access denied"})
@@ -2149,6 +2149,9 @@ def create_app(
 
     def maintenance_access(request: Request, *, idle: bool = False):
         require_local_setup(request)
+        origin = request.headers.get("origin")
+        if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
+            raise HTTPException(status_code=403, detail="Cross-origin maintenance access denied")
         if idle and (tts_generation_lock.locked() or pi_media._upload_lock.locked()):
             raise HTTPException(status_code=409, detail="Wait for current media transfers or generation to finish")
         if idle and (operation_state.get("active_mode") not in {None, "standby"} or controller.snapshot().mode == Mode.SHOW_LOCKED):

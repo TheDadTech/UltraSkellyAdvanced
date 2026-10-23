@@ -389,8 +389,8 @@ function initializeDashboardTabs() {
       document.querySelector("#elevenlabs-section"),
     ],
     diagnostics: [
-      document.querySelector("#sensor-lab-section"),
       document.querySelector("#help-mode-section"),
+      document.querySelector("#sensor-lab-section"),
       document.querySelector("#software-update-section"),
       document.querySelector("#maintenance-section"),
       document.querySelector("#diagnostics-section"),
@@ -445,9 +445,28 @@ setupHelpMode();
 initializeDashboardTabs();
 
 let operatorAuthorization = "";
+let operatorLoginPending = null;
+let finishOperatorLogin = null;
+function requireOperatorSignIn() {
+  if (!operatorLoginPending) {
+    operatorLoginPending = new Promise((resolve) => { finishOperatorLogin = resolve; });
+    document.querySelector("#operator-auth-result").textContent = "";
+    document.querySelector("#operator-auth-dialog").showModal();
+  }
+  return operatorLoginPending;
+}
+async function fetchWithOperatorAuth(path, options = {}) {
+  const send = () => fetch(path, {...options, headers: {"X-USA-Interactive-Auth": "1", ...options.headers, ...operatorAuthHeaders()}});
+  let response = await send();
+  if (response.status === 401 && /^\/api\/(?:backup\/|pi-media\/tts\/)/.test(path)) {
+    operatorAuthorization = "";
+    if (await requireOperatorSignIn()) response = await send();
+  }
+  return response;
+}
 function operatorAuthHeaders() { return operatorAuthorization ? {Authorization: operatorAuthorization} : {}; }
 async function request(path, options = {}) {
-  const response = await fetch(path, {...options, headers: {...operatorAuthHeaders(), ...options.headers}});
+  const response = await fetchWithOperatorAuth(path, options);
   const raw = await response.text();
   let body = {};
   if (raw) {
@@ -3787,7 +3806,7 @@ if (externalBluetoothForget) {
     buttons();
   };
   const jsonRequest = async (url, options = {}) => {
-    const response = await fetch(url, {
+    const response = await fetchWithOperatorAuth(url, {
       cache: 'no-store',
       credentials: 'same-origin',
       ...options,
@@ -3828,8 +3847,8 @@ if (externalBluetoothForget) {
       });
       previewId = data.preview_id;
       providerLabel.textContent = data.provider || 'Configured voice';
-      const previewResponse = await fetch(`${endpoint}/preview/${encodeURIComponent(previewId)}`, {headers: operatorAuthHeaders(), cache: 'no-store'});
-      if (!previewResponse.ok) throw new Error('Preview access failed. Sign in to protected tools in System & Tools.');
+      const previewResponse = await fetchWithOperatorAuth(`${endpoint}/preview/${encodeURIComponent(previewId)}`, {headers: operatorAuthHeaders(), cache: 'no-store'});
+      if (!previewResponse.ok) throw new Error('Preview access failed. Sign in with the controller access password.');
       previewObjectUrl = URL.createObjectURL(await previewResponse.blob());
       audioPlayer.src = previewObjectUrl;
       audioPlayer.hidden = false;
@@ -3881,7 +3900,7 @@ async function backupFile() {
   return file;
 }
 async function backupAction(action) {
-  const response = await fetch(`/api/backup/${action}`, {method: "POST", headers: {
+  const response = await fetchWithOperatorAuth(`/api/backup/${action}`, {method: "POST", headers: {
     ...backupHeaders(), ...(action === "restore" ? {"X-Restore-Confirm": "replace"} : {})
   }, body: await backupFile()});
   const payload = await response.json();
@@ -3898,7 +3917,7 @@ document.querySelector("#download-settings-backup").addEventListener("click", as
   const button = event.currentTarget; button.disabled = true;
   const result = document.querySelector("#backup-result");
   try {
-    const response = await fetch(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}`, {method: "POST", headers: backupHeaders()});
+    const response = await fetchWithOperatorAuth(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}`, {method: "POST", headers: backupHeaders()});
     if (!response.ok) throw new Error((await response.json()).detail || "Backup failed");
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a"); link.href = url; link.download = "usa-backup.usabackup"; link.click();
@@ -3958,15 +3977,29 @@ document.querySelector("#install-manual-update").addEventListener("click", async
   } catch (error) { document.querySelector("#manual-update-result").textContent = error.message; }
 });
 
-document.querySelector("#operator-sign-in").addEventListener("click", async () => {
+document.querySelector("#operator-sign-in").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
   const username = document.querySelector("#operator-auth-user").value;
   const password = document.querySelector("#operator-auth-password").value;
   operatorAuthorization = `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`${username}:${password}`)))}`;
+  button.disabled = true;
   try {
-    await request("/api/backup/inventory");
-    document.querySelector("#operator-auth-result").textContent = "Signed in for protected tools in this tab.";
+    const response = await fetch("/api/backup/inventory", {headers: {"X-USA-Interactive-Auth": "1", ...operatorAuthHeaders()}});
+    if (!response.ok) throw new Error("Sign-in failed. Check the username and controller access password.");
     document.querySelector("#operator-auth-password").value = "";
+    const finish = finishOperatorLogin;
+    operatorLoginPending = null; finishOperatorLogin = null;
+    document.querySelector("#operator-auth-dialog").close();
+    finish?.(true);
   } catch (error) { operatorAuthorization = ""; document.querySelector("#operator-auth-result").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector("#operator-auth-cancel").addEventListener("click", () => document.querySelector("#operator-auth-dialog").close());
+document.querySelector("#operator-auth-dialog").addEventListener("close", () => {
+  document.querySelector("#operator-auth-password").value = "";
+  const finish = finishOperatorLogin;
+  operatorLoginPending = null; finishOperatorLogin = null;
+  finish?.(false);
 });
 
 document.querySelector("#list-backup-recoveries").addEventListener("click", async () => {
@@ -3979,7 +4012,7 @@ document.querySelector("#list-backup-recoveries").addEventListener("click", asyn
       button.textContent = `Download ${file.name} (${(file.bytes / 1024).toFixed(1)} KiB)`;
       button.addEventListener("click", async () => {
         try {
-          const response = await fetch(`/api/backup/recovery/${encodeURIComponent(file.name)}`, {headers: operatorAuthHeaders()});
+          const response = await fetchWithOperatorAuth(`/api/backup/recovery/${encodeURIComponent(file.name)}`, {headers: operatorAuthHeaders()});
           if (!response.ok) throw new Error("Recovery download failed");
           const url = URL.createObjectURL(await response.blob());
           const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();

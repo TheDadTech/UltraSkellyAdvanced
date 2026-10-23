@@ -262,13 +262,7 @@
       </section>
 
       <section id="maintenance-section">
-        <details><summary>Sign in to protected tools</summary>
-          <p>For TTS, backups and manual updates through a proxy, use the operator credentials configured on this controller. Use HTTPS on remote connections.</p>
-          <label>Username <input id="operator-auth-user" value="operator" autocomplete="username"></label>
-          <label>Password <input id="operator-auth-password" type="password" autocomplete="current-password"></label>
-          <button id="operator-sign-in" type="button">Sign in</button>
-          <p id="operator-auth-result" role="status"></p>
-        </details>
+
         <details class="tools-card" id="backup-tools"><summary>Backup &amp; Restore<span>Encrypted settings, credentials and recovery copies</span></summary><div class="tools-card-content">
         <p>Encrypted backups include installation settings, voice settings, saved API credentials, and Pi Media presets. Optionally include audio files (128 MiB backup limit). WiFi passwords, host Bluetooth pairings, environment files, models and temporary previews are excluded. Keep the password safe: it cannot be recovered.</p>
         <label>Backup password (at least 12 characters) <input id="backup-password" type="password" minlength="12" maxlength="256" autocomplete="off"></label>
@@ -292,6 +286,15 @@
         <p id="manual-update-result" role="status"></p>
         </div></details>
       </section>
+
+      <dialog id="operator-auth-dialog" class="confirmation-dialog">
+        <h2>Sign in to continue</h2>
+        <p>This action requires the controller’s access password. This is separate from your backup password.</p>
+        <label>Username <input id="operator-auth-user" value="operator" autocomplete="username"></label>
+        <label>Password <input id="operator-auth-password" type="password" autocomplete="current-password"></label>
+        <div class="controls"><button id="operator-sign-in" type="button">Sign in</button><button id="operator-auth-cancel" type="button" class="secondary">Cancel</button></div>
+        <p id="operator-auth-result" role="status"></p>
+      </dialog>
 
       <dialog id="forget-skelly-dialog" class="confirmation-dialog">
         <form method="dialog">

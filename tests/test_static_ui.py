@@ -529,7 +529,7 @@ def test_lab_replaces_classic_mode_card_and_sensor_tests_stay_in_tools():
     operate = script.split("    operate: [", 1)[1].split("    setup:", 1)[0]
     assert '#classic-library-section' in operate and '#sensor-lab-section' not in operate
     tools = script.split('    diagnostics: [', 1)[1].split('    ],', 1)[0]
-    assert tools.index('#sensor-lab-section') < tools.index('#software-update-section')
+    assert tools.index('#help-mode-section') < tools.index('#sensor-lab-section') < tools.index('#software-update-section')
     assert '#dac-controller-section' not in operate
     assert 'id="tab-lab"' not in html and 'id="panel-lab"' not in html
     assert 'data-mode-card="classic"' in html and '<h3>The Lab</h3>' in html
@@ -537,3 +537,12 @@ def test_lab_replaces_classic_mode_card_and_sensor_tests_stay_in_tools():
     assert 'meta.textContent = `${formatBytes(file.size)}' in script
     assert 'isPi ? "Media preset"' in script
     assert 'document.querySelector("#sensor-lab-section").hidden = false' in script
+
+
+def test_access_login_is_contextual_not_a_standalone_tools_section():
+    html = (STATIC / "index.html").read_text()
+    script = (STATIC / "app.js").read_text()
+    assert 'Sign in to protected tools' not in html
+    assert '<dialog id="operator-auth-dialog"' in html
+    assert 'response.status === 401' in script
+    assert 'fetchWithOperatorAuth' in script
