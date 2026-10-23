@@ -189,6 +189,12 @@ class SensorLab:
         self._device_inventory_cached_at = now
         return inventory
 
+    def _speech_model_available(self) -> bool:
+        try:
+            return self.speech_model_path.is_dir()
+        except OSError:
+            return False
+
     def status(self) -> dict[str, object]:
         with self._state_lock:
             camera = dict(self._last_camera)
@@ -207,7 +213,7 @@ class SensorLab:
                 "device": self.microphone_device,
                 "devices": inventory["microphones"],
                 "voice_threshold_dbfs": self.voice_threshold_dbfs,
-                "offline_transcription_available": self.speech_model_path.is_dir(),
+                "offline_transcription_available": self._speech_model_available(),
                 "speech_model": self.speech_model_path.name,
                 **microphone,
             },
@@ -255,7 +261,7 @@ class SensorLab:
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             self._face_detector = cv2.CascadeClassifier(cascade_path)
         faces = self._face_detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50)
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(50, 50)
         )
 
         if self._hog is None:
@@ -274,50 +280,60 @@ class SensorLab:
             )
         self._previous_gray = gray
 
+        presence_detected = bool(len(people) or len(faces))
+        tracking_target = _tracking_target(faces, people, width, height)
+
+        # Keep detection/tracking coordinates in capture space, but flip the
+        # image before drawing preview overlays so labels remain readable.
+        display_frame = cv2.flip(frame, 1)
+
+        def display_x(x: int, box_width: int) -> int:
+            return max(0, width - int(x) - int(box_width))
+
         for x, y, box_width, box_height in people:
+            draw_x = display_x(x, box_width)
             cv2.rectangle(
-                frame,
-                (int(x), int(y)),
-                (int(x + box_width), int(y + box_height)),
+                display_frame,
+                (draw_x, int(y)),
+                (draw_x + int(box_width), int(y + box_height)),
                 (0, 140, 255),
                 2,
             )
             cv2.putText(
-                frame,
+                display_frame,
                 "person",
-                (int(x), max(18, int(y) - 7)),
+                (draw_x, max(18, int(y) - 7)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (0, 140, 255),
                 2,
             )
         for x, y, box_width, box_height in faces:
+            draw_x = display_x(x, box_width)
             cv2.rectangle(
-                frame,
-                (int(x), int(y)),
-                (int(x + box_width), int(y + box_height)),
+                display_frame,
+                (draw_x, int(y)),
+                (draw_x + int(box_width), int(y + box_height)),
                 (75, 210, 120),
                 2,
             )
             cv2.putText(
-                frame,
+                display_frame,
                 "face presence",
-                (int(x), max(18, int(y) - 7)),
+                (draw_x, max(18, int(y) - 7)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (75, 210, 120),
                 2,
             )
 
-        presence_detected = bool(len(people) or len(faces))
-        tracking_target = _tracking_target(faces, people, width, height)
         label = (
             f"presence: {'yes' if presence_detected else 'no'}  "
             f"motion: {motion_percent:.1f}%"
         )
-        cv2.rectangle(frame, (0, 0), (width, 34), (10, 10, 12), -1)
+        cv2.rectangle(display_frame, (0, 0), (width, 34), (10, 10, 12), -1)
         cv2.putText(
-            frame,
+            display_frame,
             label,
             (10, 23),
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -326,10 +342,6 @@ class SensorLab:
             1,
         )
 
-        # Keep detection/tracking coordinates unchanged, but present camera
-        # previews and saved interaction snapshots in the natural visitor-facing
-        # orientation instead of the mirrored capture view.
-        display_frame = cv2.flip(frame, 1)
         encoded, jpeg = cv2.imencode(
             ".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 82]
         )
@@ -467,7 +479,7 @@ class SensorLab:
         await asyncio.to_thread(self._new_vosk_recognizer)
 
     def _new_vosk_recognizer(self):
-        if not self.speech_model_path.is_dir():
+        if not self._speech_model_available():
             raise SensorUnavailable(
                 "The offline speech model is not installed; run deploy/install-speech-model.sh"
             )

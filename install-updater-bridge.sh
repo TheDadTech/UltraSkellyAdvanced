@@ -1,25 +1,51 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-TARGET_VERSION="0.25.6"
-RELEASE_URL="https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v${TARGET_VERSION}/UltraSkellyAdvanced-${TARGET_VERSION}-beta.zip"
-EXPECTED_SHA256="d7f8ce477a0d7df4d8646a3925fdfb56848033bbd797b0e24341d354061ed590"
+# Offline recovery for an owner-selected official release. Never defaults to a downgrade.
+if [[ $# -ne 3 ]]; then
+  echo "Usage: sudo bash $0 VERSION /absolute/path/to/release.zip PUBLISHED_SHA256" >&2
+  exit 2
+fi
+TARGET_VERSION="$1"
+RELEASE_ARCHIVE="$2"
+EXPECTED_SHA256="${3,,}"
+[[ "$TARGET_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$ ]] || { echo "Invalid version" >&2; exit 2; }
+[[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ && -f "$RELEASE_ARCHIVE" ]] || { echo "Provide a release ZIP and its published checksum" >&2; exit 2; }
+RELEASE_ARCHIVE="$(realpath "$RELEASE_ARCHIVE")"
+ACTUAL_SHA256="$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')"
+[[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || { echo "Checksum mismatch. Nothing was changed." >&2; exit 1; }
 DATA_DIR="/var/lib/skelly-ai"
-WORK_DIR="${DATA_DIR}/bridge-work"
-BACKUP_DIR="${DATA_DIR}/bridge-backup"
+RECOVERY_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+WORK_DIR="${DATA_DIR}/bridge-work-${RECOVERY_ID}"
+BACKUP_DIR="${DATA_DIR}/bridge-backup-${RECOVERY_ID}"
 ACTIVE_VENV="/opt/skelly-ai/venv"
-BACKUP_VENV="/opt/skelly-ai/venv.pre-updater-bridge"
+BACKUP_VENV="/opt/skelly-ai/venv.pre-updater-bridge-${RECOVERY_ID}"
 
 log() { printf '\n==> %s\n' "$*"; }
 fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 if [[ ${EUID} -ne 0 ]]; then
-  fail "Run this bridge as root, for example: curl -fsSL <bridge-url> | sudo bash"
+  fail "Run the documented recovery command with sudo, a local ZIP, version and published checksum"
 fi
 
-command -v curl >/dev/null 2>&1 || fail "curl is required."
+command -v curl >/dev/null 2>&1 || fail "curl is required for the final local health check."
 command -v python3 >/dev/null 2>&1 || fail "python3 is required."
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required."
+
+if [[ -x "${ACTIVE_VENV}/bin/python" ]]; then
+  INSTALLED_VERSION="$("${ACTIVE_VENV}/bin/python" -c 'from skelly_ai import __version__; print(__version__)')"
+  python3 - "$INSTALLED_VERSION" "$TARGET_VERSION" <<'CHECK_VERSION'
+import re, sys
+# Conservative release comparison: recovery never installs an older or identical base version.
+def base(v):
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", v)
+    if not match:
+        raise SystemExit("Cannot determine installed version; use the normal updater or seek support")
+    return tuple(map(int, match.groups()))
+if base(sys.argv[2]) <= base(sys.argv[1]):
+    raise SystemExit("Recovery requires a newer release. Use USA's rollback control for a previous version.")
+CHECK_VERSION
+fi
 
 INSTALLING_USER="${SUDO_USER:-}"
 if systemctl cat skelly-ai.service >/dev/null 2>&1; then
@@ -40,6 +66,32 @@ mkdir -p "${DATA_DIR}"
 chmod 700 "${DATA_DIR}" || true
 rm -rf "${WORK_DIR}"
 mkdir -p "${WORK_DIR}/source" "${BACKUP_DIR}"
+
+log "Validating and extracting the owner-verified release"
+python3 - "$RELEASE_ARCHIVE" "${WORK_DIR}/source" "$TARGET_VERSION" <<'VALIDATE_ZIP'
+import pathlib, stat, sys, tomllib, zipfile
+archive, destination, version = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+if archive.stat().st_size > 150 * 1024**2:
+    raise SystemExit("ZIP exceeds 150 MiB")
+with zipfile.ZipFile(archive) as bundle:
+    members = bundle.infolist()
+    if len(members) > 5000 or sum(m.file_size for m in members) > 350 * 1024**2:
+        raise SystemExit("ZIP expands beyond the allowed size")
+    seen = set()
+    for member in members:
+        path = pathlib.PurePosixPath(member.filename)
+        if path.is_absolute() or ".." in path.parts or "\\" in member.filename or member.filename in seen or stat.S_ISLNK(member.external_attr >> 16):
+            raise SystemExit("Unsafe ZIP entry")
+        seen.add(member.filename)
+    # Release packages have a flat root, as produced by package-release.sh.
+    metadata = tomllib.loads(bundle.read("pyproject.toml").decode())
+    if metadata.get("project", {}).get("name") != "skelly-ai" or metadata["project"].get("version") != version:
+        raise SystemExit("ZIP does not match the requested USA release")
+    for required in ("deploy/bootstrap-pi.sh", "deploy/usa-system-helper.py", "src/skelly_ai/api.py"):
+        if required not in seen:
+            raise SystemExit("Incomplete USA release")
+    bundle.extractall(destination)
+VALIDATE_ZIP
 
 restore_legacy() {
   set +e
@@ -98,28 +150,6 @@ for path in \
   fi
 done
 
-log "Downloading USA ${TARGET_VERSION} from GitHub"
-curl -fL --retry 3 --retry-delay 2 \
-  "${RELEASE_URL}" \
-  -o "${WORK_DIR}/UltraSkellyAdvanced-${TARGET_VERSION}-beta.zip"
-
-log "Verifying release checksum"
-ACTUAL_SHA256="$(sha256sum "${WORK_DIR}/UltraSkellyAdvanced-${TARGET_VERSION}-beta.zip" | awk '{print $1}')"
-if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
-  fail "Checksum mismatch. Expected ${EXPECTED_SHA256}, received ${ACTUAL_SHA256}. Nothing was installed."
-fi
-
-log "Extracting verified release"
-python3 -m zipfile -e \
-  "${WORK_DIR}/UltraSkellyAdvanced-${TARGET_VERSION}-beta.zip" \
-  "${WORK_DIR}/source"
-
-[[ -f "${WORK_DIR}/source/pyproject.toml" ]] || fail "Downloaded release is missing pyproject.toml."
-[[ -x "${WORK_DIR}/source/deploy/bootstrap-pi.sh" || -f "${WORK_DIR}/source/deploy/bootstrap-pi.sh" ]] || fail "Downloaded release is missing bootstrap-pi.sh."
-
-grep -Eq '^version[[:space:]]*=[[:space:]]*"0\.25\.6"[[:space:]]*$' "${WORK_DIR}/source/pyproject.toml" \
-  || fail "Downloaded package does not identify itself as USA ${TARGET_VERSION}."
-
 log "Installing updater-enabled USA ${TARGET_VERSION}"
 export USA_UPDATE_INSTALL=1
 export USA_INSTALLING_USER="${INSTALLING_USER}"
@@ -142,7 +172,7 @@ if [[ "${observed}" != "${TARGET_VERSION}" ]]; then
 fi
 
 # The bridge backup is intentionally NOT written into update-rollback.json.
-# Once on 0.25.6, all future updates use USA's normal managed rollback system.
+# Once recovered, all future updates use USA's normal managed rollback system.
 cat > "${DATA_DIR}/bridge-status.json" <<JSON
 {
   "state": "succeeded",

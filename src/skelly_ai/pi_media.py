@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import shutil
+import uuid
 from pathlib import Path
 
 
@@ -24,6 +27,7 @@ class PiMediaLibrary:
         self.data_dir = Path(data_dir)
         self.media_dir = self.data_dir / "media"
         self.state_path = self.data_dir / "pi-media.json"
+        self._upload_lock = asyncio.Lock()
 
     @staticmethod
     def _default_light() -> dict[str, object]:
@@ -40,6 +44,8 @@ class PiMediaLibrary:
     def _default_entry(cls, name: str, size: int) -> dict[str, object]:
         return {
             "name": name,
+            "id": uuid.uuid4().hex,
+            "display_name": name,
             "size": int(size),
             "enabled": True,
             "action": 255,
@@ -114,11 +120,21 @@ class PiMediaLibrary:
             entry = dict(saved.get(path.name) or self._default_entry(path.name, path.stat().st_size))
             entry["name"] = path.name
             entry["size"] = path.stat().st_size
+
+            # Migrate existing clips without changing their filename,
+            # settings, or playback references.
+            if not entry.get("id"):
+                entry["id"] = uuid.uuid4().hex
+                changed = True
+
+            if not isinstance(entry.get("display_name"), str) or not entry["display_name"].strip():
+                entry["display_name"] = path.name
+                changed = True
+
             saved[path.name] = entry
             result.append(entry)
-        for stale in set(saved) - present:
-            saved.pop(stale, None)
-            changed = True
+        # Retain metadata for absent audio so a settings-only backup can be
+        # restored before its separately copied media. Explicit delete removes it.
         if changed:
             self._save(state)
         return result
@@ -176,14 +192,108 @@ class PiMediaLibrary:
         try:
             temporary.write_bytes(data)
             temporary.chmod(0o600)
-            temporary.replace(destination)
+            try:
+                os.link(temporary, destination)
+            except FileExistsError:
+                raise PiMediaError("A Pi media file with that name already exists") from None
             destination.chmod(0o600)
         finally:
             temporary.unlink(missing_ok=True)
         state = self._load()
-        state["files"][clean] = self._default_entry(clean, len(data))
+        state["files"].setdefault(clean, self._default_entry(clean, len(data)))
         self._save(state)
         return self.get(clean)
+
+    async def add_stream(
+        self,
+        name: str,
+        chunks,
+        *,
+        display_name: str | None = None,
+    ) -> dict[str, object]:
+        """Safely store an upload without buffering the full file in RAM."""
+        import uuid
+
+        async with self._upload_lock:
+            clean = self._clean_name(name)
+            if display_name is not None and (
+                not isinstance(display_name, str)
+                or not display_name.strip()
+                or len(display_name.strip()) > 120
+            ):
+                raise PiMediaError("Media Name must contain 1 to 120 characters")
+
+            self._ensure_media_dir()
+            destination = self.media_dir / clean
+
+            if destination.exists():
+                raise PiMediaError("A Pi media file with that name already exists")
+
+            status = self.status()
+            allowed = min(
+                self.MAX_FILE_BYTES,
+                int(status["quota_remaining_bytes"]),
+                max(0, int(status["filesystem_free_bytes"]) - self.RESERVE_BYTES),
+            )
+
+            temporary = self.media_dir / f".{uuid.uuid4().hex}.upload"
+            total = 0
+            published = False
+
+            try:
+                with temporary.open("xb") as output:
+                    temporary.chmod(0o600)
+                    async for chunk in chunks:
+                        if not chunk:
+                            continue
+
+                        total += len(chunk)
+
+                        if total > self.MAX_FILE_BYTES:
+                            raise PiMediaError(
+                                "A single Pi media file may not exceed 512 MB"
+                            )
+
+                        if total > allowed:
+                            raise PiMediaError(
+                                "This upload would exceed the Pi Media quota "
+                                "or filesystem safety reserve"
+                            )
+
+                        output.write(chunk)
+
+                if total == 0:
+                    raise PiMediaError("The audio file is empty")
+
+                # Hard-link publication fails if the destination exists.
+                # Both paths are inside the same filesystem.
+                try:
+                    await asyncio.to_thread(
+                        os.link, temporary, destination
+                    )
+                except FileExistsError as exc:
+                    raise PiMediaError(
+                        "A Pi media file with that name already exists"
+                    ) from exc
+
+                published = True
+
+                state = self._load()
+                entry = dict(state["files"].get(clean) or self._default_entry(clean, total))
+                entry["size"] = total
+                if display_name is not None:
+                    entry["display_name"] = display_name.strip()
+                state["files"][clean] = entry
+                self._save(state)
+
+                return self.get(clean)
+
+            except BaseException:
+                if published:
+                    destination.unlink(missing_ok=True)
+                raise
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def delete(self, name: str) -> None:
         self._ensure_media_dir()
@@ -199,6 +309,24 @@ class PiMediaLibrary:
     def update(self, name: str, values: dict[str, object]) -> dict[str, object]:
         clean = self._clean_name(name)
         current = self.get(clean)
+        if "display_name" in values:
+            display_name = values["display_name"]
+            if (
+                not isinstance(display_name, str)
+                or not display_name.strip()
+                or len(display_name.strip()) > 120
+            ):
+                raise PiMediaError(
+                    "Media Name must contain 1 to 120 characters"
+                )
+            values = dict(values)
+            values["display_name"] = display_name.strip()
+
+        # The filename and permanent ID must not be overwritten.
+        values = {
+            key: value for key, value in values.items()
+            if key not in {"id", "name"}
+        }
         current.update(values)
         current["name"] = clean
         state = self._load()

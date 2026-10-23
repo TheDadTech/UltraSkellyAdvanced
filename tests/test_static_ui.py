@@ -155,7 +155,7 @@ def test_guided_operation_interface_is_present() -> None:
     assert 'request("/api/operation/start"' in script
     assert 'request("/api/setup/forget-skelly"' in script
     assert 'request("/api/media/refresh"' in script
-    assert 'if (selectedMode === "classic") await refreshMediaFromSkelly()' in script
+    assert 'if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }' in script
     assert 'request(check ? "/api/update/check" : "/api/update/status"' in script
     assert 'request("/api/update/install", { method: "POST" })' in script
     assert 'request("/api/update/rollback", { method: "POST" })' in script
@@ -355,7 +355,6 @@ def test_build2_visitor_engagement_and_classic_movement_controls_present() -> No
         'id="media-move-arm"',
         'id="media-move-torso"',
         'id="media-move-all"',
-        'id="media-edit-nag-response"',
     ):
         assert marker in html
     assert 'nag_response:' in js
@@ -435,3 +434,115 @@ def test_update_ui_handles_plain_text_errors_and_helper_can_clean_staging() -> N
     assert 'body = { detail: raw.trim()' in script
     assert 'action == "update-clean-stage"' in helper
     assert "def update_clean_stage" in helper
+
+
+def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() -> None:
+    sensors = (ROOT / "src" / "skelly_ai" / "sensors.py").read_text(encoding="utf-8")
+    assert "display_frame = cv2.flip(frame, 1)" in sensors
+    assert 'cv2.putText(\n                display_frame,\n                "face presence"' in sensors
+    assert "minNeighbors=6" in sensors
+    assert "minSize=(50, 50)" in sensors
+
+
+def test_welcome_controls_removed_without_resetting_legacy_settings() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="welcome-enabled"' not in html
+    assert 'id="welcome-message"' not in html
+    assert 'id="save-welcome-message"' not in html
+    assert 'welcome_enabled: currentOperationSettings?.welcome_enabled ?? false' in script
+    assert 'welcome_message: currentOperationSettings?.welcome_message ?? ""' in script
+
+
+def test_pi_media_upload_progress_controls():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src/skelly_ai/static/index.html").read_text()
+    script = (root / "src/skelly_ai/static/app.js").read_text()
+
+    controls = [
+        "pi-media-upload-progress",
+        "pi-media-upload-name",
+        "pi-media-upload-percent",
+        "pi-media-upload-bar",
+        "pi-media-upload-phase",
+        "pi-media-upload-cancel",
+    ]
+
+    for control in controls:
+        assert html.count(f'id="{control}"') == 1
+
+    assert 'new XMLHttpRequest()' in script
+    assert 'xhr.upload.addEventListener("progress"' in script
+    assert 'activePiUpload.abort()' in script
+    assert '"Processing on Pi…"' in script
+    assert 'xhr.addEventListener("error"' in script
+    assert 'xhr.addEventListener("timeout"' in script
+
+
+
+def test_pi_media_lure_assignment_moved_to_table():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src/skelly_ai/static/index.html").read_text()
+    script = (root / "src/skelly_ai/static/app.js").read_text()
+
+    # Lure must no longer appear in the shared Edit dialog.
+    assert 'id="media-edit-nag-response"' not in html
+
+    # Pi Media must provide its own Lure column.
+    assert '<th>Lure</th><th>Name</th>' in script
+    assert '<th>Jaw</th><th>Actions</th>' in script
+    assert 'lureCell.append(lure)' in script
+    assert 'row.append(lureCell, nameCell,' in script
+    assert 'movement, eye, jaw, actions' in script
+
+    # Assignment must be saved through the existing Pi Media API.
+    assert 'nag_response: lure.checked' in script
+    assert 'nag_response: file?.nag_response === true' in script
+    assert '"/api/pi-media/edit"' in script
+
+
+def test_pi_media_editable_display_name():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src/skelly_ai/static"
+    html = (root / "index.html").read_text()
+    script = (root / "app.js").read_text()
+
+    assert html.count('id="pi-media-display-name"') == 1
+    assert html.count('id="pi-media-display-name-setting"') == 1
+
+    assert 'file.display_name || file.name' in script
+    assert 'display_name: document.querySelector("#pi-media-display-name").value.trim()' in script
+    assert 'title.textContent = file.display_name || file.name' in script
+
+    # Original filename stays available for playback and file identity.
+    assert 'document.querySelector("#media-edit-name").value = file.name || ""' in script
+
+
+def test_lab_replaces_classic_mode_card_and_sensor_tests_stay_in_tools():
+    script = (STATIC / "app.js").read_text()
+    html = (STATIC / "index.html").read_text()
+    operate = script.split("    operate: [", 1)[1].split("    setup:", 1)[0]
+    assert '#classic-library-section' in operate and '#sensor-lab-section' not in operate
+    tools = script.split('    diagnostics: [', 1)[1].split('    ],', 1)[0]
+    assert tools.index('#help-mode-section') < tools.index('#sensor-lab-section') < tools.index('#software-update-section')
+    assert '#dac-controller-section' not in operate
+    assert 'id="tab-lab"' not in html and 'id="panel-lab"' not in html
+    assert 'data-mode-card="classic"' in html and '<h3>The Lab</h3>' in html
+    assert html.count('data-start-operation="classic"') == 1
+    assert 'meta.textContent = `${formatBytes(file.size)}' in script
+    assert 'isPi ? "Media preset"' in script
+    assert 'document.querySelector("#sensor-lab-section").hidden = false' in script
+
+
+def test_access_login_is_contextual_not_a_standalone_tools_section():
+    html = (STATIC / "index.html").read_text()
+    script = (STATIC / "app.js").read_text()
+    assert 'Sign in to protected tools' not in html
+    assert '<dialog id="operator-auth-dialog"' in html
+    assert 'response.status === 401' in script
+    assert 'fetchWithOperatorAuth' in script

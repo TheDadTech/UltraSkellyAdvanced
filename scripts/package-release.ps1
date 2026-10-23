@@ -15,6 +15,7 @@ $version = $versionLine.Matches[0].Groups[1].Value
 $baseName = "UltraSkellyAdvanced-$version-$Label"
 $destination = Join-Path $OutputDirectory "$baseName.zip"
 $checksumPath = "$destination.sha256"
+if ((Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath $checksumPath)) { throw "Refusing to overwrite existing release artifacts" }
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("usa-release-" + [guid]::NewGuid().ToString("N"))
 
 try {
@@ -27,6 +28,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "src\skelly_ai") -Destination (Join-Path $staging "src") -Recurse
 
     foreach ($file in @(
+        "install-updater-bridge.sh",
         ".gitignore",
         "Banner Image.png",
         "DISTRIBUTION.md",
@@ -44,10 +46,10 @@ try {
         Sort-Object FullName -Descending |
         Remove-Item -Recurse -Force
     Get-ChildItem -LiteralPath $staging -File -Recurse -Force |
-        Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+        Where-Object { $_.Extension -in @(".pyc", ".pyo", ".bak", ".tmp") } |
         Remove-Item -Force
 
-    Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $destination -CompressionLevel Optimal -Force
+    Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $destination -CompressionLevel Optimal
     $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
     Set-Content -LiteralPath $checksumPath -Encoding ascii -NoNewline -Value "$hash  $baseName.zip`n"
 

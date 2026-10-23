@@ -1,3 +1,15 @@
+# UltraSkellyAdvanced 0.28.0 Beta
+
+- Replaces Classic with **The Lab**, preserving existing media controls.
+- Adds friendly Pi Media names, a dedicated Lure column and graphical Eye Picker.
+- Adds TTS media generation, browser preview, caching, save and discard.
+- Improves uploads with progress, cancellation and clearer errors.
+- Adds encrypted settings and credentials backups, optional media backup and restore previews.
+- Added Manual/Offline Update Option.
+- More robust System & Tools, added System Health and GitHub connectivity reporting.
+
+**Beta limitations:** Backups exclude host Wi-Fi/Bluetooth configuration and environment files. The 0.27.4 upgrade has passed Ubuntu package/staging checks; installation and rollback validation on a spare card remain pending.
+
 # UltraSkellyAdvanced 0.27.1
 
 - Renames the Diagnostics dashboard tab to **System & Tools** for clearer navigation.

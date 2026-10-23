@@ -140,6 +140,8 @@ sudo systemctl enable --now nginx
 # `enable --now` does not reload an already-running nginx instance during an
 # update. Restart it so the newly installed USA proxy and captive routes are
 # active before preflight runs.
+# Validate the newly installed nginx configuration before restarting.
+sudo nginx -t
 sudo systemctl restart nginx
 sudo systemctl enable usa-network
 sudo systemctl enable hciuart.service 2>/dev/null || true

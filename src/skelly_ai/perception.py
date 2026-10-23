@@ -41,6 +41,7 @@ Responder = Callable[[str, list[dict[str, str]]], Awaitable[dict[str, object]]]
 SessionEnded = Callable[[], Awaitable[None]]
 PhaseCue = Callable[[str], Awaitable[None]]
 Nagger = Callable[[int, float, float | None], Awaitable[dict[str, object] | None]]
+Welcomer = Callable[[], Awaitable[dict[str, object] | None]]
 UnattendedNagger = Callable[[], Awaitable[dict[str, object] | None]]
 UnattendedLureSettings = Callable[[], dict[str, object]]
 Snapshotter = Callable[[int, int, int], Awaitable[str | None]]
@@ -95,6 +96,7 @@ class PerceptionEngine:
         session_ended: SessionEnded | None = None,
         phase_cue: PhaseCue | None = None,
         nagger: Nagger | None = None,
+        welcomer: Welcomer | None = None,
         unattended_nagger: UnattendedNagger | None = None,
         unattended_lure_settings: UnattendedLureSettings | None = None,
         snapshotter: Snapshotter | None = None,
@@ -105,7 +107,7 @@ class PerceptionEngine:
         record_seconds: int = 5,
         silence_seconds: float = 1.4,
         listen_retry_seconds: float = 1.0,
-        conversation_turn_delay_seconds: float = 1.0,
+        conversation_turn_delay_seconds: float = 0.4,
         departure_motion_threshold: float = 1.0,
         max_events: int = 50,
     ) -> None:
@@ -115,6 +117,7 @@ class PerceptionEngine:
         self._session_ended = session_ended
         self._phase_cue = phase_cue
         self._nagger = nagger
+        self._welcomer = welcomer
         self._unattended_nagger = unattended_nagger
         self._unattended_lure_settings = unattended_lure_settings
         self._snapshotter = snapshotter
@@ -267,6 +270,18 @@ class PerceptionEngine:
             self._last_error = str(exc)
 
 
+    async def _maybe_welcome(self) -> dict[str, object] | None:
+        if self._welcomer is None or not self._session_active:
+            return None
+        try:
+            result = await self._welcomer()
+        except RuntimeError as exc:
+            self._last_error = str(exc)
+            return None
+        if result and bool(result.get("performed")):
+            self._phase = "welcoming"
+        return result
+
     async def _maybe_nag(self) -> dict[str, object] | None:
         if self._nagger is None or not self._session_active:
             return None
@@ -400,11 +415,18 @@ class PerceptionEngine:
                             continue
                         self._begin_session()
                         self._phase = "visitor_confirmed"
-                        # A face/motion-confirmed passerby gets the configured
-                        # lure opportunity before the first microphone window.
-                        # If Audio itself triggered the session, they already
-                        # spoke, so listen immediately instead of luring.
+                        # A visual trigger may greet the visitor once. Audio-triggered
+                        # sessions skip the welcome because the visitor already spoke.
+                        welcomed = False
                         if not audio_active:
+                            welcome = await self._maybe_welcome()
+                            welcomed = bool(
+                                isinstance(welcome, dict) and welcome.get("performed")
+                            )
+
+                        # Preserve the existing lure behavior when no welcome was
+                        # performed. Never stack a welcome and a lure back-to-back.
+                        if not audio_active and not welcomed:
                             lure = await self._maybe_nag()
                             wait_seconds = (
                                 float(lure.get("wait_seconds") or 0.0)
@@ -481,7 +503,8 @@ class PerceptionEngine:
                         )
                         continue
 
-                    self._clear_streak = 0
+                    if trigger_settings.get("audio", False) and microphone.get("voice_active"):
+                        self._clear_streak = 0
                     snapshot_url: str | None = None
                     if self._snapshotter is not None:
                         try:
@@ -604,7 +627,15 @@ class PerceptionEngine:
                     self._next_listen_at = (
                         time.monotonic() + self._conversation_turn_delay_seconds
                     )
-                    await asyncio.sleep(self._camera_interval_seconds)
+                    # Reopen quickly, but do not sleep through the whole turn delay.
+                    # Short loop ticks let departure confirmation accumulate clear
+                    # camera frames before another microphone capture.
+                    await asyncio.sleep(
+                        min(
+                            self._camera_interval_seconds,
+                            max(0.0, self._conversation_turn_delay_seconds),
+                        )
+                    )
                 except SensorUnavailable as exc:
                     self._last_error = str(exc)
                     self._phase = "sensor_error"

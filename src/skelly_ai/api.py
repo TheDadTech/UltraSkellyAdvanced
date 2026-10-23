@@ -1,20 +1,27 @@
 import asyncio
+import base64
+import secrets
 import ipaddress
 import json
 import os
 import re
 import random
 import time
+import tempfile
+import shutil
+import zipfile
+from datetime import datetime, UTC
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response, JSONResponse
 import httpx
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
+from .backups import BackupManager, BackupError
 from . import __version__
 from .brain import BrainResponseError, BrainUnavailable, LocalBrain
 from .audio_output import (
@@ -56,6 +63,7 @@ from .hardware import (
 )
 from .perception import PerceptionEngine
 from .pi_media import PiMediaError, PiMediaLibrary
+from .tts_previews import TTSPreviewError, TTSPreviewManager
 from .operation_settings import (
     OperationSettings,
     OperationSettingsStore,
@@ -224,6 +232,16 @@ class MediaDeleteRequest(BaseModel):
     serial: int = Field(ge=1, le=65535)
 
 
+class PiMediaTTSSaveRequest(BaseModel):
+    preview_id: str = Field(min_length=32, max_length=32)
+    filename: str = Field(min_length=1, max_length=160)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class PiMediaTTSGenerateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+
+
 class PiMediaPlayRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     enabled: bool = True
@@ -231,6 +249,7 @@ class PiMediaPlayRequest(BaseModel):
 
 class PiMediaEditRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
     enabled: bool = True
     action: int = Field(default=255, ge=0, le=255)
     eye: int = Field(default=1, ge=1, le=18)
@@ -419,6 +438,8 @@ def create_app(
     )
     nag_media_path = app_settings.data_dir / "nag-media.json"
     pi_media = PiMediaLibrary(app_settings.data_dir)
+    tts_previews = TTSPreviewManager(app_settings.data_dir)
+    tts_generation_lock = asyncio.Lock()
     pi_media_task: asyncio.Task | None = None
     pi_media_playing_name: str | None = None
 
@@ -1278,6 +1299,8 @@ def create_app(
         session_ended=end_local_session,
         phase_cue=show_local_phase_cue,
         nagger=perform_visitor_nag,
+        # Retain stored legacy welcome fields, but never play an automatic greeting.
+        welcomer=None,
         unattended_nagger=perform_unattended_nag,
         unattended_lure_settings=unattended_lure_settings,
         snapshotter=save_interaction_snapshot,
@@ -1393,6 +1416,35 @@ def create_app(
         await hardware.disconnect()
 
     app = FastAPI(title="UltraSkellyAdvanced", version=__version__, lifespan=lifespan)
+
+    @app.middleware("http")
+    async def protect_tts(request: Request, call_next):
+        if request.url.path.startswith(("/api/pi-media/tts/", "/api/backup/")):
+            # Use the actual peer, never caller-controlled forwarding headers.
+            password = app_settings.tts_password
+            if password is None:
+                try:
+                    local = bool(request.client) and ipaddress.ip_address(request.client.host).is_loopback
+                except ValueError:
+                    local = False
+                if not local or any(header in request.headers for header in ("forwarded", "x-forwarded-for", "x-real-ip")):
+                    return JSONResponse(status_code=403, content={"detail": "Remote TTS requires SKELLY_TTS_PASSWORD"})
+            else:
+                try:
+                    scheme, encoded = request.headers.get("authorization", "").split(" ", 1)
+                    username, supplied = base64.b64decode(encoded, validate=True).decode().split(":", 1)
+                    valid = scheme.lower() == "basic"
+                    valid &= secrets.compare_digest(username.encode(), app_settings.tts_username.encode())
+                    valid &= secrets.compare_digest(supplied.encode(), password.get_secret_value().encode())
+                except (ValueError, UnicodeError):
+                    valid = False
+                if not valid:
+                    return JSONResponse(status_code=401, content={"detail": "TTS authentication required"}, headers={} if request.headers.get("x-usa-interactive-auth") == "1" else {"WWW-Authenticate": 'Basic realm="TTS", charset="UTF-8"'})
+            origin = request.headers.get("origin")
+            if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse(status_code=403, content={"detail": "Cross-origin TTS access denied"})
+        return await call_next(request)
+
     app.state.settings = app_settings
     app.state.controller = controller
     app.state.hardware = hardware
@@ -1969,6 +2021,28 @@ def create_app(
     def is_prerelease(value: str) -> bool:
         return bool(re.search(r"(?:beta|b|rc|dev)", value, flags=re.IGNORECASE))
 
+    connectivity_path = app_settings.data_dir / "update-connectivity.json"
+    try:
+        update_connectivity = json.loads(connectivity_path.read_text())
+        if not isinstance(update_connectivity, dict):
+            update_connectivity = {}
+    except (OSError, ValueError):
+        update_connectivity = {}
+
+    def record_connectivity(channel: str, version: str | None = None, error: str | None = None):
+        update_connectivity.update(reachable=error is None, error=error)
+        if version:
+            update_connectivity[channel] = version
+            update_connectivity["last_success"] = datetime.now(UTC).isoformat()
+        try:
+            connectivity_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = connectivity_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(update_connectivity))
+            temporary.chmod(0o600)
+            temporary.replace(connectivity_path)
+        except OSError:
+            pass  # Connectivity display remains usable if persistence is unavailable.
+
     def update_status_payload(
         *,
         latest_version: str | None = None,
@@ -1984,6 +2058,7 @@ def create_app(
             and version_key(latest_version) > version_key(__version__)
         )
         return {
+            "connectivity": dict(update_connectivity),
             "current_version": __version__,
             "channel": channel,
             "beta_enabled": channel == "beta",
@@ -2030,12 +2105,15 @@ def create_app(
                 response.raise_for_status()
                 manifest = response.json()
         except (httpx.HTTPError, ValueError) as exc:
+            record_connectivity(selected_channel, error="Cannot reach the release service. Check Internet access, DNS and controller time; try again later.")
             raise HTTPException(
                 status_code=503,
                 detail="The Pi could not read the configured USA release channel",
             ) from exc
-        if not isinstance(manifest, dict):
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("version"), str):
+            record_connectivity(selected_channel, error="Release service returned an invalid manifest; try again later.")
             raise HTTPException(status_code=502, detail="The update manifest is invalid")
+        record_connectivity(selected_channel, version=manifest["version"])
         return manifest
 
     @app.post("/api/update/check")
@@ -2044,6 +2122,11 @@ def create_app(
         if not manifest_url_for_channel(channel):
             return update_status_payload()
         manifest = await read_update_manifest(channel)
+        if channel == "beta":
+            try:
+                await read_update_manifest("stable")
+            except HTTPException:
+                pass
         latest = str(manifest.get("version", "")).strip()
         if not latest:
             raise HTTPException(status_code=502, detail="The update manifest has no version")
@@ -2060,6 +2143,156 @@ def create_app(
         else:
             payload["message"] = "This Pi is running the latest published version."
         return payload
+
+    maintenance_lock = asyncio.Lock()
+    backups = BackupManager(app_settings.data_dir)
+
+    def maintenance_access(request: Request, *, idle: bool = False):
+        require_local_setup(request)
+        origin = request.headers.get("origin")
+        if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
+            raise HTTPException(status_code=403, detail="Cross-origin maintenance access denied")
+        if idle and (tts_generation_lock.locked() or pi_media._upload_lock.locked()):
+            raise HTTPException(status_code=409, detail="Wait for current media transfers or generation to finish")
+        if idle and (operation_state.get("active_mode") not in {None, "standby"} or controller.snapshot().mode == Mode.SHOW_LOCKED):
+            raise HTTPException(status_code=409, detail="Stop the current operation before restoring or installing")
+        if maintenance_lock.locked():
+            raise HTTPException(status_code=409, detail="Another maintenance operation is running")
+
+    async def bounded_upload(request: Request, limit: int, destination: Path):
+        received = 0
+        with destination.open("wb") as stream:
+            destination.chmod(0o600)
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > limit:
+                    raise HTTPException(status_code=413, detail="Upload exceeds the size limit")
+                stream.write(chunk)
+        if not received:
+            raise HTTPException(status_code=422, detail="Select a nonempty file")
+
+    @app.get("/api/backup/inventory")
+    async def backup_inventory(request: Request, media: bool = False):
+        maintenance_access(request)
+        try:
+            return backups.inventory(media)
+        except BackupError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.get("/api/backup/recoveries")
+    async def backup_recoveries(request: Request):
+        maintenance_access(request)
+        directory = app_settings.data_dir / "backups"
+        if directory.is_symlink():
+            raise HTTPException(status_code=422, detail="Recovery directory must not be linked")
+        files = sorted((p for p in directory.glob("recovery-*.usabackup") if p.is_file() and not p.is_symlink()), key=lambda p: p.stat().st_mtime, reverse=True)
+        return {"files": [{"name": p.name, "bytes": p.stat().st_size} for p in files[:20]]}
+
+    @app.get("/api/backup/recovery/{name}")
+    async def backup_recovery(request: Request, name: str):
+        maintenance_access(request)
+        if not re.fullmatch(r"recovery-[0-9a-f]{24}\.usabackup", name):
+            raise HTTPException(status_code=404, detail="Recovery copy not found")
+        path = app_settings.data_dir / "backups" / name
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+            raise HTTPException(status_code=404, detail="Recovery copy not found")
+        return FileResponse(path, filename=name, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
+
+    def backup_password(request: Request) -> str:
+        encoded = request.headers.get("x-backup-password-encoded")
+        if encoded is None:
+            return request.headers.get("x-backup-password", "")
+        if len(encoded) > 2048:
+            raise BackupError("Backup password is too long")
+        try:
+            return base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeError):
+            raise BackupError("Invalid backup password encoding") from None
+
+    def effective_backup_settings():
+        credentials = credential_store.load()
+        overrides = {
+            "operation-settings.json": operation_store.load().model_dump_json().encode(),
+            "provider-settings.json": provider_store.load().model_dump_json().encode(),
+            "credentials.json": json.dumps({"groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
+        }
+        return overrides
+
+    @app.post("/api/backup/download")
+    async def backup_download(request: Request, media: bool = False):
+        maintenance_access(request)
+        async with maintenance_lock:
+            try:
+                overrides = effective_backup_settings()
+                payload = await asyncio.to_thread(backups.create, backup_password(request), media, overrides)
+                return Response(payload, media_type="application/octet-stream", headers={"Content-Disposition": 'attachment; filename="usa-backup.usabackup"', "Cache-Control": "no-store"})
+            except (BackupError, OSError):
+                raise HTTPException(status_code=422, detail="Could not create backup. Check password length, size and storage.") from None
+
+    @app.post("/api/backup/inspect")
+    @app.post("/api/backup/restore")
+    async def backup_restore(request: Request):
+        restore = request.url.path.endswith("/restore")
+        maintenance_access(request, idle=restore)
+        async with maintenance_lock:
+            try:
+                with tempfile.TemporaryDirectory(prefix="usa-backup-") as directory:
+                    upload = Path(directory) / "backup"
+                    await bounded_upload(request, backups.MAX_BYTES, upload)
+                    password = backup_password(request)
+                    files = await asyncio.to_thread(backups.inspect, upload.read_bytes(), password)
+                    if not restore:
+                        return {"files": sorted(files), "bytes": sum(map(len, files.values())), "message": "Validated. Restore replaces the listed files. Existing different audio files are never overwritten."}
+                    if request.headers.get("x-restore-confirm") != "replace":
+                        raise HTTPException(status_code=409, detail="Review and confirm restore first")
+                    recovery = await asyncio.to_thread(backups.restore, files, password, effective_backup_settings())
+                    return {"message": "Backup restored. Restart USA to apply settings. Pair speakers and reconnect WiFi on a replacement controller.", "recovery": recovery}
+            except BackupError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            except OSError:
+                raise HTTPException(status_code=422, detail="Backup storage operation failed") from None
+
+    @app.post("/api/update/manual/verify")
+    async def verify_manual_update(request: Request):
+        maintenance_access(request)
+        version = request.headers.get("x-usa-version", "")
+        if len(version) > 80 or not re.fullmatch(r"\d{1,6}\.\d{1,6}\.\d{1,6}(?:[-+][A-Za-z0-9.-]{1,40})?", version):
+            raise HTTPException(status_code=422, detail="Enter a valid release version")
+        if version_key(version) <= version_key(__version__):
+            raise HTTPException(status_code=409, detail="Manual updates must be newer than this installation. Use Roll back for recovery.")
+        if is_prerelease(version) and load_update_channel() != "beta":
+            raise HTTPException(status_code=409, detail="Enable Beta releases before uploading a beta package")
+        async with maintenance_lock:
+            try:
+                with tempfile.TemporaryDirectory(prefix="usa-update-") as directory:
+                    archive = Path(directory) / "release.zip"
+                    await bounded_upload(request, updates.MAX_DOWNLOAD_BYTES, archive)
+                    verified = await asyncio.to_thread(updates.verify_manual, archive, version, request.headers.get("x-usa-sha256", ""))
+                    verified["installable"] = not app_settings.simulation
+                    if app_settings.simulation:
+                        verified["message"] += " Installation is disabled in simulation."
+                    return verified
+            except (UpdateError, ValueError, OSError, zipfile.BadZipFile):
+                raise HTTPException(status_code=422, detail="ZIP verification failed. Check version, published checksum, package contents and storage.") from None
+
+    @app.post("/api/update/manual/install")
+    async def install_manual_update(request: Request):
+        maintenance_access(request, idle=True)
+        async with maintenance_lock:
+            try:
+                if int(request.headers.get("content-length", "0")) > 1024:
+                    raise HTTPException(status_code=413, detail="Request is too large")
+                body = await request.json()
+                if not isinstance(body, dict):
+                    raise ValueError()
+                token = body.get("token", "")
+                if not isinstance(token, str) or len(token) > 100:
+                    raise ValueError()
+                if app_settings.simulation:
+                    raise HTTPException(status_code=409, detail="Installation is disabled in simulation. The package can be verified here.")
+                return await asyncio.to_thread(updates.install_manual, token, current_version=__version__)
+            except (UpdateError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Manual install could not start; verify the package again or check System Health") from None
 
     @app.get("/api/update/install-status")
     async def update_install_status() -> dict[str, object]:
@@ -2410,8 +2643,29 @@ def create_app(
         )
         return state_response()
 
+    @app.get("/api/system/health")
+    async def system_health():
+        disk = shutil.disk_usage(app_settings.data_dir if app_settings.data_dir.exists() else app_settings.data_dir.parent)
+        checks = []
+        def check(name, ok, detail, next_step):
+            checks.append({"name": name, "ok": ok, "detail": detail, "next_step": next_step})
+        check("Application", True, f"USA {__version__} is responding" + (" (simulation)" if app_settings.simulation else ""), "No action needed.")
+        check("Storage", disk.free >= 10 * 1024**3, f"{disk.free / 1024**3:.1f} GiB available", "Free disk space or remove unneeded media if below the reserve.")
+        media = pi_media.status()
+        check("Pi Media", int(media["quota_remaining_bytes"]) > 0, f"{media['file_count']} clips; {int(media['usage_bytes']) / 1048576:.1f} MiB used", "Remove unused clips or increase Media limit if storage permits.")
+        check("Release service", update_connectivity.get("reachable"), update_connectivity.get("error") or ("Release service was reachable at the last check." if update_connectivity.get("reachable") else "Use Check for updates to test connectivity."), "Check Internet access, DNS and controller time; retry Check for updates.")
+        check("Skelly control", hardware.snapshot().connected, "Simulated connection" if app_settings.simulation else "Saved controller connection status", "Check prop power, proximity, and Setup → Skelly connections.")
+        check("Skelly Speaker", classic_audio.snapshot().connected, "Saved speaker connection status", "Use Setup → Prepare and connect speaker; confirm Live Mode.")
+        check("External audio", external_audio.snapshot().connected if operation_store.load().audio_output == "external_bluetooth" else None, "External speaker needed only when selected", "Confirm the selected audio output and external speaker pairing.")
+        check("Offline speech", bool(shutil.which("espeak-ng")), "espeak-ng " + ("available" if shutil.which("espeak-ng") else "missing"), "Reinstall the USA package if offline speech is unavailable.")
+        credentials = credential_store.load()
+        check("Cloud configuration", None, f"Groq: {'configured' if credentials.groq_api_key else 'not configured'}; ElevenLabs: {'configured' if credentials.api_key else 'not configured'}", "Use Voice Tuning to configure a provider. This check does not spend credits.")
+        return {"version": __version__, "simulation": app_settings.simulation, "checks": checks, "connectivity": dict(update_connectivity), "recent_error": operation_state.get("last_error")}
+
     @app.get("/api/diagnostics")
     async def diagnostics() -> dict[str, object]:
+        if app_settings.simulation:
+            return {"system": {"simulation": True}, "probes": {name: {"available": False, "ok": None, "detail": "Simulation; physical hardware not probed"} for name in ("bluetooth", "audio", "microphones", "camera", "network", "usa_service", "nginx")}}
         return await collect_diagnostics()
 
     @app.get("/api/sensors/status")
@@ -2900,12 +3154,174 @@ def create_app(
     async def pi_media_status() -> dict[str, object]:
         return pi_media.status(playing_name=pi_media_playing_name)
 
+    @app.delete("/api/pi-media/tts/preview/{preview_id}")
+    async def pi_media_tts_discard(preview_id: str) -> dict[str, bool]:
+        try:
+            # Validate the ID and require the preview to exist. An expired
+            # preview is treated as not found, matching the GET endpoint.
+            tts_previews.get(preview_id)
+            tts_previews.discard(preview_id)
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="TTS preview not found or expired",
+            ) from exc
+        return {"discarded": True}
+
+    @app.get("/api/pi-media/tts/preview/{preview_id}")
+    async def pi_media_tts_preview(preview_id: str) -> FileResponse:
+        try:
+            audio_path = tts_previews.get(preview_id)
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="TTS preview not found or expired",
+            ) from exc
+
+        return FileResponse(
+            audio_path,
+            media_type="audio/wav",
+            filename="skelly-preview.wav",
+            content_disposition_type="inline",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post("/api/pi-media/tts/save")
+    async def pi_media_tts_save(
+        request: PiMediaTTSSaveRequest,
+    ) -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            await tts_previews.save(
+                request.preview_id,
+                request.filename,
+                request.display_name,
+                pi_media,
+            )
+            return pi_media.status(
+                playing_name=pi_media_playing_name
+            )
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404 if "expired or not found" in str(exc)
+                else 422,
+                detail=str(exc),
+            ) from exc
+        except PiMediaError as exc:
+            detail = str(exc)
+            code = (
+                409 if "already exists" in detail
+                else 413 if "exceed" in detail or "reserve" in detail
+                else 422
+            )
+            raise HTTPException(
+                status_code=code,
+                detail=detail,
+            ) from exc
+
+    @app.post("/api/pi-media/tts/generate")
+    async def pi_media_tts_generate(
+        request: PiMediaTTSGenerateRequest,
+    ) -> dict[str, object]:
+        require_manual_hardware_access()
+
+        clean_text = " ".join(request.text.split())
+        if not clean_text:
+            raise HTTPException(status_code=422, detail="Enter speech text")
+
+        if tts_generation_lock.locked():
+            raise HTTPException(
+                status_code=429,
+                detail="Speech generation is already in progress",
+            )
+
+        async with tts_generation_lock:
+            try:
+                tts_previews.check_capacity(tts_previews.MAX_AUDIO_BYTES)
+            except TTSPreviewError as exc:
+                raise HTTPException(status_code=429, detail=str(exc)) from exc
+            settings = provider_store.load()
+            provider = settings.voice_provider
+
+            try:
+                if provider == "local":
+                    apply_local_voice_settings(settings)
+                    descriptor, filename = tempfile.mkstemp(
+                        prefix=".tts-generating-",
+                        suffix=".wav",
+                        dir=tts_previews.directory,
+                    )
+                    os.close(descriptor)
+                    destination = Path(filename)
+                    try:
+                        await local_speech.generate_wav(
+                            clean_text, destination
+                        )
+                        audio = destination.read_bytes()
+                    finally:
+                        destination.unlink(missing_ok=True)
+
+                elif provider == "groq":
+                    credentials = credential_store.load()
+                    if credentials.groq_api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Configure a Groq API key first"
+                        )
+                    audio = await groq_voice.generate(
+                        credentials.groq_api_key,
+                        clean_text,
+                        settings.groq_voice,
+                        settings.groq_voice_style,
+                    )
+
+                elif provider == "elevenlabs":
+                    credentials = credential_store.load()
+                    if credentials.api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Configure an ElevenLabs API key first"
+                        )
+                    audio = await elevenlabs_voice.generate(
+                        credentials.api_key,
+                        clean_text,
+                        settings.elevenlabs_voice_id,
+                        model=settings.elevenlabs_model,
+                        speed=settings.elevenlabs_speed,
+                        volume_percent=settings.elevenlabs_volume_percent,
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Unsupported voice provider",
+                    )
+
+                preview_id = tts_previews.create(audio)
+
+            except (SpeechUnavailable, CloudSpeechUnavailable) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=str(exc),
+                ) from exc
+            except TTSPreviewError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
+
+        return {
+            "preview_id": preview_id,
+            "provider": provider,
+            "format": "wav",
+            "size_bytes": len(audio),
+        }
+
     @app.post("/api/pi-media/upload")
     async def pi_media_upload(request: Request, filename: str) -> dict[str, object]:
         require_manual_hardware_access()
-        data = await request.body()
         try:
-            pi_media.add(filename, data)
+            await pi_media.add_stream(filename, request.stream())
             return pi_media.status(playing_name=pi_media_playing_name)
         except PiMediaError as exc:
             detail = str(exc)
@@ -2946,6 +3362,7 @@ def create_app(
                     ],
                     "jaw_sync": request.jaw_sync,
                     "movement_activity": request.movement_activity,
+                    **({"display_name": request.display_name} if request.display_name is not None else {}),
                     "nag_response": request.nag_response,
                 },
             )

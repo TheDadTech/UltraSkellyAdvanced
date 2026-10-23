@@ -188,3 +188,10 @@ On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` and open
 
 Set `SKELLY_DEVELOPER_MODE=true` only on a controlled development Pi to expose
 the raw BLE movement probe. Public images default it to false.
+
+## 0.28.0 backup, update and recovery
+
+See [the 0.28.0 upgrade guide](docs/UPGRADE_0_28.md) for encrypted backups,
+manual release ZIP uploads, protected-tools login, older-install recovery,
+System Health and The Lab. This development candidate needs the Pi image
+release gate before publication.

@@ -37,6 +37,11 @@ class OperationSettings(BaseModel):
     trigger_on_audio: bool = True
     trigger_on_face: bool = True
     trigger_on_motion: bool = True
+    welcome_enabled: bool = False
+    welcome_message: str = Field(
+        default="Well, well... somebody wandered into the wrong yard.",
+        max_length=180,
+    )
     nag_mode: Literal["disabled", "media", "ai"] = "disabled"
     nag_delay_seconds: int = Field(default=2, ge=1, le=30)
     nag_cooldown_seconds: int = Field(default=30, ge=10, le=120)
@@ -55,6 +60,11 @@ class OperationSettings(BaseModel):
     @classmethod
     def normalize_custom_personality(cls, value: object) -> str:
         return str(value or "").strip()[:500]
+
+    @field_validator("welcome_message", mode="before")
+    @classmethod
+    def normalize_welcome_message(cls, value: object) -> str:
+        return str(value or "").strip()[:180]
 
     @field_validator("skelly_speaker_restore_volume", mode="before")
     @classmethod

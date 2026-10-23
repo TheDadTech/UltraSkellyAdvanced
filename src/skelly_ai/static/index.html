@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.4">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.0-polish-1">
   </head>
   <body>
     <main>
@@ -207,7 +207,7 @@
         <form id="operation-settings-form" class="operation-settings-form">
           <label><span>Skelly Name</span><input id="skelly-name" type="text" minlength="1" maxlength="30" value="Skelly" autocomplete="off"><small class="help-copy">The name the AI uses for itself during conversations.</small></label>
           <label><span>Hardware setup</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label>
-          <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">Classic Mode</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
+          <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">The Lab</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
           <label class="check-setting"><input id="auto-start-operation" type="checkbox"><span><strong>Start automatically when this Pi boots</strong><small class="help-copy">Uses the saved default mode. Remain idle disables automatic startup.</small></span></label>
           <label id="fpp-override-setting" class="check-setting" hidden><input id="allow-fpp-override" type="checkbox"><span><strong>Allow FPP/xLights override</strong><small class="help-copy">When enabled, a show can temporarily take priority and release local DAC output.</small></span></label>
           <button type="submit">Save installation choices</button>
@@ -227,6 +227,7 @@
       </details>
 
       <section id="software-update-section">
+        <details class="tools-card" id="software-update-section-details"><summary>USA updates<span>Version, update channel and rollback</span></summary><div class="tools-card-content">
         <div class="section-heading">
           <div>
             <p class="section-kicker">SOFTWARE</p>
@@ -253,9 +254,47 @@
           <button id="rollback-update" type="button" class="disconnect" hidden>Roll back</button>
           <a id="download-update" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>View release</a>
         </div>
+        <p id="github-connectivity" role="status">GitHub: not checked</p>
         <p id="update-result" class="result" aria-live="polite">Reading update settings…</p>
         <small class="muted help-copy">Beta releases are opt-in and may contain unfinished features or bugs. USA verifies release checksums, automatically restores a failed update, and keeps one previous known-good app version available for manual rollback.</small>
+
+        </div></details>
       </section>
+
+      <section id="maintenance-section">
+
+        <details class="tools-card" id="backup-tools"><summary>Backup &amp; Restore<span>Encrypted settings, credentials and recovery copies</span></summary><div class="tools-card-content">
+        <p>Encrypted backups include installation settings, voice settings, saved API credentials, and Pi Media presets. Optionally include audio files (128 MiB backup limit). WiFi passwords, host Bluetooth pairings, environment files, models and temporary previews are excluded. Keep the password safe: it cannot be recovered.</p>
+        <label>Backup password (at least 12 characters) <input id="backup-password" type="password" minlength="12" maxlength="256" autocomplete="off"></label>
+        <label class="check-setting"><input id="backup-include-media" type="checkbox"><span>Include Pi Media audio files</span></label>
+        <button id="backup-size" type="button">Check backup size</button>
+        <button id="download-settings-backup" type="button">Download Backup</button>
+        <label>Encrypted backup <input id="settings-backup-file" type="file" accept=".usabackup"></label>
+        <button id="inspect-settings-backup" type="button">Preview Restore</button>
+        <button id="restore-settings-backup" type="button" disabled>Restore Backup</button>
+        <p id="backup-result" role="status"></p>
+        <p>Stop the current operation before restoring. Restart USA afterwards. Pair speakers and reconnect WiFi on a replacement controller. An encrypted recovery copy is saved on the controller using the same backup password.</p>
+        <details><summary>Recovery copies</summary><p>Download a recovery copy, then select it above and use its backup password to restore it.</p><button id="list-backup-recoveries" type="button">List recovery copies</button><div id="backup-recoveries" class="controls"></div></details>
+        </div></details>
+        <details class="tools-card" id="manual-update-tools"><summary>Manual ZIP update<span>Upload and verify a downloaded release</span></summary><div class="tools-card-content">
+        <p>Select a USA release ZIP and enter its version and published SHA-256 checksum. Verify first, then install through USA’s updater. Installation restarts USA.</p>
+        <label>Release ZIP <input id="manual-update-file" type="file" accept=".zip,application/zip"></label>
+        <label>Version <input id="manual-update-version" placeholder="0.28.0"></label>
+        <label>SHA-256 <input id="manual-update-sha256" minlength="64" maxlength="64"></label>
+        <button id="verify-manual-update" type="button">Upload and verify ZIP</button>
+        <button id="install-manual-update" type="button" disabled>Install verified ZIP</button>
+        <p id="manual-update-result" role="status"></p>
+        </div></details>
+      </section>
+
+      <dialog id="operator-auth-dialog" class="confirmation-dialog">
+        <h2>Sign in to continue</h2>
+        <p>This action requires the controller’s access password. This is separate from your backup password.</p>
+        <label>Username <input id="operator-auth-user" value="operator" autocomplete="username"></label>
+        <label>Password <input id="operator-auth-password" type="password" autocomplete="current-password"></label>
+        <div class="controls"><button id="operator-sign-in" type="button">Sign in</button><button id="operator-auth-cancel" type="button" class="secondary">Cancel</button></div>
+        <p id="operator-auth-result" role="status"></p>
+      </dialog>
 
       <dialog id="forget-skelly-dialog" class="confirmation-dialog">
         <form method="dialog">
@@ -286,7 +325,8 @@
           </div>
         </div>
         <div class="mode-card-grid">
-          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>Classic Mode</h3><p>Play Skelly’s saved media with its built-in animations.</p><button type="button" data-start-operation="classic">Start Classic</button></article>
+          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>The Lab</h3><p>Skelly and Pi Media with saved eyes, lights and movement.</p><button type="button" data-start-operation="classic">Start The Lab</button></article>
+
           <article class="mode-card featured" data-mode-card="ai"><span class="mode-icon">◎</span><h3>AI Mode <small>UNMANNED</small></h3><p>Detect visitors, listen, answer, track, and animate automatically.</p><button type="button" data-start-operation="ai">Start AI Mode</button></article>
           <article class="mode-card" data-mode-card="manual"><span class="mode-icon">✦</span><h3>Operator Mode <small>MANNED</small></h3><p>Type Skelly’s dialogue and puppeteer gestures, eyes, lights, and movement live.</p><button type="button" data-start-operation="manual">Start Operator Mode</button></article>
         </div>
@@ -320,7 +360,7 @@
             <progress id="media-upload-progress-bar" max="100" value="0">0%</progress>
             <small id="media-upload-progress-phase" class="muted">Preparing transfer…</small>
           </div>
-          <div id="media-library" class="media-library"><p class="muted help-copy">Start Classic, then refresh the list.</p></div>
+          <div id="media-library" class="media-library"><p class="muted help-copy">Start The Lab, then refresh the list.</p></div>
           <p id="media-result" class="result" aria-live="polite"></p>
         </div>
         <div id="pi-media-panel" hidden>
@@ -331,11 +371,71 @@
             <input id="pi-media-file-input" type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
             <input id="pi-media-filter" type="search" placeholder="Filter by name" aria-label="Filter Pi media files">
           </div>
+          <details id="pi-media-tts-panel" class="operator-subsection">
+            <summary><strong>Generate Speech (TTS)</strong></summary>
+            <div class="media-tts-generator">
+              <p class="muted help-copy">
+                Create speech with your configured voice provider.
+                Preview it in this browser before saving to Pi Media.
+              </p>
+
+              <label>
+                Media Name
+                <input id="pi-tts-name" type="text"
+                       maxlength="120"
+                       placeholder="Welcome Visitors">
+              </label>
+
+              <label>
+                Dialogue
+                <textarea id="pi-tts-text" rows="4"
+                          maxlength="600"
+                          placeholder="Type exactly what Skelly should say"></textarea>
+              </label>
+
+              <p class="muted help-copy">
+                Voice: <strong id="pi-tts-provider">Checking…</strong>
+                — Change the voice in AI Provider Settings.
+              </p>
+
+              <div class="controls">
+                <button id="pi-tts-generate" type="button">
+                  Generate Speech
+                </button>
+                <button id="pi-tts-save" type="button"
+                        class="secondary" disabled>
+                  Save to Pi Media
+                </button>
+                <button id="pi-tts-discard" type="button"
+                        class="secondary" disabled>
+                  Discard
+                </button>
+              </div>
+
+              <audio id="pi-tts-audio" controls preload="none" hidden></audio>
+
+              <p id="pi-tts-result" class="result"
+                 role="status" aria-live="polite"></p>
+            </div>
+          </details>
           <div class="pi-media-storage">
             <div><strong id="pi-media-usage">0 B used of 3 GB</strong><small id="pi-storage-free" class="muted">Checking Pi storage…</small></div>
             <div class="pi-media-quota-controls"><label>Media limit <input id="pi-media-quota-gb" type="number" min="1" max="1000" step="1" value="3"> GB</label><button id="save-pi-media-quota" type="button" class="secondary">Set limit</button></div>
           </div>
           <div id="pi-media-library" class="media-library"><p class="muted help-copy">No Pi Media loaded yet.</p></div>
+          <div id="pi-media-upload-progress" class="media-upload-progress" hidden>
+            <div class="media-upload-progress-heading">
+              <strong id="pi-media-upload-name">Uploading audio</strong>
+              <span id="pi-media-upload-percent">0%</span>
+            </div>
+            <progress id="pi-media-upload-bar" max="100" value="0">0%</progress>
+            <div class="controls">
+              <span id="pi-media-upload-phase" class="muted">Preparing upload…</span>
+              <button id="pi-media-upload-cancel" type="button" class="secondary">
+                Cancel upload
+              </button>
+            </div>
+          </div>
           <p id="pi-media-result" class="result" aria-live="polite"></p>
         </div>
       </section>
@@ -398,10 +498,10 @@
       <section id="sensor-lab-section">
         <div class="section-heading">
           <div>
-            <h2>Sensor diagnostics</h2>
+            <h2>Camera &amp; Microphone</h2>
             <p class="muted help-copy">Test camera presence detection, microphone activity, and offline transcription.</p>
           </div>
-          
+
         </div>
         <p class="security-note">
           Frames and microphone samples stay in memory on this Pi. This lab does not connect to ElevenLabs or upload sensor data.
@@ -434,6 +534,7 @@
             <label class="trigger-choice"><input id="trigger-on-motion" type="checkbox" checked><span class="trigger-live-dot" id="trigger-motion-dot" aria-hidden="true"></span><strong>Motion</strong></label>
             <small id="trigger-source-result" class="muted" aria-live="polite"></small>
           </div>
+
           <details class="provider-details visitor-engagement-details">
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
@@ -774,6 +875,7 @@
       </section>
 
       <section id="ssh-access-section">
+        <details class="tools-card" id="ssh-access-section-details"><summary>Support access<span>Temporary SSH access</span></summary><div class="tools-card-content">
         <div class="section-heading"><div><h2>Support access (SSH)</h2><p class="muted help-copy">Disabled by default. Regular operation never requires SSH.</p></div><span id="ssh-status" class="driver-badge neutral">disabled</span></div>
         <form id="ssh-enable-form" class="ssh-control-form">
           <label><span>Private support password</span><input id="ssh-password" type="password" minlength="10" autocomplete="new-password" placeholder="Create a unique password"></label>
@@ -781,12 +883,17 @@
           <div class="controls"><button type="submit">Enable SSH</button><button id="ssh-disable" type="button" class="secondary">Disable SSH</button></div>
         </form>
         <p id="ssh-result" class="result" aria-live="polite"></p>
+
+        </div></details>
       </section>
 
       <section id="controller-power-section">
+        <details class="tools-card" id="controller-power-section-details"><summary>Power & restart<span>Restart USA, reboot or shut down</span></summary><div class="tools-card-content">
         <div class="section-heading"><div><h2>Controller power</h2><p class="muted help-copy">Manage the USA service or safely restart and shut down the Raspberry Pi.</p></div></div>
         <div class="controls"><button id="restart-usa-service" type="button" class="secondary">Restart USA service</button><button id="reboot-controller" type="button" class="warning">Reboot Raspberry Pi</button><button id="shutdown-controller" type="button" class="disconnect">Shut down Raspberry Pi</button></div>
         <p id="controller-power-result" class="result" aria-live="polite"></p>
+
+        </div></details>
       </section>
 
       <section id="manual-prop-controls">
@@ -880,11 +987,18 @@
         <form id="media-editor-form" method="dialog">
           <div class="section-heading"><div><p id="media-editor-kicker" class="section-kicker">CLASSIC PRESET</p><h2 id="media-editor-title">Edit media preset</h2></div><button id="close-media-editor" type="button" class="secondary">Close</button></div>
           <input id="media-edit-serial" type="hidden"><input id="media-edit-source" type="hidden" value="skelly"><input id="media-edit-name" type="hidden">
+          <label id="pi-media-display-name-setting" hidden>
+            Media Name
+            <input id="pi-media-display-name" type="text"
+                   maxlength="120" placeholder="Enter a friendly media name">
+            <small class="help-copy">
+              Rename this clip without changing its audio filename.
+            </small>
+          </label>
           <div class="preset-grid">
             <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label><label id="media-movement-activity-setting" class="movement-activity-setting" hidden><span>Movement activity</span><select id="media-movement-activity"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select><small class="help-copy">Controls how often selected movements retrigger while Pi Media plays.</small></label></fieldset>
-            <label>Eye<select id="media-edit-eye"></select></label>
+            <fieldset class="media-eye-picker"><legend>Eye</legend><input id="media-edit-eye" type="hidden" value="1"><div id="media-edit-eye-choices" class="media-eye-choices" role="group" aria-label="Preset eye"></div></fieldset>
           </div>
-          <label class="check-setting"><input id="media-edit-nag-response" type="checkbox"><span><strong>Use as Lure response</strong><small class="help-copy">Makes this clip eligible when Lure Visitors is set to Media.</small></span></label>
           <label id="media-edit-jaw-setting" class="check-setting" hidden><input id="media-edit-jaw-sync" type="checkbox" checked><span><strong>Jaw sync</strong><small class="help-copy">Drive Skelly's jaw from this Pi audio file using the same playback path as AI speech.</small></span></label>
           <div class="light-control-grid">
             <fieldset class="light-control" data-edit-light="head"><legend>Head light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
@@ -896,14 +1010,18 @@
       </dialog>
 
       <section id="diagnostics-section">
+        <details class="tools-card" id="diagnostics-section-details"><summary>System Health<span>Checks and practical next steps</span></summary><div class="tools-card-content">
         <div class="section-heading">
           <div>
-            <h2>Pi hardware diagnostics</h2>
+            <h2>System Health</h2>
             <p class="muted help-copy">Checks Bluetooth, PipeWire, microphone, camera, and networking.</p>
           </div>
           <button id="run-diagnostics" class="secondary">Run checks</button>
         </div>
-        <pre id="diagnostics">Checks have not run yet.</pre>
+        <p class="help-copy">If Bluetooth fails, check power and pairing. If audio fails, check the selected output and speaker connection. Missing camera or microphone devices need checking on the controller.</p><div id="system-health-summary" aria-live="polite"></div>
+        <details><summary>Advanced diagnostic details</summary><pre id="diagnostics">Checks have not run yet.</pre></details>
+
+        </div></details>
       </section>
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
@@ -912,6 +1030,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.4"></script>
+    <script src="/static/app.js?v=0.28.0-polish-1"></script>
   </body>
 </html>

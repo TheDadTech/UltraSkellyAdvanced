@@ -389,13 +389,15 @@ function initializeDashboardTabs() {
       document.querySelector("#elevenlabs-section"),
     ],
     diagnostics: [
+      document.querySelector("#help-mode-section"),
       document.querySelector("#sensor-lab-section"),
+      document.querySelector("#software-update-section"),
+      document.querySelector("#maintenance-section"),
+      document.querySelector("#diagnostics-section"),
       document.querySelector("#advanced-bluetooth-section"),
       document.querySelector("#dac-controller-section"),
-      document.querySelector("#software-update-section"),
       document.querySelector("#ssh-access-section"),
       document.querySelector("#controller-power-section"),
-      document.querySelector("#diagnostics-section"),
     ],
   };
   Object.entries(layout).forEach(([name, sections]) => {
@@ -442,8 +444,29 @@ function initializeDashboardTabs() {
 setupHelpMode();
 initializeDashboardTabs();
 
+let operatorAuthorization = "";
+let operatorLoginPending = null;
+let finishOperatorLogin = null;
+function requireOperatorSignIn() {
+  if (!operatorLoginPending) {
+    operatorLoginPending = new Promise((resolve) => { finishOperatorLogin = resolve; });
+    document.querySelector("#operator-auth-result").textContent = "";
+    document.querySelector("#operator-auth-dialog").showModal();
+  }
+  return operatorLoginPending;
+}
+async function fetchWithOperatorAuth(path, options = {}) {
+  const send = () => fetch(path, {...options, headers: {"X-USA-Interactive-Auth": "1", ...options.headers, ...operatorAuthHeaders()}});
+  let response = await send();
+  if (response.status === 401 && /^\/api\/(?:backup\/|pi-media\/tts\/)/.test(path)) {
+    operatorAuthorization = "";
+    if (await requireOperatorSignIn()) response = await send();
+  }
+  return response;
+}
+function operatorAuthHeaders() { return operatorAuthorization ? {Authorization: operatorAuthorization} : {}; }
 async function request(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetchWithOperatorAuth(path, options);
   const raw = await response.text();
   let body = {};
   if (raw) {
@@ -475,11 +498,12 @@ function updateModeVisibility(activeMode, profile) {
     button.disabled = activeMode === "starting" || selected;
   });
   stopOperation.disabled = !readyMode && activeMode !== "needs_attention";
+  document.querySelector("#sensor-lab-section").hidden = false;
 }
 
 function operationModeName(mode) {
   return {
-    classic: "Classic Mode",
+    classic: "The Lab",
     ai: "AI Mode",
     manual: "Operator Mode",
     idle: "Remain idle",
@@ -900,6 +924,7 @@ function renderPerceptionStatus(body) {
     scanning: ["idle", "WAITING FOR A VISITOR", "Skelly is watching for someone to approach."],
     confirming_presence: ["detected", "VISITOR DETECTED", "Hold still for just a moment."],
     visitor_confirmed: ["detected", "GET READY TO SPEAK", "Skelly has seen you."],
+    welcoming: ["detected", "GREETING VISITOR", "Skelly is playing the saved welcome line."],
     waiting_to_listen: ["detected", "GET READY TO SPEAK", "The microphone will open momentarily."],
     listening: ["listening", "SPEAK NOW — I'M LISTENING", "Skelly's green eyes also mean the microphone is open."],
     thinking: ["thinking", "THINKING…", "Skelly's spiral eyes mean your answer is being prepared."],
@@ -1262,6 +1287,8 @@ function operationSettingsPayload() {
     trigger_on_audio: triggerOnAudio.checked,
     trigger_on_face: triggerOnFace.checked,
     trigger_on_motion: triggerOnMotion.checked,
+    welcome_enabled: currentOperationSettings?.welcome_enabled ?? false,
+    welcome_message: currentOperationSettings?.welcome_message ?? "",
     nag_mode: nagMode.value,
     nag_delay_seconds: Number(nagDelay.value),
     nag_cooldown_seconds: Number(nagCooldown.value),
@@ -1312,6 +1339,7 @@ function formatLureInterval(value) {
     }
   });
 });
+
 
 saveVisitorEngagement.addEventListener("click", async () => {
   saveVisitorEngagement.disabled = true;
@@ -1461,7 +1489,7 @@ async function startSelectedOperation(selectedMode, button, resultElement = oper
     resultElement.textContent = selectedMode === "idle"
       ? "Skelly is safely in standby."
       : `${modeName} is ready.`;
-    if (selectedMode === "classic") await refreshMediaFromSkelly();
+    if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }
     if (selectedMode === "ai") await refreshPerceptionStatus();
   } catch (error) {
     resultElement.textContent = error.message;
@@ -1524,13 +1552,13 @@ function renderMediaStatus(body) {
   renderSpeakerMuteState();
   mediaLibrary.replaceChildren();
   const filter = mediaFilter.value.trim().toLowerCase();
-  const files = (body.files || []).filter((file) => !filter || String(file.name || "").toLowerCase().includes(filter));
+  const files = (body.files || []).filter((file) => !filter || String`${file.display_name || ""} ${file.name || ""}`.toLowerCase().includes(filter));
   if (!files.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
     empty.textContent = filter ? "No stored files match that filter." : body.available
       ? "No media files reported yet. Press Refresh media list."
-      : "Connect the prop and start Classic mode first.";
+      : "Connect the prop and start The Lab first.";
     mediaLibrary.append(empty);
     return;
   }
@@ -1778,30 +1806,14 @@ function renderPiMediaStatus(body) {
   const table = document.createElement("table");
   table.className = "media-table pi-media-table";
   const head = document.createElement("thead");
-  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
+  head.innerHTML = "<tr><th>Lure</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
   const rows = document.createElement("tbody");
   const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
   files.forEach((file) => {
     const row = document.createElement("tr");
-    const enabledCell = document.createElement("td");
-    const enabled = document.createElement("input");
-    enabled.type = "checkbox";
-    enabled.checked = file.enabled !== false;
-    enabled.addEventListener("change", async () => {
-      try {
-        renderPiMediaStatus(await request("/api/pi-media/edit", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...file, enabled: enabled.checked, head_light: file.lights?.[1], torso_light: file.lights?.[0] }),
-        }));
-      } catch (error) {
-        enabled.checked = !enabled.checked;
-        piMediaResult.textContent = error.message;
-      }
-    });
-    enabledCell.append(enabled);
     const nameCell = document.createElement("td");
     const title = document.createElement("strong");
-    title.textContent = file.name;
+    title.textContent = file.display_name || file.name;
     const meta = document.createElement("small");
     meta.className = "muted";
     meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
@@ -1824,6 +1836,36 @@ function renderPiMediaStatus(body) {
     eye.append(eyeImage, document.createTextNode(String(file.eye || 1)));
     const jaw = document.createElement("td");
     jaw.textContent = file.jaw_sync === false ? "Off" : "On";
+    const lureCell = document.createElement("td");
+    const lure = document.createElement("input");
+    lure.type = "checkbox";
+    lure.checked = file.nag_response === true;
+    lure.setAttribute("aria-label", `Use ${file.name} as lure response`);
+
+    lure.addEventListener("change", async () => {
+      lure.disabled = true;
+      try {
+        renderPiMediaStatus(await request("/api/pi-media/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...file,
+            nag_response: lure.checked,
+            head_light: file.lights?.[1],
+            torso_light: file.lights?.[0],
+          }),
+        }));
+        piMediaResult.textContent =
+          `${file.name} ${lure.checked ? "enabled" : "disabled"} for lure playback.`;
+      } catch (error) {
+        lure.checked = !lure.checked;
+        piMediaResult.textContent = error.message;
+      } finally {
+        lure.disabled = false;
+      }
+    });
+    lureCell.append(lure);
+
     const actions = document.createElement("td");
     actions.className = "media-actions";
     const playing = String(body.playing_name || "") === String(file.name);
@@ -1861,7 +1903,7 @@ function renderPiMediaStatus(body) {
       } catch (error) { piMediaResult.textContent = error.message; }
     });
     actions.append(play, edit, remove);
-    row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
+    row.append(lureCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
     rows.append(row);
   });
   table.append(head, rows);
@@ -1913,23 +1955,126 @@ refreshPiMedia.addEventListener("click", async () => {
 piMediaFilter.addEventListener("input", () => {
   if (currentPiMediaStatus) renderPiMediaStatus(currentPiMediaStatus);
 });
-addPiMedia.addEventListener("click", () => piMediaFileInput.click());
-piMediaFileInput.addEventListener("change", async () => {
-  const file = piMediaFileInput.files?.[0];
-  if (!file) return;
-  addPiMedia.disabled = true;
-  piMediaResult.textContent = `Saving ${file.name} to Pi Media…`;
-  try {
-    const response = await fetch(`/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`, {
-      method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.detail || `Upload failed (${response.status})`);
-    renderPiMediaStatus(body);
-    piMediaResult.textContent = `${file.name} was saved to Pi Media.`;
-  } catch (error) { piMediaResult.textContent = error.message; }
-  finally { addPiMedia.disabled = false; piMediaFileInput.value = ""; }
+const piUploadProgress = document.querySelector("#pi-media-upload-progress");
+const piUploadName = document.querySelector("#pi-media-upload-name");
+const piUploadPercent = document.querySelector("#pi-media-upload-percent");
+const piUploadBar = document.querySelector("#pi-media-upload-bar");
+const piUploadPhase = document.querySelector("#pi-media-upload-phase");
+const piUploadCancel = document.querySelector("#pi-media-upload-cancel");
+
+let activePiUpload = null;
+
+function updatePiUploadProgress(percent, phase) {
+  const value = Math.min(100, Math.max(0, Math.round(percent)));
+  piUploadPercent.textContent = `${value}%`;
+  piUploadBar.value = value;
+  piUploadBar.textContent = `${value}%`;
+  piUploadPhase.textContent = phase;
+}
+
+addPiMedia.addEventListener("click", () => {
+  if (!activePiUpload) piMediaFileInput.click();
 });
+
+piUploadCancel.addEventListener("click", () => {
+  if (activePiUpload) activePiUpload.abort();
+});
+
+piMediaFileInput.addEventListener("change", () => {
+  const file = piMediaFileInput.files?.[0];
+  if (!file || activePiUpload) return;
+
+  const xhr = new XMLHttpRequest();
+  activePiUpload = xhr;
+
+  addPiMedia.disabled = true;
+  piUploadProgress.hidden = false;
+  piUploadName.textContent = file.name;
+  piUploadCancel.disabled = false;
+  piMediaResult.textContent = "";
+  updatePiUploadProgress(0, "Preparing upload…");
+
+  const finish = (message, phase, success = false) => {
+    if (activePiUpload !== xhr) return;
+
+    activePiUpload = null;
+    addPiMedia.disabled = false;
+    piMediaFileInput.value = "";
+    piUploadCancel.disabled = true;
+    piMediaResult.textContent = message;
+
+    if (success) {
+      updatePiUploadProgress(100, phase);
+    } else {
+      piUploadPhase.textContent = phase;
+    }
+  };
+
+  xhr.upload.addEventListener("progress", (event) => {
+    if (!event.lengthComputable) {
+      piUploadPhase.textContent = "Uploading…";
+      return;
+    }
+
+    const percent = (event.loaded / event.total) * 100;
+    updatePiUploadProgress(
+      percent,
+      percent >= 100 ? "Processing on Pi…" : "Uploading to Pi…"
+    );
+  });
+
+  xhr.upload.addEventListener("load", () => {
+    if (activePiUpload === xhr) {
+      updatePiUploadProgress(100, "Processing on Pi…");
+    }
+  });
+
+  xhr.addEventListener("load", () => {
+    let body = {};
+    try {
+      body = JSON.parse(xhr.responseText || "{}");
+    } catch (_) {
+      // nginx may return HTML for 413, 502, or 504 errors.
+    }
+
+    if (xhr.status >= 200 && xhr.status < 300) {
+      renderPiMediaStatus(body);
+      finish(`${file.name} was saved to Pi Media.`, "Upload complete.", true);
+    } else {
+      const detail = body.detail ||
+        (xhr.status === 413 ? "File exceeds the upload limit." :
+         xhr.status === 502 || xhr.status === 504 ?
+         "Skelly did not respond. Check System Health." :
+         `Upload failed (HTTP ${xhr.status}).`);
+
+      finish(detail, "Upload failed.");
+    }
+  });
+
+  xhr.addEventListener("error", () => {
+    finish("Network error. Check your connection to Skelly.", "Upload failed.");
+  });
+
+  xhr.addEventListener("abort", () => {
+    finish("Upload cancelled.", "Cancelled.");
+  });
+
+  xhr.addEventListener("timeout", () => {
+    finish("Upload timed out. Try again.", "Timed out.");
+  });
+
+  xhr.open(
+    "POST",
+    `/api/pi-media/upload?filename=${encodeURIComponent(file.name)}`
+  );
+  xhr.timeout = 600000;
+  xhr.setRequestHeader(
+    "Content-Type",
+    file.type || "application/octet-stream"
+  );
+  xhr.send(file);
+});
+
 savePiMediaQuota.addEventListener("click", async () => {
   savePiMediaQuota.disabled = true;
   try {
@@ -1964,21 +2109,23 @@ function openMediaEditor(file, source = "skelly") {
   const isPi = source === "pi";
   document.querySelector("#media-edit-source").value = source;
   document.querySelector("#media-edit-name").value = file.name || "";
+  document.querySelector("#pi-media-display-name-setting").hidden = !isPi;
+  document.querySelector("#pi-media-display-name").value =
+    file.display_name || file.name || "";
   document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
   document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
   document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
   document.querySelector("#media-movement-activity-setting").hidden = !isPi;
   document.querySelector("#media-movement-activity").value = file.movement_activity || "normal";
   document.querySelector("#save-media-preset").textContent = isPi ? "Save Pi Media preset" : "Save preset to Skelly";
-  document.querySelector("#media-editor-title").textContent = file.name || `Media file ${file.serial}`;
+  document.querySelector("#media-editor-title").textContent = isPi ? "Media preset" : file.name || `Media file ${file.serial}`;
   document.querySelector("#media-edit-serial").value = file.serial;
   const action = Number(file.action ?? 0);
   document.querySelector("#media-move-head").checked = Boolean(action & 1);
   document.querySelector("#media-move-arm").checked = Boolean(action & 2);
   document.querySelector("#media-move-torso").checked = Boolean(action & 4);
   document.querySelector("#media-move-all").checked = (action & 7) === 7 || action === 255;
-  document.querySelector("#media-edit-nag-response").checked = file.nag_response === true;
-  document.querySelector("#media-edit-eye").value = String(file.eye || 1);
+  selectMediaEye(file.eye || 1);
   [["head", file.lights?.[1], "#00ff62"], ["torso", file.lights?.[0], "#3300ff"]].forEach(([name, light, fallback]) => {
     const block = document.querySelector(`[data-edit-light="${name}"]`);
     block.querySelector(".edit-light-color").value = rgbToHex(light, fallback);
@@ -2014,7 +2161,6 @@ mediaEditorForm.addEventListener("submit", async (event) => {
       | (document.querySelector("#media-move-torso").checked ? 4 : 0);
     const common = {
       action,
-      nag_response: document.querySelector("#media-edit-nag-response").checked,
       eye: Number(document.querySelector("#media-edit-eye").value),
       head_light: editLightValues("head"),
       torso_light: editLightValues("torso"),
@@ -2027,7 +2173,9 @@ mediaEditorForm.addEventListener("submit", async (event) => {
         body: JSON.stringify({
           ...common,
           name: document.querySelector("#media-edit-name").value,
+          display_name: document.querySelector("#pi-media-display-name").value.trim(),
           enabled: file?.enabled !== false,
+          nag_response: file?.nag_response === true,
           jaw_sync: document.querySelector("#media-edit-jaw-sync").checked,
           movement_activity: document.querySelector("#media-movement-activity").value,
         }),
@@ -2192,14 +2340,30 @@ if (speakerMuteButton) {
 }
 
 document.querySelector("#run-diagnostics").addEventListener("click", async (event) => {
-  event.currentTarget.disabled = true;
+  const button = event.currentTarget;
+  button.disabled = true;
   diagnostics.textContent = "Running hardware checks…";
   try {
-    diagnostics.textContent = JSON.stringify(await request("/api/diagnostics"), null, 2);
+    const report = await request("/api/diagnostics");
+    const health = await request("/api/system/health");
+    const summary = document.querySelector("#system-health-summary");
+    summary.replaceChildren();
+    (health.checks || []).forEach((check) => {
+      const line = document.createElement("p");
+      line.textContent = `${check.name}: ${check.ok === true ? "OK" : check.ok === false ? "Needs attention" : "Information"}. ${check.detail} ${check.ok === true ? "" : check.next_step}`;
+      summary.append(line);
+    });
+    Object.entries(report.probes || {}).forEach(([name, probe]) => {
+      const line = document.createElement("p");
+      const advice = {bluetooth: "Check controller power and Bluetooth pairing.", audio: "Check audio output and speaker connection.", microphones: "Check USB microphone connection.", camera: "Check camera cable and configured device.", network: "Check WiFi or Ethernet.", usa_service: "Check the USA service installation.", nginx: "Check the nginx installation and configuration."};
+      line.textContent = `${name}: ${report.system?.simulation ? "Simulation — not probed" : probe.ok ? "OK" : probe.available ? "Needs attention" : "Unavailable"}. ${probe.ok || report.system?.simulation ? "" : advice[name] || "View advanced details below."}`;
+      summary.append(line);
+    });
+    diagnostics.textContent = JSON.stringify(report, null, 2);
   } catch (error) {
     diagnostics.textContent = error.message;
   } finally {
-    event.currentTarget.disabled = false;
+    button.disabled = false;
   }
 });
 
@@ -2227,8 +2391,29 @@ const factoryEyeNames = [
   "Fireworks", "American flag", "Hearts", "Clover", "Snowflake", "Confetti",
 ];
 
+function selectMediaEye(index) {
+  document.querySelector("#media-edit-eye").value = String(index);
+  document.querySelectorAll("#media-edit-eye-choices button").forEach((choice) => {
+    choice.setAttribute("aria-pressed", String(choice.dataset.eye === String(index)));
+  });
+}
+
 for (let index = 1; index <= 18; index += 1) {
-  document.querySelector("#media-edit-eye").append(new Option(`${index} · ${factoryEyeNames[index - 1]}`, String(index)));
+  const choice = document.createElement("button");
+  choice.type = "button";
+  choice.className = "secondary media-eye-choice";
+  choice.dataset.eye = String(index);
+  choice.setAttribute("aria-label", `${index} · ${factoryEyeNames[index - 1]}`);
+  choice.setAttribute("aria-pressed", String(index === 1));
+  choice.title = `${index} · ${factoryEyeNames[index - 1]}`;
+  const preview = document.createElement("img");
+  preview.src = `/static/eye_icon_${index}.png`;
+  preview.alt = "";
+  preview.width = 26;
+  preview.height = 26;
+  choice.append(preview);
+  choice.addEventListener("click", () => selectMediaEye(index));
+  document.querySelector("#media-edit-eye-choices").append(choice);
   const button = document.createElement("button");
   button.type = "button";
   button.className = "secondary eye-choice";
@@ -2891,6 +3076,8 @@ function renderUpdateStatus(body) {
   updateVersion.textContent = `version ${body.current_version}`;
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
+  const connectivity = body.connectivity || {};
+  document.querySelector("#github-connectivity").textContent = `GitHub: ${connectivity.reachable === true ? "reachable" : connectivity.reachable === false ? "unreachable" : "not checked"}. Latest stable: ${connectivity.stable || "unknown"}. Latest beta: ${connectivity.beta || "unknown"}. Last successful check: ${connectivity.last_success ? new Date(connectivity.last_success).toLocaleString() : "never"}. ${connectivity.error || ""}`;
   const betaEnabled = body.channel === "beta";
   if (updateChannelBadge) {
     updateChannelBadge.textContent = betaEnabled ? "BETA" : "Stable";
@@ -3015,6 +3202,7 @@ checkForUpdates.addEventListener("click", async () => {
 
 updateAvailableBadge.addEventListener("click", () => {
   selectDashboardTab("diagnostics");
+  document.querySelector("#software-update-section-details").open = true;
   document.querySelector("#software-update-section").scrollIntoView({ behavior: "smooth" });
 });
 
@@ -3579,5 +3767,266 @@ if (externalBluetoothForget) {
     } finally {
       externalBluetoothForget.disabled = false;
     }
+  });
+}
+
+
+// USA 0.28.0 PI MEDIA TTS UI — single-integration block
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const nameField = $('pi-tts-name');
+  const textField = $('pi-tts-text');
+  const generateButton = $('pi-tts-generate');
+  const saveButton = $('pi-tts-save');
+  const discardButton = $('pi-tts-discard');
+  const audioPlayer = $('pi-tts-audio');
+  const result = $('pi-tts-result');
+  const providerLabel = $('pi-tts-provider');
+  if (![nameField, textField, generateButton, saveButton,
+        discardButton, audioPlayer, result, providerLabel].every(Boolean)) return;
+
+  let previewId = null;
+  let busy = false;
+  const endpoint = '/api/pi-media/tts';
+  const message = (value) => { result.textContent = value; };
+  const buttons = () => {
+    generateButton.disabled = busy;
+    saveButton.disabled = busy || !previewId;
+    discardButton.disabled = busy || !previewId;
+  };
+  let previewObjectUrl = null;
+  const clearPreview = () => {
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = null;
+    audioPlayer.pause();
+    audioPlayer.removeAttribute('src');
+    audioPlayer.load();
+    audioPlayer.hidden = true;
+    previewId = null;
+    buttons();
+  };
+  const jsonRequest = async (url, options = {}) => {
+    const response = await fetchWithOperatorAuth(url, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      ...options,
+      headers: { ...operatorAuthHeaders(), ...(options.body ? {'Content-Type': 'application/json'} : {}),
+        ...(options.headers || {}) },
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) { /* empty response */ }
+    if (!response.ok) {
+      throw new Error(typeof data.detail === 'string'
+        ? data.detail : `Request failed (${response.status})`);
+    }
+    return data;
+  };
+  const discard = async () => {
+    if (!previewId) return;
+    const id = previewId;
+    await jsonRequest(`${endpoint}/preview/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    clearPreview();
+  };
+  // The backend uses the current AI Provider Settings when Generate is pressed.
+  providerLabel.textContent = 'Current AI Provider Settings';
+  buttons();
+
+  generateButton.addEventListener('click', async () => {
+    if (busy) return;
+    const dialogue = textField.value.trim();
+    if (!dialogue) { message('Enter dialogue before generating speech.'); return; }
+    if (dialogue.length > 600) { message('Dialogue exceeds 600 characters.'); return; }
+    busy = true; buttons(); message('Generating audio…');
+    try {
+      // Avoid accumulating paid generated previews during repeated attempts.
+      if (previewId) await discard();
+      const data = await jsonRequest(`${endpoint}/generate`, {
+        method: 'POST', body: JSON.stringify({text: dialogue}),
+      });
+      previewId = data.preview_id;
+      providerLabel.textContent = data.provider || 'Configured voice';
+      const previewResponse = await fetchWithOperatorAuth(`${endpoint}/preview/${encodeURIComponent(previewId)}`, {headers: operatorAuthHeaders(), cache: 'no-store'});
+      if (!previewResponse.ok) throw new Error('Preview access failed. Sign in with the controller access password.');
+      previewObjectUrl = URL.createObjectURL(await previewResponse.blob());
+      audioPlayer.src = previewObjectUrl;
+      audioPlayer.hidden = false;
+      message('Generated. Preview in your browser, then Save or Discard.');
+    } catch (error) {
+      message(error.message || 'Unable to generate speech.');
+    } finally { busy = false; buttons(); }
+  });
+
+  saveButton.addEventListener('click', async () => {
+    if (busy || !previewId) return;
+    const displayName = nameField.value.trim();
+    if (!displayName || displayName.length > 120) {
+      message('Enter a Media Name (1–120 characters).'); return;
+    }
+    // Filename is internal identity; friendly Media Name remains editable.
+    const filename = `tts-${previewId}.wav`;
+    busy = true; buttons(); message('Saving generated audio…');
+    try {
+      const status = await jsonRequest(`${endpoint}/save`, {
+        method: 'POST',
+        body: JSON.stringify({preview_id: previewId, filename,
+          display_name: displayName}),
+      });
+      clearPreview();
+      if (typeof renderPiMediaStatus === 'function') renderPiMediaStatus(status);
+      message(`Saved “${displayName}” to Pi Media.`);
+    } catch (error) {
+      message(error.message || 'Save failed. Your preview is retained.');
+    } finally { busy = false; buttons(); }
+  });
+
+  discardButton.addEventListener('click', async () => {
+    if (busy || !previewId) return;
+    busy = true; buttons();
+    try { await discard(); message('Generated preview discarded.'); }
+    catch (error) { message(error.message || 'Could not discard preview.'); }
+    finally { busy = false; buttons(); }
+  });
+})();
+
+// Backups are always encrypted; the password stays in memory only.
+function backupHeaders() {
+  return {"X-Backup-Password-Encoded": btoa(String.fromCharCode(...new TextEncoder().encode(document.querySelector("#backup-password").value))), ...operatorAuthHeaders()};
+}
+async function backupFile() {
+  const file = document.querySelector("#settings-backup-file").files[0];
+  if (!file || file.size > 128 * 1024 * 1024) throw new Error("Select an encrypted USA backup no larger than 128 MiB.");
+  return file;
+}
+async function backupAction(action) {
+  const response = await fetchWithOperatorAuth(`/api/backup/${action}`, {method: "POST", headers: {
+    ...backupHeaders(), ...(action === "restore" ? {"X-Restore-Confirm": "replace"} : {})
+  }, body: await backupFile()});
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || "Backup request failed");
+  return payload;
+}
+document.querySelector("#backup-size").addEventListener("click", async () => {
+  try {
+    const payload = await request(`/api/backup/inventory?media=${document.querySelector("#backup-include-media").checked}`);
+    document.querySelector("#backup-result").textContent = `${(payload.bytes / 1048576).toFixed(1)} MiB before compression; limit 128 MiB. ${payload.fits ? "Fits." : "Omit audio files to continue."}`;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#download-settings-backup").addEventListener("click", async (event) => {
+  const button = event.currentTarget; button.disabled = true;
+  const result = document.querySelector("#backup-result");
+  try {
+    const response = await fetchWithOperatorAuth(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}`, {method: "POST", headers: backupHeaders()});
+    if (!response.ok) throw new Error((await response.json()).detail || "Backup failed");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = "usa-backup.usabackup"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    result.textContent = "Encrypted backup downloaded. Keep it and its password safe.";
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+let inspectedBackup = null;
+for (const id of ["settings-backup-file", "backup-password"]) {
+  document.getElementById(id).addEventListener("change", () => { inspectedBackup = null; document.querySelector("#restore-settings-backup").disabled = true; });
+}
+document.querySelector("#inspect-settings-backup").addEventListener("click", async () => {
+  document.querySelector("#restore-settings-backup").disabled = true;
+  try {
+    const payload = await backupAction("inspect");
+    inspectedBackup = await backupFile();
+    document.querySelector("#backup-result").textContent = `${payload.message} Files: ${payload.files.join(", ")}. ${(payload.bytes / 1048576).toFixed(1)} MiB.`;
+    document.querySelector("#restore-settings-backup").disabled = false;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#restore-settings-backup").addEventListener("click", async (event) => {
+  if (!inspectedBackup || inspectedBackup !== await backupFile()) return;
+  if (!window.confirm("Replace the files listed in Preview Restore? An encrypted recovery copy will be saved. Restart USA afterwards.")) return;
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const payload = await backupAction("restore");
+    document.querySelector("#backup-result").textContent = `${payload.message} Recovery copy: ${payload.recovery}`;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#verify-manual-update").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#manual-update-result");
+  const install = document.querySelector("#install-manual-update");
+  install.disabled = true; button.disabled = true;
+  try {
+    const file = document.querySelector("#manual-update-file").files[0];
+    if (!file || file.size > 150 * 1024 * 1024) throw new Error("Select a release ZIP no larger than 150 MiB.");
+    result.textContent = "Uploading and verifying…";
+    const payload = await request("/api/update/manual/verify", {method: "POST", headers: {
+      ...operatorAuthHeaders(), "Content-Type": "application/zip",
+      "X-USA-Version": document.querySelector("#manual-update-version").value.trim(),
+      "X-USA-SHA256": document.querySelector("#manual-update-sha256").value.trim(),
+    }, body: file});
+    install.dataset.token = payload.token;
+    install.disabled = payload.installable === false; result.textContent = payload.message;
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector("#install-manual-update").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  if (!window.confirm("Install the verified release and restart USA?")) return;
+  button.disabled = true;
+  try {
+    const payload = await request("/api/update/manual/install", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: button.dataset.token})});
+    document.querySelector("#manual-update-result").textContent = payload.message;
+  } catch (error) { document.querySelector("#manual-update-result").textContent = error.message; }
+});
+
+document.querySelector("#operator-sign-in").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const username = document.querySelector("#operator-auth-user").value;
+  const password = document.querySelector("#operator-auth-password").value;
+  operatorAuthorization = `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`${username}:${password}`)))}`;
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/backup/inventory", {headers: {"X-USA-Interactive-Auth": "1", ...operatorAuthHeaders()}});
+    if (!response.ok) throw new Error("Sign-in failed. Check the username and controller access password.");
+    document.querySelector("#operator-auth-password").value = "";
+    const finish = finishOperatorLogin;
+    operatorLoginPending = null; finishOperatorLogin = null;
+    document.querySelector("#operator-auth-dialog").close();
+    finish?.(true);
+  } catch (error) { operatorAuthorization = ""; document.querySelector("#operator-auth-result").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector("#operator-auth-cancel").addEventListener("click", () => document.querySelector("#operator-auth-dialog").close());
+document.querySelector("#operator-auth-dialog").addEventListener("close", () => {
+  document.querySelector("#operator-auth-password").value = "";
+  const finish = finishOperatorLogin;
+  operatorLoginPending = null; finishOperatorLogin = null;
+  finish?.(false);
+});
+
+document.querySelector("#list-backup-recoveries").addEventListener("click", async () => {
+  const list = document.querySelector("#backup-recoveries"); list.replaceChildren();
+  try {
+    const payload = await request("/api/backup/recoveries");
+    if (!payload.files.length) list.textContent = "No recovery copies yet.";
+    for (const file of payload.files) {
+      const button = document.createElement("button"); button.type = "button";
+      button.textContent = `Download ${file.name} (${(file.bytes / 1024).toFixed(1)} KiB)`;
+      button.addEventListener("click", async () => {
+        try {
+          const response = await fetchWithOperatorAuth(`/api/backup/recovery/${encodeURIComponent(file.name)}`, {headers: operatorAuthHeaders()});
+          if (!response.ok) throw new Error("Recovery download failed");
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+      });
+      list.append(button);
+    }
+  } catch (error) { list.textContent = error.message; }
+});
+
+for (const id of ["manual-update-file", "manual-update-version", "manual-update-sha256"]) {
+  document.getElementById(id).addEventListener("change", () => {
+    const install = document.querySelector("#install-manual-update");
+    install.disabled = true; delete install.dataset.token;
   });
 }
