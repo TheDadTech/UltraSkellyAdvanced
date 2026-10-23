@@ -1,3 +1,6 @@
+> Scope correction: the release scope below was superseded by `SCOPE_0_28.md`.
+> It records the earlier broader handoff audit, not additional release commitments.
+
 # 0.28.0 plan audit — 2026-10-22 Ubuntu
 
 Audit baseline: `dev/0.28.0`, HEAD `16b0379`, plus three preserved uncommitted

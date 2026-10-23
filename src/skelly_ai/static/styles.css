@@ -776,3 +776,15 @@ body.help-mode-off .help-copy { display:none !important; }
 .media-eye-choice img { width: 26px; height: 26px; flex: none; object-fit: contain; }
 .media-eye-choice small { font-size: 10px; overflow-wrap: anywhere; }
 .media-eye-choice[aria-pressed="true"] { outline: 2px solid var(--accent, #ffad24); outline-offset: -2px; background: #26364a; }
+
+/* Compact tools use the established dark palette and existing controls. */
+#mode-launcher-section .mode-card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tools-card { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-soft); margin: 10px 0; }
+.tools-card > summary { padding: 14px 16px; cursor: pointer; font-weight: 700; }
+.tools-card > summary > span { display: block; margin: 4px 0 0 18px; color: var(--muted); font-size: .82rem; font-weight: 400; }
+.tools-card-content { padding: 0 16px 16px; }
+.tools-card-content > label { margin: 10px 0; }
+.tools-card-content > button { margin: 4px 4px 4px 0; }
+#maintenance-section > details:first-child { margin-bottom: 14px; }
+#software-update-section, #diagnostics-section, #ssh-access-section, #controller-power-section { padding-top: 8px; padding-bottom: 8px; }
+@media (max-width: 640px) { #mode-launcher-section .mode-card-grid { grid-template-columns: 1fr; } }

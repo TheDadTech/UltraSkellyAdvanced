@@ -38,7 +38,7 @@ def test_dashboard_has_unique_ids_and_matching_tabs() -> None:
     parser.feed((STATIC / "index.html").read_text(encoding="utf-8"))
 
     assert len(parser.ids) == len(set(parser.ids))
-    assert parser.tabs == {"operate", "setup", "voice", "diagnostics", "lab"}
+    assert parser.tabs == {"operate", "setup", "voice", "diagnostics"}
     assert parser.panels == parser.tabs
 
 
@@ -155,7 +155,7 @@ def test_guided_operation_interface_is_present() -> None:
     assert 'request("/api/operation/start"' in script
     assert 'request("/api/setup/forget-skelly"' in script
     assert 'request("/api/media/refresh"' in script
-    assert 'if (selectedMode === "classic") await refreshMediaFromSkelly()' in script
+    assert 'if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }' in script
     assert 'request(check ? "/api/update/check" : "/api/update/status"' in script
     assert 'request("/api/update/install", { method: "POST" })' in script
     assert 'request("/api/update/rollback", { method: "POST" })' in script
@@ -444,15 +444,14 @@ def test_camera_preview_flips_before_overlay_and_uses_stricter_face_detection() 
     assert "minSize=(50, 50)" in sensors
 
 
-def test_welcome_message_ui_is_exposed_and_persisted() -> None:
+def test_welcome_controls_removed_without_resetting_legacy_settings() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     script = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert 'id="welcome-enabled"' in html
-    assert 'id="welcome-message"' in html
-    assert 'id="save-welcome-message"' in html
-    assert "welcome_enabled" in script
-    assert "welcome_message" in script
-    assert "welcoming:" in script
+    assert 'id="welcome-enabled"' not in html
+    assert 'id="welcome-message"' not in html
+    assert 'id="save-welcome-message"' not in html
+    assert 'welcome_enabled: currentOperationSettings?.welcome_enabled ?? false' in script
+    assert 'welcome_message: currentOperationSettings?.welcome_message ?? ""' in script
 
 
 def test_pi_media_upload_progress_controls():
@@ -522,3 +521,19 @@ def test_pi_media_editable_display_name():
 
     # Original filename stays available for playback and file identity.
     assert 'document.querySelector("#media-edit-name").value = file.name || ""' in script
+
+
+def test_lab_replaces_classic_mode_card_and_sensor_tests_stay_in_tools():
+    script = (STATIC / "app.js").read_text()
+    html = (STATIC / "index.html").read_text()
+    operate = script.split("    operate: [", 1)[1].split("    setup:", 1)[0]
+    assert '#classic-library-section' in operate and '#sensor-lab-section' not in operate
+    tools = script.split('    diagnostics: [', 1)[1].split('    ],', 1)[0]
+    assert tools.index('#sensor-lab-section') < tools.index('#software-update-section')
+    assert '#dac-controller-section' not in operate
+    assert 'id="tab-lab"' not in html and 'id="panel-lab"' not in html
+    assert 'data-mode-card="classic"' in html and '<h3>The Lab</h3>' in html
+    assert html.count('data-start-operation="classic"') == 1
+    assert 'meta.textContent = `${formatBytes(file.size)}' in script
+    assert 'isPi ? "Media preset"' in script
+    assert 'document.querySelector("#sensor-lab-section").hidden = false' in script

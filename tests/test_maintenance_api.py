@@ -55,10 +55,11 @@ def test_backup_api_wrong_password_and_operation_guard(tmp_path):
         assert c.post('/api/backup/restore', headers={**headers,'X-Restore-Confirm':'replace'}, content=encrypted, auth=AUTH).status_code == 409
 
 
-def test_manual_verify_and_simulation_install_guard(tmp_path):
+def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
     data = release()
     headers = {'X-USA-Version':'0.28.1', 'X-USA-SHA256':hashlib.sha256(data).hexdigest()}
     with client_for(tmp_path) as c:
+        monkeypatch.setattr('skelly_ai.api.httpx.AsyncClient', lambda **kwargs: pytest.fail('manual ZIP must not contact GitHub'))
         assert c.post('/api/update/manual/verify', content=data, headers=headers).status_code == 401
         r=c.post('/api/update/manual/verify', content=data, headers=headers, auth=AUTH)
         assert r.status_code == 200, r.text
@@ -178,3 +179,13 @@ def test_unicode_backup_password_and_effective_credential_recovery(tmp_path):
         assert result.status_code==200
         recovered=BackupManager(tmp_path).inspect((tmp_path/'backups'/result.json()['recovery']).read_bytes(),password)
         assert json.loads(recovered['credentials.json'])['groq_api_key']=='test-env-only-groq-value'
+
+
+def test_legacy_welcome_settings_are_retained_but_greeting_is_disabled(tmp_path):
+    (tmp_path/'operation-settings.json').write_text('{"welcome_enabled":true,"welcome_message":"Legacy greeting","nag_mode":"media","listening_sensitivity":61}')
+    app=create_app(Settings(data_dir=tmp_path,simulation=True))
+    with TestClient(app) as c:
+        assert app.state.perception._welcomer is None
+        settings=c.get('/api/status').json()['operation']['settings']
+        assert settings['welcome_message']=='Legacy greeting'
+        assert settings['listening_sensitivity']==61 and settings['nag_mode']=='media'

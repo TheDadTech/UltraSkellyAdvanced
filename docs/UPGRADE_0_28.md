@@ -104,9 +104,17 @@ PipeWire, camera, microphones, network, USA and nginx services. Raw details are
 under Advanced diagnostic details. Simulation labels host probes as not probed;
 it does not qualify real hardware.
 
-The Lab separates sensor tests and advanced DAC experiments from normal use.
-Existing hardware/profile safety guards remain in effect. Sensor actions and
-movement experiments must be deliberately requested; clear the prop first.
+The Lab replaces the Classic mode card under Operate, alongside AI Mode and
+Operator Mode. Start The Lab to show the existing Skelly/Pi media library.
+Interactive Camera & Microphone tests stay at the top of System & Tools.
+There is no separate Lab tab. Existing DAC controls stay in System & Tools with their
+profile guards. Automatic Welcome Message playback and its controls are removed;
+legacy saved fields remain readable for compatibility without affecting lures,
+triggers, listening sensitivity or other settings. Internal audio filenames are
+kept by the API but are not repeated in Pi Media table subtitles or its editor
+heading. The graphical eye picker and the rest of the preset editor are unchanged.
+System & Tools uses compact expandable cards without removing working functions.
+
 
 ## Build and release gates
 

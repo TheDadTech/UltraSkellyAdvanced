@@ -14,8 +14,14 @@
 - Shows release-service connectivity, latest detected versions and last success.
 - Replaces the obsolete 0.25.6 recovery bridge with an explicit local-package,
   version and published-checksum workflow; preserves unique recovery backups.
-- Adds The Lab for optional experiments and a practical System Health summary
-  while retaining advanced diagnostics and existing hardware guards.
+- Replaces the Classic entry point with The Lab: existing media controls plus
+  preserved media controls. Camera and microphone tests stay atop System & Tools.
+  Adds compact System & Tools cards
+  while retaining diagnostics, security and existing hardware guards.
+- Removes automatic Welcome Message playback and its GUI controls without
+  resetting legacy saved fields or unrelated visitor settings.
+- Hides internal filenames in the Pi Media table subtitle and preset heading;
+  friendly names and the graphical eye picker remain unchanged.
 - Preserves custom-port Host headers through nginx and increases upload limits.
 - Aligns application version and frontend cache version to 0.28.0; prevents the
   release ZIP packager from overwriting existing artifacts.

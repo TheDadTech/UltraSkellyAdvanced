@@ -194,10 +194,6 @@ const microphoneWouldTrigger = document.querySelector("#microphone-would-trigger
 const microphoneThresholdMarker = document.querySelector("#microphone-threshold-marker");
 const listeningSensitivity = document.querySelector("#listening-sensitivity");
 const listeningSensitivityValue = document.querySelector("#listening-sensitivity-value");
-const welcomeEnabled = document.querySelector("#welcome-enabled");
-const welcomeMessage = document.querySelector("#welcome-message");
-const saveWelcomeMessage = document.querySelector("#save-welcome-message");
-const welcomeMessageResult = document.querySelector("#welcome-message-result");
 const nagMode = document.querySelector("#nag-mode");
 const nagDelay = document.querySelector("#nag-delay");
 const nagDelayValue = document.querySelector("#nag-delay-value");
@@ -392,17 +388,16 @@ function initializeDashboardTabs() {
       document.querySelector("#ai-services-section"),
       document.querySelector("#elevenlabs-section"),
     ],
-    lab: [
-      document.querySelector("#sensor-lab-section"),
-      document.querySelector("#dac-controller-section"),
-    ],
     diagnostics: [
-      document.querySelector("#maintenance-section"),
-      document.querySelector("#advanced-bluetooth-section"),
+      document.querySelector("#sensor-lab-section"),
+      document.querySelector("#help-mode-section"),
       document.querySelector("#software-update-section"),
+      document.querySelector("#maintenance-section"),
+      document.querySelector("#diagnostics-section"),
+      document.querySelector("#advanced-bluetooth-section"),
+      document.querySelector("#dac-controller-section"),
       document.querySelector("#ssh-access-section"),
       document.querySelector("#controller-power-section"),
-      document.querySelector("#diagnostics-section"),
     ],
   };
   Object.entries(layout).forEach(([name, sections]) => {
@@ -484,11 +479,12 @@ function updateModeVisibility(activeMode, profile) {
     button.disabled = activeMode === "starting" || selected;
   });
   stopOperation.disabled = !readyMode && activeMode !== "needs_attention";
+  document.querySelector("#sensor-lab-section").hidden = false;
 }
 
 function operationModeName(mode) {
   return {
-    classic: "Classic Mode",
+    classic: "The Lab",
     ai: "AI Mode",
     manual: "Operator Mode",
     idle: "Remain idle",
@@ -571,10 +567,6 @@ function renderOperation(operation) {
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
-  if (welcomeEnabled) welcomeEnabled.checked = settings.welcome_enabled === true;
-  if (welcomeMessage && document.activeElement !== welcomeMessage) {
-    welcomeMessage.value = settings.welcome_message || "Well, well... somebody wandered into the wrong yard.";
-  }
   if (audioOutputSelect && document.activeElement !== audioOutputSelect && !audioOutputSelectionLocked()) {
     audioOutputSelect.value = settings.audio_output || "skelly";
   }
@@ -1276,8 +1268,8 @@ function operationSettingsPayload() {
     trigger_on_audio: triggerOnAudio.checked,
     trigger_on_face: triggerOnFace.checked,
     trigger_on_motion: triggerOnMotion.checked,
-    welcome_enabled: welcomeEnabled?.checked === true,
-    welcome_message: welcomeMessage?.value.trim() || "",
+    welcome_enabled: currentOperationSettings?.welcome_enabled ?? false,
+    welcome_message: currentOperationSettings?.welcome_message ?? "",
     nag_mode: nagMode.value,
     nag_delay_seconds: Number(nagDelay.value),
     nag_cooldown_seconds: Number(nagCooldown.value),
@@ -1329,23 +1321,6 @@ function formatLureInterval(value) {
   });
 });
 
-if (saveWelcomeMessage) {
-  saveWelcomeMessage.addEventListener("click", async () => {
-    saveWelcomeMessage.disabled = true;
-    welcomeMessageResult.textContent = "Saving welcome message...";
-    try {
-      await saveOperationSettings();
-      await refreshStatus();
-      welcomeMessageResult.textContent = welcomeEnabled?.checked
-        ? "Welcome message saved."
-        : "Welcome message disabled.";
-    } catch (error) {
-      welcomeMessageResult.textContent = error.message;
-    } finally {
-      saveWelcomeMessage.disabled = false;
-    }
-  });
-}
 
 saveVisitorEngagement.addEventListener("click", async () => {
   saveVisitorEngagement.disabled = true;
@@ -1495,7 +1470,7 @@ async function startSelectedOperation(selectedMode, button, resultElement = oper
     resultElement.textContent = selectedMode === "idle"
       ? "Skelly is safely in standby."
       : `${modeName} is ready.`;
-    if (selectedMode === "classic") await refreshMediaFromSkelly();
+    if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }
     if (selectedMode === "ai") await refreshPerceptionStatus();
   } catch (error) {
     resultElement.textContent = error.message;
@@ -1564,7 +1539,7 @@ function renderMediaStatus(body) {
     empty.className = "muted";
     empty.textContent = filter ? "No stored files match that filter." : body.available
       ? "No media files reported yet. Press Refresh media list."
-      : "Connect the prop and start Classic mode first.";
+      : "Connect the prop and start The Lab first.";
     mediaLibrary.append(empty);
     return;
   }
@@ -1822,7 +1797,7 @@ function renderPiMediaStatus(body) {
     title.textContent = file.display_name || file.name;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `${file.name} · ${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
+    meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -2124,7 +2099,7 @@ function openMediaEditor(file, source = "skelly") {
   document.querySelector("#media-movement-activity-setting").hidden = !isPi;
   document.querySelector("#media-movement-activity").value = file.movement_activity || "normal";
   document.querySelector("#save-media-preset").textContent = isPi ? "Save Pi Media preset" : "Save preset to Skelly";
-  document.querySelector("#media-editor-title").textContent = file.name || `Media file ${file.serial}`;
+  document.querySelector("#media-editor-title").textContent = isPi ? "Media preset" : file.name || `Media file ${file.serial}`;
   document.querySelector("#media-edit-serial").value = file.serial;
   const action = Number(file.action ?? 0);
   document.querySelector("#media-move-head").checked = Boolean(action & 1);
@@ -3208,6 +3183,7 @@ checkForUpdates.addEventListener("click", async () => {
 
 updateAvailableBadge.addEventListener("click", () => {
   selectDashboardTab("diagnostics");
+  document.querySelector("#software-update-section-details").open = true;
   document.querySelector("#software-update-section").scrollIntoView({ behavior: "smooth" });
 });
 
