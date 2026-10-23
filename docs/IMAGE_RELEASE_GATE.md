@@ -44,3 +44,21 @@ Every required item must pass on a disposable SD card before publication.
 - [ ] Power interruption during ordinary operation recovers to a safe state.
 - [ ] Previous known-good image remains downloadable.
 - [ ] Release notes identify limitations and support/reporting instructions.
+
+## Required 0.27.4 application upgrade (no reflash)
+
+Use a disposable card with 0.27.4 and representative saved settings, credentials
+and media. Record source version, target ZIP checksum, OS, tester and date.
+
+- [ ] Back up the test card; keep production disconnected from this test.
+- [ ] Existing 0.27.4 USA updates discovers the intended 0.28.0 channel/release.
+- [ ] Install succeeds through the 0.27.4 updater without reflashing.
+- [ ] Dashboard reports 0.28.0; operation remains stopped after restart.
+- [ ] Settings, credentials, media files, presets and Lure selections survive.
+- [ ] Altered/wrong-checksum package is rejected before installation.
+- [ ] Controlled installer/health-check failure restores the previous application.
+- [ ] Successful update offers rollback to 0.27.4; rollback returns healthy with data preserved.
+- [ ] Local ZIP recovery procedure is tested separately if offered as a fallback.
+- [ ] End-user upgrade instructions match the observed controls and results.
+
+Do not publish 0.28.0 with this section incomplete.

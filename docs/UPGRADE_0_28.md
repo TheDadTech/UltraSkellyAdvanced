@@ -77,12 +77,40 @@ Manual upload refuses same/older versions; use Roll back for a previous release.
 Beta packages require Beta opt-in. A user-entered digest does not make arbitrary
 third-party code trustworthy: install only the owner's intended official release.
 
-## Older 0.27.x installations
+## Upgrade from 0.27.4 without reflashing
 
-A 0.27.x dashboard cannot gain the new upload controls until it is upgraded. Try
-its normal updater first. Compatibility of config defaults, filename-based media
-operations, update and rollback behavior is covered by local tests; actual
-0.27.4 → 0.28.0 installation remains a disposable-card release gate.
+The supported primary path is **System & Tools → USA updates** on the existing
+0.27.4 dashboard. No new SD-card image is required. This updates USA, not the
+operating system. The new Manual ZIP upload panel is available only after
+0.28.0 is installed; it is not an entry point in the 0.27.4 dashboard.
+
+1. Preserve a full copy of the old card before upgrading. At minimum, securely
+   copy `/var/lib/skelly-ai/` and `/etc/skelly-ai/` off the controller. These may
+   contain credentials. 0.27.4 cannot create the new encrypted `.usabackup` format.
+2. Stop active operation and media transfers. Keep power and network available.
+3. In USA updates, select the release channel containing the approved 0.28.0
+   release. Beta is opt-in; do not enable it unless intentionally testing Beta.
+4. Choose **Check for updates**, confirm the target is **0.28.0**, then choose
+   **Install update**. The updater validates the downloaded package checksum,
+   stages the release and invokes the existing installer.
+5. Wait for the dashboard to reconnect. Confirm version 0.28.0, saved settings,
+   provider credentials, friendly media names/presets, Lure selections and media
+   playback. Verify the controller remains stopped until deliberately started.
+6. Confirm rollback is offered for the previous application version. If the new
+   application fails health checks, the installer attempts automatic recovery.
+   The old-card backup remains the independent recovery path.
+7. After successful verification, create a new encrypted backup in 0.28.0.
+
+The application data and environment remain outside the replaced virtual
+environment. Wi-Fi and Bluetooth state are not migrated to a different OS/card
+by an application update. Downloads and dependency installation require network
+access; a locally supplied ZIP avoids GitHub access but is not a promise of a
+fully offline dependency installation.
+
+**Release gate:** Ubuntu package/staging checks do not establish a successful
+Pi installation. Before publication, the disposable-card 0.27.4 → 0.28.0 update,
+settings/media retention, failure recovery and rollback checks in
+`IMAGE_RELEASE_GATE.md` must be recorded as passing. Never test on production.
 
 If its updater is broken, an owner can use the supplied one-time recovery script
 with a downloaded official ZIP and independently obtained checksum:
