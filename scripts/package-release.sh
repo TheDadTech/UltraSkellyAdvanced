@@ -21,7 +21,7 @@ done
 mkdir -p "$staging/src"
 cp -a "$PROJECT_ROOT/src/skelly_ai" "$staging/src/"
 
-for file in   ".gitignore"   "Banner Image.png"   "DISTRIBUTION.md"   "NOTICE.md"   "pyproject.toml"   "QUICK_START.md"   "README.md"   "RELEASE_NOTES.md"; do
+for file in   "install-updater-bridge.sh"   ".gitignore"   "Banner Image.png"   "DISTRIBUTION.md"   "NOTICE.md"   "pyproject.toml"   "QUICK_START.md"   "README.md"   "RELEASE_NOTES.md"; do
   cp -a "$PROJECT_ROOT/$file" "$staging/"
 done
 

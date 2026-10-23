@@ -162,7 +162,7 @@ class BackupManager:
                     if not 1 <= int(entry.get("eye", 1)) <= 18:
                         raise BackupError("Invalid media eye preset")
 
-    def restore(self, files: dict[str, bytes], password: str) -> str:
+    def restore(self, files: dict[str, bytes], password: str, overrides: dict[str, bytes] | None = None) -> str:
         try:
             self._validate(files)
         except (ValueError, TypeError, KeyError):
@@ -181,7 +181,7 @@ class BackupManager:
             target = self.data_dir / name
             if name.startswith("media/") and target.exists() and target.read_bytes() != payload:
                 raise BackupError("An audio filename already exists with different contents; rename it before restoring")
-        recovery = self.create(password, include_media=False)
+        recovery = self.create(password, include_media=False, overrides=overrides)
         recovery_name = "recovery-" + os.urandom(12).hex() + ".usabackup"
         recovery_dir = self.data_dir / "backups"
         if recovery_dir.is_symlink():

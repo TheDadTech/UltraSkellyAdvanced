@@ -161,3 +161,20 @@ def test_manual_expired_token_and_duplicate_zip_entries(tmp_path, monkeypatch):
             z.writestr('deploy/bootstrap-pi.sh','replacement')
     with pytest.raises(UpdateError,match='unsafe'):
         manager.verify_manual(archive,'0.28.1',hashlib.sha256(archive.read_bytes()).hexdigest())
+
+
+def test_unicode_backup_password_and_effective_credential_recovery(tmp_path):
+    import base64
+    from pydantic import SecretStr
+    password='backup-with-unicode-☃-password'
+    settings=Settings(data_dir=tmp_path,simulation=True,tts_password=AUTH[1],groq_api_key=SecretStr('test-env-only-groq-value'))
+    with TestClient(create_app(settings)) as c:
+        headers={'X-Backup-Password-Encoded':base64.b64encode(password.encode()).decode()}
+        backup=c.post('/api/backup/download',headers=headers,auth=AUTH)
+        assert backup.status_code==200
+        files=BackupManager(tmp_path).inspect(backup.content,password)
+        assert json.loads(files['credentials.json'])['groq_api_key']=='test-env-only-groq-value'
+        result=c.post('/api/backup/restore',headers={**headers,'X-Restore-Confirm':'replace'},content=backup.content,auth=AUTH)
+        assert result.status_code==200
+        recovered=BackupManager(tmp_path).inspect((tmp_path/'backups'/result.json()['recovery']).read_bytes(),password)
+        assert json.loads(recovered['credentials.json'])['groq_api_key']=='test-env-only-groq-value'

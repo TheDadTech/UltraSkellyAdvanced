@@ -189,6 +189,12 @@ class SensorLab:
         self._device_inventory_cached_at = now
         return inventory
 
+    def _speech_model_available(self) -> bool:
+        try:
+            return self.speech_model_path.is_dir()
+        except OSError:
+            return False
+
     def status(self) -> dict[str, object]:
         with self._state_lock:
             camera = dict(self._last_camera)
@@ -207,7 +213,7 @@ class SensorLab:
                 "device": self.microphone_device,
                 "devices": inventory["microphones"],
                 "voice_threshold_dbfs": self.voice_threshold_dbfs,
-                "offline_transcription_available": self.speech_model_path.is_dir(),
+                "offline_transcription_available": self._speech_model_available(),
                 "speech_model": self.speech_model_path.name,
                 **microphone,
             },
@@ -473,7 +479,7 @@ class SensorLab:
         await asyncio.to_thread(self._new_vosk_recognizer)
 
     def _new_vosk_recognizer(self):
-        if not self.speech_model_path.is_dir():
+        if not self._speech_model_available():
             raise SensorUnavailable(
                 "The offline speech model is not installed; run deploy/install-speech-model.sh"
             )

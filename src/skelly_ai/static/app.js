@@ -3083,7 +3083,7 @@ function renderUpdateStatus(body) {
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
   const connectivity = body.connectivity || {};
-  document.querySelector("#github-connectivity").textContent = `GitHub: ${connectivity.reachable === true ? "reachable" : connectivity.reachable === false ? "unreachable" : "not checked"}. Latest stable: ${connectivity.stable || "unknown"}. Latest beta: ${connectivity.beta || "unknown"}. Last successful check: ${connectivity.last_success || "never"}. ${connectivity.error || ""}`;
+  document.querySelector("#github-connectivity").textContent = `GitHub: ${connectivity.reachable === true ? "reachable" : connectivity.reachable === false ? "unreachable" : "not checked"}. Latest stable: ${connectivity.stable || "unknown"}. Latest beta: ${connectivity.beta || "unknown"}. Last successful check: ${connectivity.last_success ? new Date(connectivity.last_success).toLocaleString() : "never"}. ${connectivity.error || ""}`;
   const betaEnabled = body.channel === "beta";
   if (updateChannelBadge) {
     updateChannelBadge.textContent = betaEnabled ? "BETA" : "Stable";
@@ -3897,7 +3897,7 @@ if (externalBluetoothForget) {
 
 // Backups are always encrypted; the password stays in memory only.
 function backupHeaders() {
-  return {"X-Backup-Password": document.querySelector("#backup-password").value, ...operatorAuthHeaders()};
+  return {"X-Backup-Password-Encoded": btoa(String.fromCharCode(...new TextEncoder().encode(document.querySelector("#backup-password").value))), ...operatorAuthHeaders()};
 }
 async function backupFile() {
   const file = document.querySelector("#settings-backup-file").files[0];

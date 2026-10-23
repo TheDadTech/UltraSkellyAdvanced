@@ -2163,6 +2163,8 @@ def create_app(
 
     def maintenance_access(request: Request, *, idle: bool = False):
         require_local_setup(request)
+        if idle and (tts_generation_lock.locked() or pi_media._upload_lock.locked()):
+            raise HTTPException(status_code=409, detail="Wait for current media transfers or generation to finish")
         if idle and (operation_state.get("active_mode") not in {None, "standby"} or controller.snapshot().mode == Mode.SHOW_LOCKED):
             raise HTTPException(status_code=409, detail="Stop the current operation before restoring or installing")
         if maintenance_lock.locked():
@@ -2207,18 +2209,33 @@ def create_app(
             raise HTTPException(status_code=404, detail="Recovery copy not found")
         return FileResponse(path, filename=name, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
+    def backup_password(request: Request) -> str:
+        encoded = request.headers.get("x-backup-password-encoded")
+        if encoded is None:
+            return request.headers.get("x-backup-password", "")
+        if len(encoded) > 2048:
+            raise BackupError("Backup password is too long")
+        try:
+            return base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeError):
+            raise BackupError("Invalid backup password encoding") from None
+
+    def effective_backup_settings():
+        credentials = credential_store.load()
+        overrides = {
+            "operation-settings.json": operation_store.load().model_dump_json().encode(),
+            "provider-settings.json": provider_store.load().model_dump_json().encode(),
+            "credentials.json": json.dumps({"groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
+        }
+        return overrides
+
     @app.post("/api/backup/download")
     async def backup_download(request: Request, media: bool = False):
         maintenance_access(request)
         async with maintenance_lock:
             try:
-                credentials = credential_store.load()
-                overrides = {
-                    "operation-settings.json": operation_store.load().model_dump_json().encode(),
-                    "provider-settings.json": provider_store.load().model_dump_json().encode(),
-                    "credentials.json": json.dumps({"groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
-                }
-                payload = await asyncio.to_thread(backups.create, request.headers.get("x-backup-password", ""), media, overrides)
+                overrides = effective_backup_settings()
+                payload = await asyncio.to_thread(backups.create, backup_password(request), media, overrides)
                 return Response(payload, media_type="application/octet-stream", headers={"Content-Disposition": 'attachment; filename="usa-backup.usabackup"', "Cache-Control": "no-store"})
             except (BackupError, OSError):
                 raise HTTPException(status_code=422, detail="Could not create backup. Check password length, size and storage.") from None
@@ -2233,13 +2250,13 @@ def create_app(
                 with tempfile.TemporaryDirectory(prefix="usa-backup-") as directory:
                     upload = Path(directory) / "backup"
                     await bounded_upload(request, backups.MAX_BYTES, upload)
-                    password = request.headers.get("x-backup-password", "")
+                    password = backup_password(request)
                     files = await asyncio.to_thread(backups.inspect, upload.read_bytes(), password)
                     if not restore:
                         return {"files": sorted(files), "bytes": sum(map(len, files.values())), "message": "Validated. Restore replaces the listed files. Existing different audio files are never overwritten."}
                     if request.headers.get("x-restore-confirm") != "replace":
                         raise HTTPException(status_code=409, detail="Review and confirm restore first")
-                    recovery = await asyncio.to_thread(backups.restore, files, password)
+                    recovery = await asyncio.to_thread(backups.restore, files, password, effective_backup_settings())
                     return {"message": "Backup restored. Restart USA to apply settings. Pair speakers and reconnect WiFi on a replacement controller.", "recovery": recovery}
             except BackupError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -2647,7 +2664,7 @@ def create_app(
         check("Storage", disk.free >= 10 * 1024**3, f"{disk.free / 1024**3:.1f} GiB available", "Free disk space or remove unneeded media if below the reserve.")
         media = pi_media.status()
         check("Pi Media", int(media["quota_remaining_bytes"]) > 0, f"{media['file_count']} clips; {int(media['usage_bytes']) / 1048576:.1f} MiB used", "Remove unused clips or increase Media limit if storage permits.")
-        check("Release service", update_connectivity.get("reachable"), update_connectivity.get("error") or "Use Check for updates to test connectivity.", "Check Internet access, DNS and controller time; retry Check for updates.")
+        check("Release service", update_connectivity.get("reachable"), update_connectivity.get("error") or ("Release service was reachable at the last check." if update_connectivity.get("reachable") else "Use Check for updates to test connectivity."), "Check Internet access, DNS and controller time; retry Check for updates.")
         check("Skelly control", hardware.snapshot().connected, "Simulated connection" if app_settings.simulation else "Saved controller connection status", "Check prop power, proximity, and Setup → Skelly connections.")
         check("Skelly Speaker", classic_audio.snapshot().connected, "Saved speaker connection status", "Use Setup → Prepare and connect speaker; confirm Live Mode.")
         check("External audio", external_audio.snapshot().connected if operation_store.load().audio_output == "external_bluetooth" else None, "External speaker needed only when selected", "Confirm the selected audio output and external speaker pairing.")

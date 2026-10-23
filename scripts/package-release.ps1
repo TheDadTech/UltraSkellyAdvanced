@@ -28,6 +28,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "src\skelly_ai") -Destination (Join-Path $staging "src") -Recurse
 
     foreach ($file in @(
+        "install-updater-bridge.sh",
         ".gitignore",
         "Banner Image.png",
         "DISTRIBUTION.md",
