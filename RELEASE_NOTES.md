@@ -1,36 +1,18 @@
-# UltraSkellyAdvanced 0.28.0 — local candidate
+# UltraSkellyAdvanced 0.28.0
 
-- Adds streaming Pi Media uploads with progress/cancel, quotas and disk reserve,
-  friendly names, permanent IDs and compatibility with existing filenames.
-- Puts Lure eligibility first in the media table and adds a compact 18-image eye
-  picker. Presets and lure choices persist across application recreation.
-- Adds local/Groq/ElevenLabs TTS generation, browser preview, save and discard,
-  with access checks, same-origin protection and bounded private preview storage.
-- Adds encrypted credential/settings backups, optional media, restore preview,
-  recovery copies, safe archive validation and collision protection.
-- Adds manually uploaded release ZIP verification and explicit installation
-  through the existing updater, with checksum/version/structure checks, beta
-  opt-in, simulation installation guard and existing rollback behavior.
-- Shows release-service connectivity, latest detected versions and last success.
-- Replaces the obsolete 0.25.6 recovery bridge with an explicit local-package,
-  version and published-checksum workflow; preserves unique recovery backups.
-- Replaces the Classic entry point with The Lab: existing media controls plus
-  preserved media controls. Camera and microphone tests stay atop System & Tools.
-  Adds compact System & Tools cards
-  while retaining diagnostics, security and existing hardware guards.
-- Removes automatic Welcome Message playback and its GUI controls without
-  resetting legacy saved fields or unrelated visitor settings.
-- Hides internal filenames in the Pi Media table subtitle and preset heading;
-  friendly names and the graphical eye picker remain unchanged.
-- Preserves custom-port Host headers through nginx and increases upload limits.
-- Aligns application version and frontend cache version to 0.28.0; prevents the
-  release ZIP packager from overwriting existing artifacts.
+- Replaces Classic with The Lab in the Operate mode selector, preserving existing media controls.
+- Adds friendly Pi Media names, a dedicated Lure column and a graphical eye picker.
+- Adds speech generation with existing voice providers, browser preview, caching, save and discard.
+- Improves audio uploads with progress, cancellation, larger nginx limits and clearer errors.
+- Removes automatic Welcome Message playback and its controls while preserving unrelated settings.
+- Adds encrypted settings and credentials backups, optional media, restore previews and recovery copies.
+- Adds password-free manual release ZIP verification and installation through the existing updater, preserving rollback. Package verification and installation do not require GitHub connectivity.
+- Organizes System & Tools with Help Mode first, followed by interactive Camera & Microphone tests and compact maintenance sections.
+- Includes System Health and GitHub connectivity reporting.
 
-Ubuntu automated and browser verification is separate from hardware qualification.
-No production Pi installation, real cloud-credit test or public release is implied.
 Backups are limited to 128 MiB and exclude host WiFi/BlueZ state and environment
-files; re-pair/reconfigure replacement controllers. Multi-file restore is not
-power-loss atomic. See `docs/UPGRADE_0_28.md` and `docs/IMAGE_RELEASE_GATE.md`.
+files. Multi-file restore is not power-loss atomic. See `docs/UPGRADE_0_28.md`
+and `docs/IMAGE_RELEASE_GATE.md` for installation and hardware qualification guidance.
 
 # UltraSkellyAdvanced 0.27.1
 
