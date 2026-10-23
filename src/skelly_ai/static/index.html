@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-lure-2">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-lure-3">
   </head>
   <body>
     <main>
@@ -539,7 +539,7 @@
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
               <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Classic Media</option><option value="pi_media">Pi Media (Generate and Change in The Lab)</option><option value="ai">AI Generated (uses credits)</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
-              <div class="lure-media-shortcut"><button id="open-lure-pi-media" type="button" class="secondary">The Lab Pi Media</button><small class="help-copy">Generate speech and change Pi Media lure clips without switching modes.</small></div>
+              <div class="lure-media-shortcut"><span class="lure-shortcut-spacer" aria-hidden="true">Lure mode</span><button id="open-lure-pi-media" type="button" class="secondary">The Lab Pi Media</button><small class="help-copy">Generate speech and change Pi Media lure clips without switching modes.</small></div>
               <label><span>Delay before first lure <output id="nag-delay-value">2s</output></span><input id="nag-delay" type="range" min="1" max="30" step="1" value="2"><small class="help-copy">After a passerby is confirmed, lure them before the first listening window.</small></label>
               <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
               <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
@@ -1036,6 +1036,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.28.1-lure-2"></script>
+    <script src="/static/app.js?v=0.28.1-lure-3"></script>
   </body>
 </html>
