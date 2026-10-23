@@ -2859,6 +2859,16 @@ def create_app(
         apply_audio_output_settings()
         return {"settings": saved.model_dump(), "external_bluetooth": snapshot.to_dict()}
 
+    @app.get("/api/system/network-info")
+    async def network_info(request: Request):
+        require_local_setup(request)
+        if app_settings.simulation:
+            return {"hostname":"usa-controller (simulated)","simulation":True,
+                    "primary_interface":"eth0","selection":"simulated example","gateway":"192.0.2.1",
+                    "interfaces":[{"name":"eth0","ip_addresses":["192.0.2.20"],"mac_address":"02:00:00:00:00:20","primary":True}]}
+        from .network_info import collect_network_info
+        return await collect_network_info(request.client.host if request.client else None)
+
     @app.get("/api/audio/speaker-management")
     async def speaker_management(request: Request):
         require_local_setup(request)

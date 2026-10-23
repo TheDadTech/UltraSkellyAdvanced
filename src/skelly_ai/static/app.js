@@ -2586,6 +2586,32 @@ document.querySelector("#hardware-disconnect").addEventListener("click", async (
   }
 });
 
+async function refreshConnectionNetwork() {
+  const target = document.querySelector("#connection-network-info");
+  try {
+    const body = await request("/api/system/network-info");
+    target.replaceChildren();
+    const field = (name,value) => {
+      const cell=document.createElement("div"); const label=document.createElement("span");
+      label.className="label"; label.textContent=name;
+      const text=document.createElement("strong"); text.textContent=value || "Unavailable";
+      cell.append(label,text); target.append(cell);
+    };
+    field("Hostname",body.hostname);
+    for (const adapter of body.interfaces || []) {
+      field(adapter.primary ? "Active adapter" : "Adapter",adapter.name);
+      field("IP address",adapter.ip_addresses.join(" · "));
+      field("MAC address",adapter.mac_address);
+    }
+    if (body.gateway) field("Gateway",body.gateway);
+    field("Network status",body.error || (body.interfaces?.length ? body.selection : "No active network address found"));
+  } catch (error) { target.textContent=error.message; }
+}
+document.querySelector("#refresh-network-info").addEventListener("click",refreshConnectionNetwork);
+document.querySelector("#manage-connections-details").addEventListener("toggle",(event) => {
+  if (event.currentTarget.open) refreshConnectionNetwork();
+});
+
 let speakerRepairBusy = false;
 let speakerRepairLastState = "idle";
 const repairSpeakerButton = document.querySelector("#repair-skelly-speaker");

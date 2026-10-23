@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-connections-2">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-connections-3">
   </head>
   <body>
     <main>
@@ -846,8 +846,12 @@
       </section>
 
       <section id="advanced-bluetooth-section">
-        <details class="provider-details">
-          <summary>Manage Connections</summary>
+        <details class="tools-card" id="manage-connections-details">
+          <summary>Manage Connections<span>Network details and Skelly speaker repair</span></summary><div class="tools-card-content">
+          <h3>Network</h3>
+          <div id="connection-network-info" class="simulator-readout" aria-live="polite"><p>Open Manage Connections to load network details.</p></div>
+          <button id="refresh-network-info" type="button" class="secondary">Refresh network details</button>
+          <h3>Skelly Speaker</h3>
           <p class="muted">Repair the Skelly speaker connection separately from BLE prop control.</p>
           <div class="simulator-readout" id="speaker-management-status" aria-live="polite">
             <div><span class="label">Discovery / identity</span><strong data-speaker-field="identity">Not checked</strong></div>
@@ -887,6 +891,7 @@
             <button data-live-mode-command data-hardware-action="/api/hardware/live-mode" data-body='{"enabled":false}' data-success="Live Mode disabled." class="secondary">Disable Live Mode</button>
           </div>
           </details>
+          </div>
         </details>
       </section>
 
@@ -1054,10 +1059,10 @@
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
     <script src="/static/core/store.js?v=0.27.2"></script>
-    <script src="/static/core/status.js?v=0.28.1-connections-2"></script>
+    <script src="/static/core/status.js?v=0.28.1-connections-3"></script>
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.28.1-connections-2"></script>
+    <script src="/static/app.js?v=0.28.1-connections-3"></script>
   </body>
 </html>
