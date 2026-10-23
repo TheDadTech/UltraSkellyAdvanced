@@ -71,7 +71,7 @@ def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
         assert c.post('/api/update/manual/install', json={'token':token}).status_code == 409
         assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-SHA256':'0'*64}).status_code == 422
         assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.27.4'}).status_code == 409
-        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.3-beta1'}).status_code == 409
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.4-beta1'}).status_code == 409
 
 
 def test_manual_install_uses_existing_helper_path_and_verified_bytes(tmp_path, monkeypatch):

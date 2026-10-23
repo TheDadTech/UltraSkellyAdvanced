@@ -1,3 +1,8 @@
+# UltraSkellyAdvanced 0.28.3-beta1 — local test build
+
+- Enables the verified transition to the planned official 0.28.0 stable release through Return to Stable.
+- Distinguishes installed Beta build identity from the selected update channel.
+
 # UltraSkellyAdvanced 0.28.2 — local candidate
 
 - Adds Manage Connections with read-only network details and confirmed Skelly speaker pairing repair.

@@ -382,4 +382,4 @@ def test_status_reports_preferred_and_active_audio_route(tmp_path) -> None:
 
 def test_runtime_version_matches_release() -> None:
     from skelly_ai import __version__
-    assert __version__ == "0.28.2"
+    assert __version__ == "0.28.3-beta1"
