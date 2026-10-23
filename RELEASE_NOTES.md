@@ -1,18 +1,14 @@
-# UltraSkellyAdvanced 0.28.0
+# UltraSkellyAdvanced 0.28.0 Beta
 
-- Replaces Classic with The Lab in the Operate mode selector, preserving existing media controls.
-- Adds friendly Pi Media names, a dedicated Lure column and a graphical eye picker.
-- Adds speech generation with existing voice providers, browser preview, caching, save and discard.
-- Improves audio uploads with progress, cancellation, larger nginx limits and clearer errors.
-- Removes automatic Welcome Message playback and its controls while preserving unrelated settings.
-- Adds encrypted settings and credentials backups, optional media, restore previews and recovery copies.
-- Adds password-free manual release ZIP verification and installation through the existing updater, preserving rollback. Package verification and installation do not require GitHub connectivity.
-- Organizes System & Tools with Help Mode first, followed by interactive Camera & Microphone tests and compact maintenance sections.
-- Includes System Health and GitHub connectivity reporting.
+- Replaces Classic with **The Lab**, preserving existing media controls.
+- Adds friendly Pi Media names, a dedicated Lure column and graphical Eye Picker.
+- Adds TTS media generation, browser preview, caching, save and discard.
+- Improves uploads with progress, cancellation and clearer errors.
+- Adds encrypted settings and credentials backups, optional media backup and restore previews.
+- Added Manual/Offline Update Option.
+- More robust System & Tools, added System Health and GitHub connectivity reporting.
 
-Backups are limited to 128 MiB and exclude host WiFi/BlueZ state and environment
-files. Multi-file restore is not power-loss atomic. See `docs/UPGRADE_0_28.md`
-and `docs/IMAGE_RELEASE_GATE.md` for installation and hardware qualification guidance.
+**Beta limitations:** Backups exclude host Wi-Fi/Bluetooth configuration and environment files. The 0.27.4 upgrade has passed Ubuntu package/staging checks; installation and rollback validation on a spare card remain pending.
 
 # UltraSkellyAdvanced 0.27.1
 
