@@ -366,3 +366,18 @@ async def test_stream_upload_with_display_name(tmp_path, monkeypatch):
         )
 
     assert library.get("welcome.wav")["id"] == saved["id"]
+
+
+def test_synchronous_upload_collision_race_never_overwrites(tmp_path, monkeypatch):
+    import os
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, '_disk_free', lambda: 20 * GIB)
+    real_link = os.link
+    def raced_link(source, destination):
+        destination.write_bytes(b'existing-race-winner')
+        real_link(source, destination)
+    monkeypatch.setattr('skelly_ai.pi_media.os.link', raced_link)
+    with pytest.raises(PiMediaError, match='already exists'):
+        library.add('race.wav', b'RIFFreplacement')
+    assert (library.media_dir / 'race.wav').read_bytes() == b'existing-race-winner'
+    assert not list(library.media_dir.glob('.*.upload'))

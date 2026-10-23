@@ -49,6 +49,6 @@ if bad:
     raise SystemExit(1)
 PY
 
-PYTHONPATH=src python -m pytest -q
+bash scripts/test-dev.sh -q
 
 echo "PASS: ${version} source, dual audio-session image wiring, versioning, and release tests are ready."

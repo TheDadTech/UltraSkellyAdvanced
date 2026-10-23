@@ -26,9 +26,9 @@ for file in   ".gitignore"   "Banner Image.png"   "DISTRIBUTION.md"   "NOTICE.md
 done
 
 find "$staging" -type d \( -name __pycache__ -o -name .pytest_cache -o -name .git \) -prune -exec rm -rf {} +
-find "$staging" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+find "$staging" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.bak' -o -name '*.tmp' \) -delete
 
-rm -f "$destination" "$checksum_path"
+[[ ! -e "$destination" && ! -e "$checksum_path" ]] || { echo "Refusing to overwrite existing release artifacts" >&2; exit 1; }
 (
   cd "$staging"
   zip -qr "$destination" .

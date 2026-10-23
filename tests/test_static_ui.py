@@ -38,7 +38,7 @@ def test_dashboard_has_unique_ids_and_matching_tabs() -> None:
     parser.feed((STATIC / "index.html").read_text(encoding="utf-8"))
 
     assert len(parser.ids) == len(set(parser.ids))
-    assert parser.tabs == {"operate", "setup", "voice", "diagnostics"}
+    assert parser.tabs == {"operate", "setup", "voice", "diagnostics", "lab"}
     assert parser.panels == parser.tabs
 
 
@@ -494,9 +494,11 @@ def test_pi_media_lure_assignment_moved_to_table():
     assert 'id="media-edit-nag-response"' not in html
 
     # Pi Media must provide its own Lure column.
-    assert '<th>Jaw</th><th>Lure</th><th>Actions</th>' in script
+    assert '<th>Lure</th><th>Name</th>' in script
+    assert '<th>Jaw</th><th>Actions</th>' in script
     assert 'lureCell.append(lure)' in script
-    assert 'movement, eye, jaw, lureCell, actions' in script
+    assert 'row.append(lureCell, nameCell,' in script
+    assert 'movement, eye, jaw, actions' in script
 
     # Assignment must be saved through the existing Pi Media API.
     assert 'nag_response: lure.checked' in script

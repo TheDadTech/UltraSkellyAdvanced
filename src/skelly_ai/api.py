@@ -8,6 +8,9 @@ import re
 import random
 import time
 import tempfile
+import shutil
+import zipfile
+from datetime import datetime, UTC
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -18,6 +21,7 @@ import httpx
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
+from .backups import BackupManager, BackupError
 from . import __version__
 from .brain import BrainResponseError, BrainUnavailable, LocalBrain
 from .audio_output import (
@@ -1429,7 +1433,7 @@ def create_app(
 
     @app.middleware("http")
     async def protect_tts(request: Request, call_next):
-        if request.url.path.startswith("/api/pi-media/tts/"):
+        if request.url.path.startswith(("/api/pi-media/tts/", "/api/backup/", "/api/update/manual/")):
             # Use the actual peer, never caller-controlled forwarding headers.
             password = app_settings.tts_password
             if password is None:
@@ -2031,6 +2035,28 @@ def create_app(
     def is_prerelease(value: str) -> bool:
         return bool(re.search(r"(?:beta|b|rc|dev)", value, flags=re.IGNORECASE))
 
+    connectivity_path = app_settings.data_dir / "update-connectivity.json"
+    try:
+        update_connectivity = json.loads(connectivity_path.read_text())
+        if not isinstance(update_connectivity, dict):
+            update_connectivity = {}
+    except (OSError, ValueError):
+        update_connectivity = {}
+
+    def record_connectivity(channel: str, version: str | None = None, error: str | None = None):
+        update_connectivity.update(reachable=error is None, error=error)
+        if version:
+            update_connectivity[channel] = version
+            update_connectivity["last_success"] = datetime.now(UTC).isoformat()
+        try:
+            connectivity_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = connectivity_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(update_connectivity))
+            temporary.chmod(0o600)
+            temporary.replace(connectivity_path)
+        except OSError:
+            pass  # Connectivity display remains usable if persistence is unavailable.
+
     def update_status_payload(
         *,
         latest_version: str | None = None,
@@ -2046,6 +2072,7 @@ def create_app(
             and version_key(latest_version) > version_key(__version__)
         )
         return {
+            "connectivity": dict(update_connectivity),
             "current_version": __version__,
             "channel": channel,
             "beta_enabled": channel == "beta",
@@ -2092,12 +2119,15 @@ def create_app(
                 response.raise_for_status()
                 manifest = response.json()
         except (httpx.HTTPError, ValueError) as exc:
+            record_connectivity(selected_channel, error="Cannot reach the release service. Check Internet access, DNS and controller time; try again later.")
             raise HTTPException(
                 status_code=503,
                 detail="The Pi could not read the configured USA release channel",
             ) from exc
-        if not isinstance(manifest, dict):
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("version"), str):
+            record_connectivity(selected_channel, error="Release service returned an invalid manifest; try again later.")
             raise HTTPException(status_code=502, detail="The update manifest is invalid")
+        record_connectivity(selected_channel, version=manifest["version"])
         return manifest
 
     @app.post("/api/update/check")
@@ -2106,6 +2136,11 @@ def create_app(
         if not manifest_url_for_channel(channel):
             return update_status_payload()
         manifest = await read_update_manifest(channel)
+        if channel == "beta":
+            try:
+                await read_update_manifest("stable")
+            except HTTPException:
+                pass
         latest = str(manifest.get("version", "")).strip()
         if not latest:
             raise HTTPException(status_code=502, detail="The update manifest has no version")
@@ -2122,6 +2157,136 @@ def create_app(
         else:
             payload["message"] = "This Pi is running the latest published version."
         return payload
+
+    maintenance_lock = asyncio.Lock()
+    backups = BackupManager(app_settings.data_dir)
+
+    def maintenance_access(request: Request, *, idle: bool = False):
+        require_local_setup(request)
+        if idle and (operation_state.get("active_mode") not in {None, "standby"} or controller.snapshot().mode == Mode.SHOW_LOCKED):
+            raise HTTPException(status_code=409, detail="Stop the current operation before restoring or installing")
+        if maintenance_lock.locked():
+            raise HTTPException(status_code=409, detail="Another maintenance operation is running")
+
+    async def bounded_upload(request: Request, limit: int, destination: Path):
+        received = 0
+        with destination.open("wb") as stream:
+            destination.chmod(0o600)
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > limit:
+                    raise HTTPException(status_code=413, detail="Upload exceeds the size limit")
+                stream.write(chunk)
+        if not received:
+            raise HTTPException(status_code=422, detail="Select a nonempty file")
+
+    @app.get("/api/backup/inventory")
+    async def backup_inventory(request: Request, media: bool = False):
+        maintenance_access(request)
+        try:
+            return backups.inventory(media)
+        except BackupError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    @app.get("/api/backup/recoveries")
+    async def backup_recoveries(request: Request):
+        maintenance_access(request)
+        directory = app_settings.data_dir / "backups"
+        if directory.is_symlink():
+            raise HTTPException(status_code=422, detail="Recovery directory must not be linked")
+        files = sorted((p for p in directory.glob("recovery-*.usabackup") if p.is_file() and not p.is_symlink()), key=lambda p: p.stat().st_mtime, reverse=True)
+        return {"files": [{"name": p.name, "bytes": p.stat().st_size} for p in files[:20]]}
+
+    @app.get("/api/backup/recovery/{name}")
+    async def backup_recovery(request: Request, name: str):
+        maintenance_access(request)
+        if not re.fullmatch(r"recovery-[0-9a-f]{24}\.usabackup", name):
+            raise HTTPException(status_code=404, detail="Recovery copy not found")
+        path = app_settings.data_dir / "backups" / name
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+            raise HTTPException(status_code=404, detail="Recovery copy not found")
+        return FileResponse(path, filename=name, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/backup/download")
+    async def backup_download(request: Request, media: bool = False):
+        maintenance_access(request)
+        async with maintenance_lock:
+            try:
+                credentials = credential_store.load()
+                overrides = {
+                    "operation-settings.json": operation_store.load().model_dump_json().encode(),
+                    "provider-settings.json": provider_store.load().model_dump_json().encode(),
+                    "credentials.json": json.dumps({"groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
+                }
+                payload = await asyncio.to_thread(backups.create, request.headers.get("x-backup-password", ""), media, overrides)
+                return Response(payload, media_type="application/octet-stream", headers={"Content-Disposition": 'attachment; filename="usa-backup.usabackup"', "Cache-Control": "no-store"})
+            except (BackupError, OSError):
+                raise HTTPException(status_code=422, detail="Could not create backup. Check password length, size and storage.") from None
+
+    @app.post("/api/backup/inspect")
+    @app.post("/api/backup/restore")
+    async def backup_restore(request: Request):
+        restore = request.url.path.endswith("/restore")
+        maintenance_access(request, idle=restore)
+        async with maintenance_lock:
+            try:
+                with tempfile.TemporaryDirectory(prefix="usa-backup-") as directory:
+                    upload = Path(directory) / "backup"
+                    await bounded_upload(request, backups.MAX_BYTES, upload)
+                    password = request.headers.get("x-backup-password", "")
+                    files = await asyncio.to_thread(backups.inspect, upload.read_bytes(), password)
+                    if not restore:
+                        return {"files": sorted(files), "bytes": sum(map(len, files.values())), "message": "Validated. Restore replaces the listed files. Existing different audio files are never overwritten."}
+                    if request.headers.get("x-restore-confirm") != "replace":
+                        raise HTTPException(status_code=409, detail="Review and confirm restore first")
+                    recovery = await asyncio.to_thread(backups.restore, files, password)
+                    return {"message": "Backup restored. Restart USA to apply settings. Pair speakers and reconnect WiFi on a replacement controller.", "recovery": recovery}
+            except BackupError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            except OSError:
+                raise HTTPException(status_code=422, detail="Backup storage operation failed") from None
+
+    @app.post("/api/update/manual/verify")
+    async def verify_manual_update(request: Request):
+        maintenance_access(request)
+        version = request.headers.get("x-usa-version", "")
+        if len(version) > 80 or not re.fullmatch(r"\d{1,6}\.\d{1,6}\.\d{1,6}(?:[-+][A-Za-z0-9.-]{1,40})?", version):
+            raise HTTPException(status_code=422, detail="Enter a valid release version")
+        if version_key(version) <= version_key(__version__):
+            raise HTTPException(status_code=409, detail="Manual updates must be newer than this installation. Use Roll back for recovery.")
+        if is_prerelease(version) and load_update_channel() != "beta":
+            raise HTTPException(status_code=409, detail="Enable Beta releases before uploading a beta package")
+        async with maintenance_lock:
+            try:
+                with tempfile.TemporaryDirectory(prefix="usa-update-") as directory:
+                    archive = Path(directory) / "release.zip"
+                    await bounded_upload(request, updates.MAX_DOWNLOAD_BYTES, archive)
+                    verified = await asyncio.to_thread(updates.verify_manual, archive, version, request.headers.get("x-usa-sha256", ""))
+                    verified["installable"] = not app_settings.simulation
+                    if app_settings.simulation:
+                        verified["message"] += " Installation is disabled in simulation."
+                    return verified
+            except (UpdateError, ValueError, OSError, zipfile.BadZipFile):
+                raise HTTPException(status_code=422, detail="ZIP verification failed. Check version, published checksum, package contents and storage.") from None
+
+    @app.post("/api/update/manual/install")
+    async def install_manual_update(request: Request):
+        maintenance_access(request, idle=True)
+        async with maintenance_lock:
+            try:
+                if int(request.headers.get("content-length", "0")) > 1024:
+                    raise HTTPException(status_code=413, detail="Request is too large")
+                body = await request.json()
+                if not isinstance(body, dict):
+                    raise ValueError()
+                token = body.get("token", "")
+                if not isinstance(token, str) or len(token) > 100:
+                    raise ValueError()
+                if app_settings.simulation:
+                    raise HTTPException(status_code=409, detail="Installation is disabled in simulation. The package can be verified here.")
+                return await asyncio.to_thread(updates.install_manual, token, current_version=__version__)
+            except (UpdateError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Manual install could not start; verify the package again or check System Health") from None
 
     @app.get("/api/update/install-status")
     async def update_install_status() -> dict[str, object]:
@@ -2472,8 +2637,29 @@ def create_app(
         )
         return state_response()
 
+    @app.get("/api/system/health")
+    async def system_health():
+        disk = shutil.disk_usage(app_settings.data_dir if app_settings.data_dir.exists() else app_settings.data_dir.parent)
+        checks = []
+        def check(name, ok, detail, next_step):
+            checks.append({"name": name, "ok": ok, "detail": detail, "next_step": next_step})
+        check("Application", True, f"USA {__version__} is responding" + (" (simulation)" if app_settings.simulation else ""), "No action needed.")
+        check("Storage", disk.free >= 10 * 1024**3, f"{disk.free / 1024**3:.1f} GiB available", "Free disk space or remove unneeded media if below the reserve.")
+        media = pi_media.status()
+        check("Pi Media", int(media["quota_remaining_bytes"]) > 0, f"{media['file_count']} clips; {int(media['usage_bytes']) / 1048576:.1f} MiB used", "Remove unused clips or increase Media limit if storage permits.")
+        check("Release service", update_connectivity.get("reachable"), update_connectivity.get("error") or "Use Check for updates to test connectivity.", "Check Internet access, DNS and controller time; retry Check for updates.")
+        check("Skelly control", hardware.snapshot().connected, "Simulated connection" if app_settings.simulation else "Saved controller connection status", "Check prop power, proximity, and Setup → Skelly connections.")
+        check("Skelly Speaker", classic_audio.snapshot().connected, "Saved speaker connection status", "Use Setup → Prepare and connect speaker; confirm Live Mode.")
+        check("External audio", external_audio.snapshot().connected if operation_store.load().audio_output == "external_bluetooth" else None, "External speaker needed only when selected", "Confirm the selected audio output and external speaker pairing.")
+        check("Offline speech", bool(shutil.which("espeak-ng")), "espeak-ng " + ("available" if shutil.which("espeak-ng") else "missing"), "Reinstall the USA package if offline speech is unavailable.")
+        credentials = credential_store.load()
+        check("Cloud configuration", None, f"Groq: {'configured' if credentials.groq_api_key else 'not configured'}; ElevenLabs: {'configured' if credentials.api_key else 'not configured'}", "Use Voice Tuning to configure a provider. This check does not spend credits.")
+        return {"version": __version__, "simulation": app_settings.simulation, "checks": checks, "connectivity": dict(update_connectivity), "recent_error": operation_state.get("last_error")}
+
     @app.get("/api/diagnostics")
     async def diagnostics() -> dict[str, object]:
+        if app_settings.simulation:
+            return {"system": {"simulation": True}, "probes": {name: {"available": False, "ok": None, "detail": "Simulation; physical hardware not probed"} for name in ("bluetooth", "audio", "microphones", "camera", "network", "usa_service", "nginx")}}
         return await collect_diagnostics()
 
     @app.get("/api/sensors/status")

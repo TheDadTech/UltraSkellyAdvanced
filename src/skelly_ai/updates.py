@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
+import time
+import tempfile
 import json
 import os
 import re
@@ -159,16 +162,81 @@ class UpdateManager:
             raise UpdateError(message)
         return self.status()
 
+    def verify_manual(self, archive: Path, version: str, checksum: str) -> dict[str, object]:
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version):
+            raise UpdateError("Enter a valid release version")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
+            raise UpdateError("Enter the release's published SHA-256 checksum")
+        if archive.stat().st_size > self.MAX_DOWNLOAD_BYTES:
+            raise UpdateError("Update package exceeds 150 MiB")
+        with archive.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != checksum.lower():
+            raise UpdateError("The update checksum did not match; nothing was installed")
+        self.update_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Keep only one verified manual upload; it expires after 30 minutes.
+        previous = getattr(self, "_manual", None)
+        if previous:
+            shutil.rmtree(previous["stage"], ignore_errors=True)
+            self._manual = None
+        stage = Path(tempfile.mkdtemp(prefix="manual-", dir=self.update_dir))
+        try:
+            shutil.copyfile(archive, stage / "release.zip")
+            (stage / "release.zip").chmod(0o600)
+            source = self._extract_and_validate(stage / "release.zip", stage / "source", version)
+            required = ["src/skelly_ai/api.py", "src/skelly_ai/__init__.py", "src/skelly_ai/static/index.html", "deploy/usa-system-helper.py"]
+            if any(not (source / name).is_file() for name in required):
+                raise UpdateError("The ZIP is missing required USA application files")
+        except Exception:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+        token = secrets.token_hex(24)
+        self._manual = {"token": token, "version": version, "stage": stage, "source": source,
+                        "checksum": digest, "expires": time.monotonic() + 1800}
+        return {"token": token, "version": version, "message": f"USA {version} verified. Ready to install; verification expires in 30 minutes."}
+
+    def install_manual(self, token: str, *, current_version: str) -> dict[str, object]:
+        manual = getattr(self, "_manual", None)
+        if not manual or not secrets.compare_digest(token, manual["token"]) or time.monotonic() > manual["expires"]:
+            raise UpdateError("Upload and verify the ZIP again before installing")
+        if self.status().get("state") in {"downloading", "staged", "installing", "rolling_back"}:
+            raise UpdateError("An update or rollback is already in progress")
+        archive = manual["stage"] / "release.zip"
+        with archive.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != manual["checksum"]:
+                raise UpdateError("Verified package changed; upload it again")
+        # Re-extract the checked archive so staged source edits cannot be installed.
+        shutil.rmtree(manual["stage"] / "source")
+        source = self._extract_and_validate(archive, manual["stage"] / "source", manual["version"])
+        destination = self.update_dir / manual["version"]
+        if destination.exists():
+            try:
+                shutil.rmtree(destination)
+            except OSError:
+                raise UpdateError("A previous stage could not be cleared; check System Health") from None
+        source_relative = source.relative_to(manual["stage"])
+        manual["stage"].rename(destination)
+        source = destination / source_relative
+        self._manual = None
+        self._write_status("staged", "Verified manual update is starting…", manual["version"])
+        result = subprocess.run(["sudo", "-n", str(self.helper), "update-install", manual["version"], str(source), current_version], text=True, capture_output=True, timeout=45, check=False)
+        if result.returncode:
+            self._write_status("failed", "The installer could not start. Current installation is unchanged.", manual["version"])
+            raise UpdateError("The installer could not start; check System Health")
+        return self.status()
+
     def _extract_and_validate(self, archive: Path, destination: Path, version: str) -> Path:
         with zipfile.ZipFile(archive) as bundle:
             members = bundle.infolist()
             if len(members) > 5000:
                 raise UpdateError("too many files")
             expanded = 0
+            seen = set()
             for member in members:
                 path = PurePosixPath(member.filename)
-                if path.is_absolute() or ".." in path.parts:
+                if path.is_absolute() or ".." in path.parts or "\\" in member.filename or member.filename in seen:
                     raise UpdateError("unsafe file path")
+                seen.add(member.filename)
                 expanded += member.file_size
                 if expanded > self.MAX_EXTRACTED_BYTES:
                     raise UpdateError("expanded files are unexpectedly large")

@@ -75,6 +75,7 @@ mkdir -p "${CUSTOM_STAGE}/00-install-skelly-ai/files"
 tar -C "${PROJECT_DIR}" -czf \
   "${CUSTOM_STAGE}/00-install-skelly-ai/files/skelly-ai-source.tar.gz" \
   --exclude='src/*.egg-info' \
+  --exclude='__pycache__' --exclude='*.pyc' --exclude='*.bak' --exclude='*.tmp' \
   pyproject.toml README.md src deploy
 
 cat >"${CONFIG_FILE}" <<EOF

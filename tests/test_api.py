@@ -346,7 +346,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
             return None
 
         async def get(self, _url):
-            return Response("0.27.7-beta1")
+            return Response("0.28.1-beta1")
 
     monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
     app = create_app(Settings(data_dir=tmp_path))
@@ -360,7 +360,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
 
     assert checked.status_code == 200
     assert checked.json()["channel"] == "beta"
-    assert checked.json()["latest_version"] == "0.27.7-beta1"
+    assert checked.json()["latest_version"] == "0.28.1-beta1"
     assert checked.json()["update_available"] is True
 
 
@@ -999,6 +999,23 @@ def test_pi_media_display_name_api(tmp_path, monkeypatch):
         reloaded = client.get("/api/pi-media/status").json()["files"][0]
         assert reloaded["id"] == clip_id
         assert reloaded["display_name"] == "Welcome Visitors"
+        assert reloaded["eye"] == 7
+        assert reloaded["nag_response"] is True
+
+    # Recreate the app to verify disk persistence, not just in-process state.
+    restarted = create_app(Settings(data_dir=tmp_path, simulation=True))
+    with TestClient(restarted) as client:
+        persisted = client.get("/api/pi-media/status").json()["files"][0]
+        assert persisted["id"] == clip_id
+        assert persisted["eye"] == 7
+        assert persisted["nag_response"] is True
+        response = client.post("/api/pi-media/edit", json={**persisted, "eye": 18, "nag_response": False})
+        assert response.status_code == 200
+    restarted_again = create_app(Settings(data_dir=tmp_path, simulation=True))
+    with TestClient(restarted_again) as client:
+        persisted = client.get("/api/pi-media/status").json()["files"][0]
+        assert persisted["eye"] == 18
+        assert persisted["nag_response"] is False
 
 
 def test_pi_media_local_tts_generate_without_playback(tmp_path, monkeypatch):

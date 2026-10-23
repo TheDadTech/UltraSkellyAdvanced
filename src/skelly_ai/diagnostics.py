@@ -18,6 +18,8 @@ PROBES = (
     Probe("microphones", ("arecord", "-l")),
     Probe("camera", ("v4l2-ctl", "--list-devices")),
     Probe("network", ("ip", "-brief", "address")),
+    Probe("usa_service", ("systemctl", "is-active", "skelly-ai")),
+    Probe("nginx", ("systemctl", "is-active", "nginx")),
 )
 
 
@@ -39,6 +41,8 @@ async def _run_probe(probe: Probe) -> dict[str, object]:
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=8)
     except TimeoutError:
+        process.kill()
+        await process.communicate()
         return {"available": True, "ok": False, "detail": "Probe timed out"}
     except OSError as exc:
         return {"available": True, "ok": False, "detail": str(exc)}

@@ -77,8 +77,10 @@
         <button type="button" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" data-dashboard-tab="setup">Setup</button>
         <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false" data-dashboard-tab="voice">Voice Tuning</button>
         <button type="button" role="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false" data-dashboard-tab="diagnostics">System &amp; Tools</button>
+        <button type="button" role="tab" id="tab-lab" aria-controls="panel-lab" aria-selected="false" data-dashboard-tab="lab">The Lab</button>
       </nav>
 
+      <div id="panel-lab" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-lab" data-dashboard-panel="lab" hidden><section><h2>The Lab</h2><p>Optional experiments and sensor tests. These tools can capture camera frames, record audio, or move configured hardware when you request a test. Stop the current operation and clear the prop before testing. Normal operation does not require these tools.</p></section></div>
       <div id="panel-operate" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-operate" data-dashboard-panel="operate"></div>
       <div id="panel-setup" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-setup" data-dashboard-panel="setup" hidden>
         <section id="saved-skelly-section" class="setup-device-card">
@@ -253,8 +255,39 @@
           <button id="rollback-update" type="button" class="disconnect" hidden>Roll back</button>
           <a id="download-update" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>View release</a>
         </div>
+        <p id="github-connectivity" role="status">GitHub: not checked</p>
         <p id="update-result" class="result" aria-live="polite">Reading update settings…</p>
         <small class="muted help-copy">Beta releases are opt-in and may contain unfinished features or bugs. USA verifies release checksums, automatically restores a failed update, and keeps one previous known-good app version available for manual rollback.</small>
+      </section>
+
+      <section id="maintenance-section">
+        <details><summary>Sign in to protected tools</summary>
+          <p>For TTS, backups and manual updates through a proxy, use the operator credentials configured on this controller. Use HTTPS on remote connections.</p>
+          <label>Username <input id="operator-auth-user" value="operator" autocomplete="username"></label>
+          <label>Password <input id="operator-auth-password" type="password" autocomplete="current-password"></label>
+          <button id="operator-sign-in" type="button">Sign in</button>
+          <p id="operator-auth-result" role="status"></p>
+        </details>
+        <h2>Backup / Restore</h2>
+        <p>Encrypted backups include installation settings, voice settings, saved API credentials, and Pi Media presets. Optionally include audio files (128 MiB backup limit). WiFi passwords, host Bluetooth pairings, environment files, models and temporary previews are excluded. Keep the password safe: it cannot be recovered.</p>
+        <label>Backup password (at least 12 characters) <input id="backup-password" type="password" minlength="12" maxlength="256" autocomplete="off"></label>
+        <label class="check-setting"><input id="backup-include-media" type="checkbox"><span>Include Pi Media audio files</span></label>
+        <button id="backup-size" type="button">Check backup size</button>
+        <button id="download-settings-backup" type="button">Download Backup</button>
+        <label>Encrypted backup <input id="settings-backup-file" type="file" accept=".usabackup"></label>
+        <button id="inspect-settings-backup" type="button">Preview Restore</button>
+        <button id="restore-settings-backup" type="button" disabled>Restore Backup</button>
+        <p id="backup-result" role="status"></p>
+        <p>Stop the current operation before restoring. Restart USA afterwards. Pair speakers and reconnect WiFi on a replacement controller. An encrypted recovery copy is saved on the controller using the same backup password.</p>
+        <details><summary>Recovery copies</summary><p>Download a recovery copy, then select it above and use its backup password to restore it.</p><button id="list-backup-recoveries" type="button">List recovery copies</button><div id="backup-recoveries" class="controls"></div></details>
+        <h2>Manual ZIP update</h2>
+        <p>Select a USA release ZIP and enter its version and published SHA-256 checksum. Verify first, then install through USA’s updater. Installation restarts USA.</p>
+        <label>Release ZIP <input id="manual-update-file" type="file" accept=".zip,application/zip"></label>
+        <label>Version <input id="manual-update-version" placeholder="0.28.0"></label>
+        <label>SHA-256 <input id="manual-update-sha256" minlength="64" maxlength="64"></label>
+        <button id="verify-manual-update" type="button">Upload and verify ZIP</button>
+        <button id="install-manual-update" type="button" disabled>Install verified ZIP</button>
+        <p id="manual-update-result" role="status"></p>
       </section>
 
       <dialog id="forget-skelly-dialog" class="confirmation-dialog">
@@ -972,12 +1005,13 @@
       <section id="diagnostics-section">
         <div class="section-heading">
           <div>
-            <h2>Pi hardware diagnostics</h2>
+            <h2>System Health</h2>
             <p class="muted help-copy">Checks Bluetooth, PipeWire, microphone, camera, and networking.</p>
           </div>
           <button id="run-diagnostics" class="secondary">Run checks</button>
         </div>
-        <pre id="diagnostics">Checks have not run yet.</pre>
+        <p class="help-copy">If Bluetooth fails, check power and pairing. If audio fails, check the selected output and speaker connection. Missing camera or microphone devices need checking on the controller.</p><div id="system-health-summary" aria-live="polite"></div>
+        <details><summary>Advanced diagnostic details</summary><pre id="diagnostics">Checks have not run yet.</pre></details>
       </section>
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
@@ -986,6 +1020,6 @@
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.27.6"></script>
+    <script src="/static/app.js?v=0.28.0"></script>
   </body>
 </html>

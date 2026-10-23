@@ -133,9 +133,8 @@ class PiMediaLibrary:
 
             saved[path.name] = entry
             result.append(entry)
-        for stale in set(saved) - present:
-            saved.pop(stale, None)
-            changed = True
+        # Retain metadata for absent audio so a settings-only backup can be
+        # restored before its separately copied media. Explicit delete removes it.
         if changed:
             self._save(state)
         return result
@@ -193,12 +192,15 @@ class PiMediaLibrary:
         try:
             temporary.write_bytes(data)
             temporary.chmod(0o600)
-            temporary.replace(destination)
+            try:
+                os.link(temporary, destination)
+            except FileExistsError:
+                raise PiMediaError("A Pi media file with that name already exists") from None
             destination.chmod(0o600)
         finally:
             temporary.unlink(missing_ok=True)
         state = self._load()
-        state["files"][clean] = self._default_entry(clean, len(data))
+        state["files"].setdefault(clean, self._default_entry(clean, len(data)))
         self._save(state)
         return self.get(clean)
 
@@ -277,7 +279,8 @@ class PiMediaLibrary:
                 published = True
 
                 state = self._load()
-                entry = self._default_entry(clean, total)
+                entry = dict(state["files"].get(clean) or self._default_entry(clean, total))
+                entry["size"] = total
                 if display_name is not None:
                     entry["display_name"] = display_name.strip()
                 state["files"][clean] = entry

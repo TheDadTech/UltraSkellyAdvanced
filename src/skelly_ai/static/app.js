@@ -392,10 +392,13 @@ function initializeDashboardTabs() {
       document.querySelector("#ai-services-section"),
       document.querySelector("#elevenlabs-section"),
     ],
-    diagnostics: [
+    lab: [
       document.querySelector("#sensor-lab-section"),
-      document.querySelector("#advanced-bluetooth-section"),
       document.querySelector("#dac-controller-section"),
+    ],
+    diagnostics: [
+      document.querySelector("#maintenance-section"),
+      document.querySelector("#advanced-bluetooth-section"),
       document.querySelector("#software-update-section"),
       document.querySelector("#ssh-access-section"),
       document.querySelector("#controller-power-section"),
@@ -446,8 +449,10 @@ function initializeDashboardTabs() {
 setupHelpMode();
 initializeDashboardTabs();
 
+let operatorAuthorization = "";
+function operatorAuthHeaders() { return operatorAuthorization ? {Authorization: operatorAuthorization} : {}; }
 async function request(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetch(path, {...options, headers: {...operatorAuthHeaders(), ...options.headers}});
   const raw = await response.text();
   let body = {};
   if (raw) {
@@ -2341,14 +2346,30 @@ if (speakerMuteButton) {
 }
 
 document.querySelector("#run-diagnostics").addEventListener("click", async (event) => {
-  event.currentTarget.disabled = true;
+  const button = event.currentTarget;
+  button.disabled = true;
   diagnostics.textContent = "Running hardware checks…";
   try {
-    diagnostics.textContent = JSON.stringify(await request("/api/diagnostics"), null, 2);
+    const report = await request("/api/diagnostics");
+    const health = await request("/api/system/health");
+    const summary = document.querySelector("#system-health-summary");
+    summary.replaceChildren();
+    (health.checks || []).forEach((check) => {
+      const line = document.createElement("p");
+      line.textContent = `${check.name}: ${check.ok === true ? "OK" : check.ok === false ? "Needs attention" : "Information"}. ${check.detail} ${check.ok === true ? "" : check.next_step}`;
+      summary.append(line);
+    });
+    Object.entries(report.probes || {}).forEach(([name, probe]) => {
+      const line = document.createElement("p");
+      const advice = {bluetooth: "Check controller power and Bluetooth pairing.", audio: "Check audio output and speaker connection.", microphones: "Check USB microphone connection.", camera: "Check camera cable and configured device.", network: "Check WiFi or Ethernet.", usa_service: "Check the USA service installation.", nginx: "Check the nginx installation and configuration."};
+      line.textContent = `${name}: ${report.system?.simulation ? "Simulation — not probed" : probe.ok ? "OK" : probe.available ? "Needs attention" : "Unavailable"}. ${probe.ok || report.system?.simulation ? "" : advice[name] || "View advanced details below."}`;
+      summary.append(line);
+    });
+    diagnostics.textContent = JSON.stringify(report, null, 2);
   } catch (error) {
     diagnostics.textContent = error.message;
   } finally {
-    event.currentTarget.disabled = false;
+    button.disabled = false;
   }
 });
 
@@ -3061,6 +3082,8 @@ function renderUpdateStatus(body) {
   updateVersion.textContent = `version ${body.current_version}`;
   updateVersion.classList.toggle("neutral", !body.update_available);
   updateResult.textContent = body.message;
+  const connectivity = body.connectivity || {};
+  document.querySelector("#github-connectivity").textContent = `GitHub: ${connectivity.reachable === true ? "reachable" : connectivity.reachable === false ? "unreachable" : "not checked"}. Latest stable: ${connectivity.stable || "unknown"}. Latest beta: ${connectivity.beta || "unknown"}. Last successful check: ${connectivity.last_success || "never"}. ${connectivity.error || ""}`;
   const betaEnabled = body.channel === "beta";
   if (updateChannelBadge) {
     updateChannelBadge.textContent = betaEnabled ? "BETA" : "Stable";
@@ -3776,7 +3799,10 @@ if (externalBluetoothForget) {
     saveButton.disabled = busy || !previewId;
     discardButton.disabled = busy || !previewId;
   };
+  let previewObjectUrl = null;
   const clearPreview = () => {
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = null;
     audioPlayer.pause();
     audioPlayer.removeAttribute('src');
     audioPlayer.load();
@@ -3789,7 +3815,7 @@ if (externalBluetoothForget) {
       cache: 'no-store',
       credentials: 'same-origin',
       ...options,
-      headers: { ...(options.body ? {'Content-Type': 'application/json'} : {}),
+      headers: { ...operatorAuthHeaders(), ...(options.body ? {'Content-Type': 'application/json'} : {}),
         ...(options.headers || {}) },
     });
     let data = {};
@@ -3826,7 +3852,10 @@ if (externalBluetoothForget) {
       });
       previewId = data.preview_id;
       providerLabel.textContent = data.provider || 'Configured voice';
-      audioPlayer.src = `${endpoint}/preview/${encodeURIComponent(previewId)}`;
+      const previewResponse = await fetch(`${endpoint}/preview/${encodeURIComponent(previewId)}`, {headers: operatorAuthHeaders(), cache: 'no-store'});
+      if (!previewResponse.ok) throw new Error('Preview access failed. Sign in to protected tools in System & Tools.');
+      previewObjectUrl = URL.createObjectURL(await previewResponse.blob());
+      audioPlayer.src = previewObjectUrl;
       audioPlayer.hidden = false;
       message('Generated. Preview in your browser, then Save or Discard.');
     } catch (error) {
@@ -3865,3 +3894,130 @@ if (externalBluetoothForget) {
     finally { busy = false; buttons(); }
   });
 })();
+
+// Backups are always encrypted; the password stays in memory only.
+function backupHeaders() {
+  return {"X-Backup-Password": document.querySelector("#backup-password").value, ...operatorAuthHeaders()};
+}
+async function backupFile() {
+  const file = document.querySelector("#settings-backup-file").files[0];
+  if (!file || file.size > 128 * 1024 * 1024) throw new Error("Select an encrypted USA backup no larger than 128 MiB.");
+  return file;
+}
+async function backupAction(action) {
+  const response = await fetch(`/api/backup/${action}`, {method: "POST", headers: {
+    ...backupHeaders(), ...(action === "restore" ? {"X-Restore-Confirm": "replace"} : {})
+  }, body: await backupFile()});
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || "Backup request failed");
+  return payload;
+}
+document.querySelector("#backup-size").addEventListener("click", async () => {
+  try {
+    const payload = await request(`/api/backup/inventory?media=${document.querySelector("#backup-include-media").checked}`);
+    document.querySelector("#backup-result").textContent = `${(payload.bytes / 1048576).toFixed(1)} MiB before compression; limit 128 MiB. ${payload.fits ? "Fits." : "Omit audio files to continue."}`;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#download-settings-backup").addEventListener("click", async (event) => {
+  const button = event.currentTarget; button.disabled = true;
+  const result = document.querySelector("#backup-result");
+  try {
+    const response = await fetch(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}`, {method: "POST", headers: backupHeaders()});
+    if (!response.ok) throw new Error((await response.json()).detail || "Backup failed");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a"); link.href = url; link.download = "usa-backup.usabackup"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    result.textContent = "Encrypted backup downloaded. Keep it and its password safe.";
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+let inspectedBackup = null;
+for (const id of ["settings-backup-file", "backup-password"]) {
+  document.getElementById(id).addEventListener("change", () => { inspectedBackup = null; document.querySelector("#restore-settings-backup").disabled = true; });
+}
+document.querySelector("#inspect-settings-backup").addEventListener("click", async () => {
+  document.querySelector("#restore-settings-backup").disabled = true;
+  try {
+    const payload = await backupAction("inspect");
+    inspectedBackup = await backupFile();
+    document.querySelector("#backup-result").textContent = `${payload.message} Files: ${payload.files.join(", ")}. ${(payload.bytes / 1048576).toFixed(1)} MiB.`;
+    document.querySelector("#restore-settings-backup").disabled = false;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#restore-settings-backup").addEventListener("click", async (event) => {
+  if (!inspectedBackup || inspectedBackup !== await backupFile()) return;
+  if (!window.confirm("Replace the files listed in Preview Restore? An encrypted recovery copy will be saved. Restart USA afterwards.")) return;
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const payload = await backupAction("restore");
+    document.querySelector("#backup-result").textContent = `${payload.message} Recovery copy: ${payload.recovery}`;
+  } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+});
+document.querySelector("#verify-manual-update").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#manual-update-result");
+  const install = document.querySelector("#install-manual-update");
+  install.disabled = true; button.disabled = true;
+  try {
+    const file = document.querySelector("#manual-update-file").files[0];
+    if (!file || file.size > 150 * 1024 * 1024) throw new Error("Select a release ZIP no larger than 150 MiB.");
+    result.textContent = "Uploading and verifying…";
+    const payload = await request("/api/update/manual/verify", {method: "POST", headers: {
+      ...operatorAuthHeaders(), "Content-Type": "application/zip",
+      "X-USA-Version": document.querySelector("#manual-update-version").value.trim(),
+      "X-USA-SHA256": document.querySelector("#manual-update-sha256").value.trim(),
+    }, body: file});
+    install.dataset.token = payload.token;
+    install.disabled = payload.installable === false; result.textContent = payload.message;
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector("#install-manual-update").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  if (!window.confirm("Install the verified release and restart USA?")) return;
+  button.disabled = true;
+  try {
+    const payload = await request("/api/update/manual/install", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: button.dataset.token})});
+    document.querySelector("#manual-update-result").textContent = payload.message;
+  } catch (error) { document.querySelector("#manual-update-result").textContent = error.message; }
+});
+
+document.querySelector("#operator-sign-in").addEventListener("click", async () => {
+  const username = document.querySelector("#operator-auth-user").value;
+  const password = document.querySelector("#operator-auth-password").value;
+  operatorAuthorization = `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`${username}:${password}`)))}`;
+  try {
+    await request("/api/backup/inventory");
+    document.querySelector("#operator-auth-result").textContent = "Signed in for protected tools in this tab.";
+    document.querySelector("#operator-auth-password").value = "";
+  } catch (error) { operatorAuthorization = ""; document.querySelector("#operator-auth-result").textContent = error.message; }
+});
+
+document.querySelector("#list-backup-recoveries").addEventListener("click", async () => {
+  const list = document.querySelector("#backup-recoveries"); list.replaceChildren();
+  try {
+    const payload = await request("/api/backup/recoveries");
+    if (!payload.files.length) list.textContent = "No recovery copies yet.";
+    for (const file of payload.files) {
+      const button = document.createElement("button"); button.type = "button";
+      button.textContent = `Download ${file.name} (${(file.bytes / 1024).toFixed(1)} KiB)`;
+      button.addEventListener("click", async () => {
+        try {
+          const response = await fetch(`/api/backup/recovery/${encodeURIComponent(file.name)}`, {headers: operatorAuthHeaders()});
+          if (!response.ok) throw new Error("Recovery download failed");
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
+      });
+      list.append(button);
+    }
+  } catch (error) { list.textContent = error.message; }
+});
+
+for (const id of ["manual-update-file", "manual-update-version", "manual-update-sha256"]) {
+  document.getElementById(id).addEventListener("change", () => {
+    const install = document.querySelector("#install-manual-update");
+    install.disabled = true; delete install.dataset.token;
+  });
+}
