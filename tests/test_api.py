@@ -999,3 +999,360 @@ def test_pi_media_display_name_api(tmp_path, monkeypatch):
         reloaded = client.get("/api/pi-media/status").json()["files"][0]
         assert reloaded["id"] == clip_id
         assert reloaded["display_name"] == "Welcome Visitors"
+
+
+def test_pi_media_local_tts_generate_without_playback(tmp_path, monkeypatch):
+    import io
+    import wave
+    from pathlib import Path
+
+    from skelly_ai.speech import LocalSpeech
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+    calls = []
+
+    async def fake_generate(self, text, destination):
+        calls.append(text)
+
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * 1000)
+
+        Path(destination).write_bytes(output.getvalue())
+        return Path(destination)
+
+    async def forbidden_play(*args, **kwargs):
+        raise AssertionError("Generating TTS must not trigger playback")
+
+    monkeypatch.setattr(LocalSpeech, "generate_wav", fake_generate)
+    monkeypatch.setattr(LocalSpeech, "_play", forbidden_play)
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.post(
+            "/api/pi-media/tts/generate",
+            json={"text": "Welcome, brave visitor!"},
+        )
+
+        assert response.status_code == 200, response.text
+
+        payload = response.json()
+
+        assert payload["provider"] == "local"
+        assert payload["format"] == "wav"
+        assert len(payload["preview_id"]) == 32
+        assert payload["size_bytes"] > 44
+
+        assert calls == ["Welcome, brave visitor!"]
+
+        preview = (
+            tmp_path
+            / "tts-previews"
+            / f"{payload['preview_id']}.wav"
+        )
+
+        assert preview.is_file()
+
+        # Generation must not automatically add anything to Pi Media.
+        status = client.get("/api/pi-media/status")
+        assert status.status_code == 200
+        assert status.json()["file_count"] == 0
+
+
+def test_pi_media_tts_browser_preview(tmp_path):
+    import io
+    import wave
+    from skelly_ai.tts_previews import TTSPreviewManager
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(22050)
+        wav.writeframes(b"\x00\x00" * 1000)
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+    manager = TTSPreviewManager(tmp_path)
+    preview_id = manager.create(output.getvalue())
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.get(
+            f"/api/pi-media/tts/preview/{preview_id}"
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("audio/wav")
+        assert response.headers["cache-control"] == "no-store"
+        assert response.content == output.getvalue()
+
+        missing = client.get(
+            "/api/pi-media/tts/preview/" + "0" * 32
+        )
+        assert missing.status_code == 404
+
+        invalid = client.get(
+            "/api/pi-media/tts/preview/not-a-valid-id"
+        )
+        assert invalid.status_code == 404
+
+
+def test_pi_media_tts_save_endpoint(tmp_path, monkeypatch):
+    import io
+    import wave
+
+    from skelly_ai.pi_media import GIB, PiMediaLibrary
+    from skelly_ai.tts_previews import TTSPreviewManager
+
+    monkeypatch.setattr(
+        PiMediaLibrary,
+        "_disk_free",
+        lambda self: 20 * GIB,
+    )
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(22050)
+        wav.writeframes(b"\x00\x00" * 1000)
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+    manager = TTSPreviewManager(tmp_path)
+    preview_id = manager.create(output.getvalue())
+
+    payload = {
+        "preview_id": preview_id,
+        "filename": "welcome.wav",
+        "display_name": "Welcome Visitors",
+    }
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        saved = client.post(
+            "/api/pi-media/tts/save",
+            json=payload,
+        )
+        assert saved.status_code == 200, saved.text
+
+        files = saved.json()["files"]
+        assert len(files) == 1
+        assert files[0]["name"] == "welcome.wav"
+        assert files[0]["display_name"] == "Welcome Visitors"
+        assert len(files[0]["id"]) == 32
+
+        assert (
+            PiMediaLibrary(tmp_path).media_dir / "welcome.wav"
+        ).read_bytes() == output.getvalue()
+
+        duplicate = client.post(
+            "/api/pi-media/tts/save",
+            json={**payload, "filename": "second.wav"},
+        )
+        assert duplicate.status_code == 404
+        assert len(
+            client.get("/api/pi-media/status").json()["files"]
+        ) == 1
+
+
+@pytest.mark.asyncio
+async def test_tts_generation_rejects_concurrent_requests(tmp_path, monkeypatch):
+    import asyncio
+    import io
+    import wave
+
+    from skelly_ai.speech import LocalSpeech
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_generate(self, text, destination):
+        started.set()
+        await release.wait()
+
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * 1000)
+
+        destination.write_bytes(output.getvalue())
+        return destination
+
+    monkeypatch.setattr(LocalSpeech, "generate_wav", slow_generate)
+
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        first_task = asyncio.create_task(
+            client.post(
+                "/api/pi-media/tts/generate",
+                json={"text": "First request"},
+            )
+        )
+
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        try:
+            second = await asyncio.wait_for(
+                client.post(
+                    "/api/pi-media/tts/generate",
+                    json={"text": "Second request"},
+                ),
+                timeout=5,
+            )
+
+            assert second.status_code == 429, second.text
+            assert "already in progress" in second.json()["detail"]
+        finally:
+            release.set()
+
+        first = await asyncio.wait_for(first_task, timeout=5)
+        assert first.status_code == 200, first.text
+
+
+@pytest.mark.parametrize(
+    "provider, key_name, voice_class",
+    [
+        ("groq", "groq_api_key", "GroqVoice"),
+        ("elevenlabs", "api_key", "ElevenLabsVoice"),
+    ],
+)
+def test_pi_media_cloud_tts_generation(
+    tmp_path, monkeypatch, provider, key_name, voice_class
+):
+    import io
+    import wave
+
+    from skelly_ai import api as api_module
+    from skelly_ai.provider_settings import ProviderSettingsStore
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(22050)
+        wav.writeframes(b"\x00\x00" * 1000)
+    fake_audio = output.getvalue()
+
+    generated = []
+
+    async def fake_generate(self, *args, **kwargs):
+        generated.append((args, kwargs))
+        return fake_audio
+
+    voice_type = getattr(api_module, voice_class)
+    monkeypatch.setattr(voice_type, "generate", fake_generate)
+
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+
+    credentials = app.state.credential_store
+    monkeypatch.setattr(
+        credentials,
+        "load",
+        lambda: type(
+            "FakeCredentials",
+            (),
+            {
+                "api_key": SecretStr("elevenlabs-test"),
+                "groq_api_key": SecretStr("groq-test"),
+            },
+        )(),
+    )
+
+    store = app.state.provider_store
+    settings = store.load()
+    settings.voice_provider = provider
+    if provider == "elevenlabs":
+        settings.elevenlabs_voice_id = "test-voice"
+    store.save(settings)
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.post(
+            "/api/pi-media/tts/generate",
+            json={"text": "Welcome visitors"},
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+
+        assert payload["provider"] == provider
+        assert payload["format"] == "wav"
+        assert payload["size_bytes"] == len(fake_audio)
+        assert len(payload["preview_id"]) == 32
+
+        assert len(generated) == 1
+        assert generated[0][0][1] == "Welcome visitors"
+
+        preview = client.get(
+            f"/api/pi-media/tts/preview/{payload['preview_id']}"
+        )
+        assert preview.status_code == 200
+        assert preview.content == fake_audio
+
+
+def test_pi_media_tts_discard_endpoint(tmp_path):
+    import io
+    import wave
+    from skelly_ai.tts_previews import TTSPreviewManager
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(22050)
+        wav.writeframes(b"\x00\x00" * 1000)
+    app = create_app(Settings(data_dir=tmp_path, simulation=True))
+    preview_id = TTSPreviewManager(tmp_path).create(output.getvalue())
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.delete(f"/api/pi-media/tts/preview/{preview_id}")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"discarded": True}
+        assert client.get(f"/api/pi-media/tts/preview/{preview_id}").status_code == 404
+        assert client.get("/api/pi-media/status").json()["file_count"] == 0
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("POST", "/api/pi-media/tts/generate", {"text": "Hello"}),
+    ("POST", "/api/pi-media/tts/save", {"preview_id": "0" * 32, "filename": "hello.wav", "display_name": "Hello"}),
+    ("GET", "/api/pi-media/tts/preview/" + "0" * 32, None),
+    ("DELETE", "/api/pi-media/tts/preview/" + "0" * 32, None),
+])
+def test_tts_remote_authentication(tmp_path, method, path, body):
+    app = create_app(Settings(data_dir=tmp_path, tts_password=SecretStr("test-password-123")))
+    with TestClient(app, client=("192.0.2.5", 50000)) as client:
+        for authorization in (None, "Basic !!!", "Bearer abc", "Basic b3BlcmF0b3I6d3Jvbmc="):
+            headers = {} if authorization is None else {"Authorization": authorization}
+            response = client.request(method, path, json=body, headers=headers)
+            assert response.status_code == 401
+            assert "Basic" in response.headers["www-authenticate"]
+        response = client.request(method, path, json=body, auth=("operator", "test-password-123"))
+        assert response.status_code not in (401, 403)
+
+
+def test_tts_unconfigured_remote_and_proxy_access_denied(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path))
+    with TestClient(app, client=("192.0.2.5", 50000)) as client:
+        assert client.get("/api/pi-media/tts/preview/" + "0" * 32).status_code == 403
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        for header in ("X-Forwarded-For", "Forwarded", "X-Real-IP"):
+            assert client.get("/api/pi-media/tts/preview/" + "0" * 32, headers={header: "127.0.0.1"}).status_code == 403
+        for headers in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
+            assert client.post("/api/pi-media/tts/generate", json={"text": "Hello"}, headers=headers).status_code == 403
+
+
+def test_tts_quota_checked_before_provider_call(tmp_path, monkeypatch):
+    from skelly_ai.tts_previews import TTSPreviewManager
+    from skelly_ai.speech import LocalSpeech
+    monkeypatch.setattr(TTSPreviewManager, "MAX_PREVIEWS", 0)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Quota rejection must precede synthesis")
+    monkeypatch.setattr(LocalSpeech, "generate_wav", forbidden)
+    app = create_app(Settings(data_dir=tmp_path))
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.post("/api/pi-media/tts/generate", json={"text": "Hello"})
+        assert response.status_code == 429

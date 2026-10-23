@@ -214,6 +214,27 @@ class LocalSpeech:
         if process.returncode == 0:
             self._jaw_mirror_level_cache = desired
 
+    async def generate_wav(self, text: str, destination: Path) -> Path:
+        """Generate local speech audio without playback or jaw movement."""
+        clean_text = " ".join(text.split())
+        if not clean_text:
+            raise SpeechUnavailable("The speech text is empty")
+
+        if not self.status()["generator_available"]:
+            raise SpeechUnavailable("espeak-ng is not installed")
+
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        async with self._lock:
+            try:
+                await self._generate(clean_text, destination)
+                destination.chmod(0o600)
+                return destination
+            except BaseException:
+                destination.unlink(missing_ok=True)
+                raise
+
     async def speak(
         self,
         text: str,

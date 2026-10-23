@@ -226,3 +226,62 @@ async def test_streamed_pcm_starts_player_before_audio_finishes_and_closes_jaw(
     assert jaw.positions.count(255) >= 2
     assert jaw.positions.count(0) >= 2
     assert jaw.positions[-1] == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_wav_without_playback(tmp_path, monkeypatch):
+    speech = LocalSpeech()
+    destination = tmp_path / "generated.wav"
+
+    calls = []
+
+    monkeypatch.setattr(
+        speech,
+        "status",
+        lambda: {"generator_available": True}
+    )
+
+    async def fake_generate(text, path):
+        calls.append(text)
+        path.write_bytes(make_test_wav([0.5, 0.8]).getvalue())
+
+    async def forbidden_play(*args, **kwargs):
+        raise AssertionError("TTS generation must not trigger playback")
+
+    monkeypatch.setattr(speech, "_generate", fake_generate)
+    monkeypatch.setattr(speech, "_play", forbidden_play)
+
+    result = await speech.generate_wav(
+        "Welcome, brave visitor!",
+        destination,
+    )
+
+    assert result == destination
+    assert destination.is_file()
+    assert calls == ["Welcome, brave visitor!"]
+
+    with wave.open(str(destination), "rb") as wav:
+        assert wav.getnframes() > 0
+
+
+@pytest.mark.asyncio
+async def test_generate_wav_cleans_up_failure(tmp_path, monkeypatch):
+    speech = LocalSpeech()
+    destination = tmp_path / "failed.wav"
+
+    monkeypatch.setattr(
+        speech,
+        "status",
+        lambda: {"generator_available": True}
+    )
+
+    async def fake_failure(text, path):
+        path.write_bytes(b"incomplete")
+        raise SpeechUnavailable("Generation failed")
+
+    monkeypatch.setattr(speech, "_generate", fake_failure)
+
+    with pytest.raises(SpeechUnavailable, match="Generation failed"):
+        await speech.generate_wav("Hello", destination)
+
+    assert not destination.exists()

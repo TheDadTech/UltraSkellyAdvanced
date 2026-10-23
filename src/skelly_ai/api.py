@@ -1,16 +1,19 @@
 import asyncio
+import base64
+import secrets
 import ipaddress
 import json
 import os
 import re
 import random
 import time
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response, JSONResponse
 import httpx
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
@@ -56,6 +59,7 @@ from .hardware import (
 )
 from .perception import PerceptionEngine
 from .pi_media import PiMediaError, PiMediaLibrary
+from .tts_previews import TTSPreviewError, TTSPreviewManager
 from .operation_settings import (
     OperationSettings,
     OperationSettingsStore,
@@ -222,6 +226,16 @@ class MediaEnabledRequest(BaseModel):
 
 class MediaDeleteRequest(BaseModel):
     serial: int = Field(ge=1, le=65535)
+
+
+class PiMediaTTSSaveRequest(BaseModel):
+    preview_id: str = Field(min_length=32, max_length=32)
+    filename: str = Field(min_length=1, max_length=160)
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class PiMediaTTSGenerateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
 
 
 class PiMediaPlayRequest(BaseModel):
@@ -420,6 +434,8 @@ def create_app(
     )
     nag_media_path = app_settings.data_dir / "nag-media.json"
     pi_media = PiMediaLibrary(app_settings.data_dir)
+    tts_previews = TTSPreviewManager(app_settings.data_dir)
+    tts_generation_lock = asyncio.Lock()
     pi_media_task: asyncio.Task | None = None
     pi_media_playing_name: str | None = None
 
@@ -1410,6 +1426,35 @@ def create_app(
         await hardware.disconnect()
 
     app = FastAPI(title="UltraSkellyAdvanced", version=__version__, lifespan=lifespan)
+
+    @app.middleware("http")
+    async def protect_tts(request: Request, call_next):
+        if request.url.path.startswith("/api/pi-media/tts/"):
+            # Use the actual peer, never caller-controlled forwarding headers.
+            password = app_settings.tts_password
+            if password is None:
+                try:
+                    local = bool(request.client) and ipaddress.ip_address(request.client.host).is_loopback
+                except ValueError:
+                    local = False
+                if not local or any(header in request.headers for header in ("forwarded", "x-forwarded-for", "x-real-ip")):
+                    return JSONResponse(status_code=403, content={"detail": "Remote TTS requires SKELLY_TTS_PASSWORD"})
+            else:
+                try:
+                    scheme, encoded = request.headers.get("authorization", "").split(" ", 1)
+                    username, supplied = base64.b64decode(encoded, validate=True).decode().split(":", 1)
+                    valid = scheme.lower() == "basic"
+                    valid &= secrets.compare_digest(username.encode(), app_settings.tts_username.encode())
+                    valid &= secrets.compare_digest(supplied.encode(), password.get_secret_value().encode())
+                except (ValueError, UnicodeError):
+                    valid = False
+                if not valid:
+                    return JSONResponse(status_code=401, content={"detail": "TTS authentication required"}, headers={"WWW-Authenticate": 'Basic realm="TTS", charset="UTF-8"'})
+            origin = request.headers.get("origin")
+            if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse(status_code=403, content={"detail": "Cross-origin TTS access denied"})
+        return await call_next(request)
+
     app.state.settings = app_settings
     app.state.controller = controller
     app.state.hardware = hardware
@@ -2916,6 +2961,169 @@ def create_app(
     @app.get("/api/pi-media/status")
     async def pi_media_status() -> dict[str, object]:
         return pi_media.status(playing_name=pi_media_playing_name)
+
+    @app.delete("/api/pi-media/tts/preview/{preview_id}")
+    async def pi_media_tts_discard(preview_id: str) -> dict[str, bool]:
+        try:
+            # Validate the ID and require the preview to exist. An expired
+            # preview is treated as not found, matching the GET endpoint.
+            tts_previews.get(preview_id)
+            tts_previews.discard(preview_id)
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="TTS preview not found or expired",
+            ) from exc
+        return {"discarded": True}
+
+    @app.get("/api/pi-media/tts/preview/{preview_id}")
+    async def pi_media_tts_preview(preview_id: str) -> FileResponse:
+        try:
+            audio_path = tts_previews.get(preview_id)
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="TTS preview not found or expired",
+            ) from exc
+
+        return FileResponse(
+            audio_path,
+            media_type="audio/wav",
+            filename="skelly-preview.wav",
+            content_disposition_type="inline",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post("/api/pi-media/tts/save")
+    async def pi_media_tts_save(
+        request: PiMediaTTSSaveRequest,
+    ) -> dict[str, object]:
+        require_manual_hardware_access()
+        try:
+            await tts_previews.save(
+                request.preview_id,
+                request.filename,
+                request.display_name,
+                pi_media,
+            )
+            return pi_media.status(
+                playing_name=pi_media_playing_name
+            )
+        except TTSPreviewError as exc:
+            raise HTTPException(
+                status_code=404 if "expired or not found" in str(exc)
+                else 422,
+                detail=str(exc),
+            ) from exc
+        except PiMediaError as exc:
+            detail = str(exc)
+            code = (
+                409 if "already exists" in detail
+                else 413 if "exceed" in detail or "reserve" in detail
+                else 422
+            )
+            raise HTTPException(
+                status_code=code,
+                detail=detail,
+            ) from exc
+
+    @app.post("/api/pi-media/tts/generate")
+    async def pi_media_tts_generate(
+        request: PiMediaTTSGenerateRequest,
+    ) -> dict[str, object]:
+        require_manual_hardware_access()
+
+        clean_text = " ".join(request.text.split())
+        if not clean_text:
+            raise HTTPException(status_code=422, detail="Enter speech text")
+
+        if tts_generation_lock.locked():
+            raise HTTPException(
+                status_code=429,
+                detail="Speech generation is already in progress",
+            )
+
+        async with tts_generation_lock:
+            try:
+                tts_previews.check_capacity(tts_previews.MAX_AUDIO_BYTES)
+            except TTSPreviewError as exc:
+                raise HTTPException(status_code=429, detail=str(exc)) from exc
+            settings = provider_store.load()
+            provider = settings.voice_provider
+
+            try:
+                if provider == "local":
+                    apply_local_voice_settings(settings)
+                    descriptor, filename = tempfile.mkstemp(
+                        prefix=".tts-generating-",
+                        suffix=".wav",
+                        dir=tts_previews.directory,
+                    )
+                    os.close(descriptor)
+                    destination = Path(filename)
+                    try:
+                        await local_speech.generate_wav(
+                            clean_text, destination
+                        )
+                        audio = destination.read_bytes()
+                    finally:
+                        destination.unlink(missing_ok=True)
+
+                elif provider == "groq":
+                    credentials = credential_store.load()
+                    if credentials.groq_api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Configure a Groq API key first"
+                        )
+                    audio = await groq_voice.generate(
+                        credentials.groq_api_key,
+                        clean_text,
+                        settings.groq_voice,
+                        settings.groq_voice_style,
+                    )
+
+                elif provider == "elevenlabs":
+                    credentials = credential_store.load()
+                    if credentials.api_key is None:
+                        raise CloudSpeechUnavailable(
+                            "Configure an ElevenLabs API key first"
+                        )
+                    audio = await elevenlabs_voice.generate(
+                        credentials.api_key,
+                        clean_text,
+                        settings.elevenlabs_voice_id,
+                        model=settings.elevenlabs_model,
+                        speed=settings.elevenlabs_speed,
+                        volume_percent=settings.elevenlabs_volume_percent,
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Unsupported voice provider",
+                    )
+
+                preview_id = tts_previews.create(audio)
+
+            except (SpeechUnavailable, CloudSpeechUnavailable) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=str(exc),
+                ) from exc
+            except TTSPreviewError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
+
+        return {
+            "preview_id": preview_id,
+            "provider": provider,
+            "format": "wav",
+            "size_bytes": len(audio),
+        }
 
     @app.post("/api/pi-media/upload")
     async def pi_media_upload(request: Request, filename: str) -> dict[str, object]:

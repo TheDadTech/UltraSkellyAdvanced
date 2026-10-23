@@ -331,6 +331,53 @@
             <input id="pi-media-file-input" type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
             <input id="pi-media-filter" type="search" placeholder="Filter by name" aria-label="Filter Pi media files">
           </div>
+          <details id="pi-media-tts-panel" class="operator-subsection">
+            <summary><strong>Generate Speech (TTS)</strong></summary>
+            <div class="media-tts-generator">
+              <p class="muted help-copy">
+                Create speech with your configured voice provider.
+                Preview it in this browser before saving to Pi Media.
+              </p>
+
+              <label>
+                Media Name
+                <input id="pi-tts-name" type="text"
+                       maxlength="120"
+                       placeholder="Welcome Visitors">
+              </label>
+
+              <label>
+                Dialogue
+                <textarea id="pi-tts-text" rows="4"
+                          maxlength="600"
+                          placeholder="Type exactly what Skelly should say"></textarea>
+              </label>
+
+              <p class="muted help-copy">
+                Voice: <strong id="pi-tts-provider">Checking…</strong>
+                — Change the voice in AI Provider Settings.
+              </p>
+
+              <div class="controls">
+                <button id="pi-tts-generate" type="button">
+                  Generate Speech
+                </button>
+                <button id="pi-tts-save" type="button"
+                        class="secondary" disabled>
+                  Save to Pi Media
+                </button>
+                <button id="pi-tts-discard" type="button"
+                        class="secondary" disabled>
+                  Discard
+                </button>
+              </div>
+
+              <audio id="pi-tts-audio" controls preload="none" hidden></audio>
+
+              <p id="pi-tts-result" class="result"
+                 role="status" aria-live="polite"></p>
+            </div>
+          </details>
           <div class="pi-media-storage">
             <div><strong id="pi-media-usage">0 B used of 3 GB</strong><small id="pi-storage-free" class="muted">Checking Pi storage…</small></div>
             <div class="pi-media-quota-controls"><label>Media limit <input id="pi-media-quota-gb" type="number" min="1" max="1000" step="1" value="3"> GB</label><button id="save-pi-media-quota" type="button" class="secondary">Set limit</button></div>

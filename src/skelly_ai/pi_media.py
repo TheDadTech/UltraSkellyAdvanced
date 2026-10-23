@@ -202,12 +202,25 @@ class PiMediaLibrary:
         self._save(state)
         return self.get(clean)
 
-    async def add_stream(self, name: str, chunks) -> dict[str, object]:
+    async def add_stream(
+        self,
+        name: str,
+        chunks,
+        *,
+        display_name: str | None = None,
+    ) -> dict[str, object]:
         """Safely store an upload without buffering the full file in RAM."""
         import uuid
 
         async with self._upload_lock:
             clean = self._clean_name(name)
+            if display_name is not None and (
+                not isinstance(display_name, str)
+                or not display_name.strip()
+                or len(display_name.strip()) > 120
+            ):
+                raise PiMediaError("Media Name must contain 1 to 120 characters")
+
             self._ensure_media_dir()
             destination = self.media_dir / clean
 
@@ -264,7 +277,10 @@ class PiMediaLibrary:
                 published = True
 
                 state = self._load()
-                state["files"][clean] = self._default_entry(clean, total)
+                entry = self._default_entry(clean, total)
+                if display_name is not None:
+                    entry["display_name"] = display_name.strip()
+                state["files"][clean] = entry
                 self._save(state)
 
                 return self.get(clean)

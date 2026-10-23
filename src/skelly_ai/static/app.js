@@ -1553,7 +1553,7 @@ function renderMediaStatus(body) {
   renderSpeakerMuteState();
   mediaLibrary.replaceChildren();
   const filter = mediaFilter.value.trim().toLowerCase();
-  const files = (body.files || []).filter((file) => !filter || String(file.name || "").toLowerCase().includes(filter));
+  const files = (body.files || []).filter((file) => !filter || String`${file.display_name || ""} ${file.name || ""}`.toLowerCase().includes(filter));
   if (!files.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -3746,3 +3746,117 @@ if (externalBluetoothForget) {
     }
   });
 }
+
+
+// USA 0.28.0 PI MEDIA TTS UI — single-integration block
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const nameField = $('pi-tts-name');
+  const textField = $('pi-tts-text');
+  const generateButton = $('pi-tts-generate');
+  const saveButton = $('pi-tts-save');
+  const discardButton = $('pi-tts-discard');
+  const audioPlayer = $('pi-tts-audio');
+  const result = $('pi-tts-result');
+  const providerLabel = $('pi-tts-provider');
+  if (![nameField, textField, generateButton, saveButton,
+        discardButton, audioPlayer, result, providerLabel].every(Boolean)) return;
+
+  let previewId = null;
+  let busy = false;
+  const endpoint = '/api/pi-media/tts';
+  const message = (value) => { result.textContent = value; };
+  const buttons = () => {
+    generateButton.disabled = busy;
+    saveButton.disabled = busy || !previewId;
+    discardButton.disabled = busy || !previewId;
+  };
+  const clearPreview = () => {
+    audioPlayer.pause();
+    audioPlayer.removeAttribute('src');
+    audioPlayer.load();
+    audioPlayer.hidden = true;
+    previewId = null;
+    buttons();
+  };
+  const jsonRequest = async (url, options = {}) => {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      ...options,
+      headers: { ...(options.body ? {'Content-Type': 'application/json'} : {}),
+        ...(options.headers || {}) },
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) { /* empty response */ }
+    if (!response.ok) {
+      throw new Error(typeof data.detail === 'string'
+        ? data.detail : `Request failed (${response.status})`);
+    }
+    return data;
+  };
+  const discard = async () => {
+    if (!previewId) return;
+    const id = previewId;
+    await jsonRequest(`${endpoint}/preview/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    clearPreview();
+  };
+  // The backend uses the current AI Provider Settings when Generate is pressed.
+  providerLabel.textContent = 'Current AI Provider Settings';
+  buttons();
+
+  generateButton.addEventListener('click', async () => {
+    if (busy) return;
+    const dialogue = textField.value.trim();
+    if (!dialogue) { message('Enter dialogue before generating speech.'); return; }
+    if (dialogue.length > 600) { message('Dialogue exceeds 600 characters.'); return; }
+    busy = true; buttons(); message('Generating audio…');
+    try {
+      // Avoid accumulating paid generated previews during repeated attempts.
+      if (previewId) await discard();
+      const data = await jsonRequest(`${endpoint}/generate`, {
+        method: 'POST', body: JSON.stringify({text: dialogue}),
+      });
+      previewId = data.preview_id;
+      providerLabel.textContent = data.provider || 'Configured voice';
+      audioPlayer.src = `${endpoint}/preview/${encodeURIComponent(previewId)}`;
+      audioPlayer.hidden = false;
+      message('Generated. Preview in your browser, then Save or Discard.');
+    } catch (error) {
+      message(error.message || 'Unable to generate speech.');
+    } finally { busy = false; buttons(); }
+  });
+
+  saveButton.addEventListener('click', async () => {
+    if (busy || !previewId) return;
+    const displayName = nameField.value.trim();
+    if (!displayName || displayName.length > 120) {
+      message('Enter a Media Name (1–120 characters).'); return;
+    }
+    // Filename is internal identity; friendly Media Name remains editable.
+    const filename = `tts-${previewId}.wav`;
+    busy = true; buttons(); message('Saving generated audio…');
+    try {
+      const status = await jsonRequest(`${endpoint}/save`, {
+        method: 'POST',
+        body: JSON.stringify({preview_id: previewId, filename,
+          display_name: displayName}),
+      });
+      clearPreview();
+      if (typeof renderPiMediaStatus === 'function') renderPiMediaStatus(status);
+      message(`Saved “${displayName}” to Pi Media.`);
+    } catch (error) {
+      message(error.message || 'Save failed. Your preview is retained.');
+    } finally { busy = false; buttons(); }
+  });
+
+  discardButton.addEventListener('click', async () => {
+    if (busy || !previewId) return;
+    busy = true; buttons();
+    try { await discard(); message('Generated preview discarded.'); }
+    catch (error) { message(error.message || 'Could not discard preview.'); }
+    finally { busy = false; buttons(); }
+  });
+})();

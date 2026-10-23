@@ -333,3 +333,36 @@ def test_pi_media_rejects_invalid_display_name(tmp_path, monkeypatch):
 
     with pytest.raises(PiMediaError, match="Media Name"):
         library.update("test.mp3", {"display_name": "x" * 121})
+
+
+@pytest.mark.asyncio
+async def test_stream_upload_with_display_name(tmp_path, monkeypatch):
+    library = PiMediaLibrary(tmp_path)
+    monkeypatch.setattr(library, "_disk_free", lambda: 20 * GIB)
+
+    async def audio_chunks():
+        yield b"RIFF"
+        yield b"generated speech"
+
+    saved = await library.add_stream(
+        "welcome.wav",
+        audio_chunks(),
+        display_name="Welcome Visitors",
+    )
+
+    assert saved["name"] == "welcome.wav"
+    assert saved["display_name"] == "Welcome Visitors"
+    assert saved["id"]
+
+    loaded = library.get("welcome.wav")
+    assert loaded["id"] == saved["id"]
+    assert loaded["display_name"] == "Welcome Visitors"
+
+    with pytest.raises(PiMediaError, match="already exists"):
+        await library.add_stream(
+            "welcome.wav",
+            audio_chunks(),
+            display_name="Duplicate",
+        )
+
+    assert library.get("welcome.wav")["id"] == saved["id"]

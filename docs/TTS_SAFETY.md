@@ -1,0 +1,7 @@
+# TTS preview access and storage
+
+TTS generation, preview, save and discard routes default to direct loopback access only. Remote and proxied access requires `SKELLY_TTS_PASSWORD` (at least 12 characters). The HTTP Basic username defaults to `operator`; change it with `SKELLY_TTS_USERNAME`. When configured, credentials are required on loopback too. Use HTTPS for remote access because Basic credentials are not encrypted by HTTP. The browser must authenticate to a TTS endpoint before using the controls; opening a preview URL directly triggers the browser login prompt. Forwarded headers never grant access. Requests carrying forwarding headers require credentials even when the connection comes from loopback. Cross-origin browser requests are rejected.
+
+Previews expire after 15 minutes. Storage is limited to 20 previews, 100 MiB total, and 20 MiB per file, with a 256 MiB free disk reserve. Generation reserves capacity for the maximum output before contacting the selected provider; discard or save previews to recover capacity. A single generation lock prevents concurrent provider calls in the application process. Run one application worker for these process-local generation and save locks. These are temporary storage limits, not daily cloud billing quotas. Preview expiry cleanup runs on preview operations.
+
+Generation never plays through the prop or automatically saves to Pi Media. Saving uses the existing library quota and duplicate protection. This checkpoint does not push, deploy, or alter the production Pi.

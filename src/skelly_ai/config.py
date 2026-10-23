@@ -79,6 +79,8 @@ class Settings(BaseSettings):
 
     elevenlabs_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
+    tts_username: str = "operator"
+    tts_password: SecretStr | None = Field(default=None, min_length=12)
     fpp_token: SecretStr | None = Field(default=None)
 
     def public_dict(self) -> dict[str, object]:
