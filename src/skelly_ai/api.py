@@ -1178,27 +1178,30 @@ def create_app(
         if settings.nag_mode == "disabled":
             return None
 
-        if settings.nag_mode == "media":
-            media_status = hardware.media_status()
-            if not media_status.get("files"):
-                try:
-                    media_status = await hardware.refresh_media_files()
-                except HardwareUnavailable:
-                    media_status = {"files": []}
-            eligible: list[dict[str, object]] = [
-                {**item, "_source": "skelly"}
-                for item in enrich_media_status(media_status).get("files", [])
-                if isinstance(item, dict)
-                and item.get("nag_response") is True
-                and item.get("enabled", True) is not False
-            ]
-            eligible.extend(
-                {**item, "_source": "pi"}
-                for item in pi_media.status().get("files", [])
-                if isinstance(item, dict)
-                and item.get("nag_response") is True
-                and item.get("enabled", True) is not False
-            )
+        if settings.nag_mode in {"media", "pi_media"}:
+            eligible: list[dict[str, object]] = []
+            if settings.nag_mode == "media":
+                media_status = hardware.media_status()
+                if not media_status.get("files"):
+                    try:
+                        media_status = await hardware.refresh_media_files()
+                    except HardwareUnavailable:
+                        media_status = {"files": []}
+                eligible = [
+                    {**item, "_source": "skelly"}
+                    for item in enrich_media_status(media_status).get("files", [])
+                    if isinstance(item, dict)
+                    and item.get("nag_response") is True
+                    and item.get("enabled", True) is not False
+                ]
+            else:
+                eligible = [
+                    {**item, "_source": "pi"}
+                    for item in pi_media.status().get("files", [])
+                    if isinstance(item, dict)
+                    and item.get("nag_response") is True
+                    and item.get("enabled", True) is not False
+                ]
             if not eligible:
                 return None
             previous = getattr(perform_visitor_nag, "_last_media_key", None)

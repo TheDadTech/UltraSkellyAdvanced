@@ -42,7 +42,7 @@ class OperationSettings(BaseModel):
         default="Well, well... somebody wandered into the wrong yard.",
         max_length=180,
     )
-    nag_mode: Literal["disabled", "media", "ai"] = "disabled"
+    nag_mode: Literal["disabled", "media", "pi_media", "ai"] = "disabled"
     nag_delay_seconds: int = Field(default=2, ge=1, le=30)
     nag_cooldown_seconds: int = Field(default=30, ge=10, le=120)
     nag_max_per_visitor: int = Field(default=2, ge=1, le=5)
