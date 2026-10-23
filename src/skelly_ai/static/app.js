@@ -487,7 +487,7 @@ function setStatusLight(light, state) {
 
 function updateModeVisibility(activeMode, profile) {
   const readyMode = ["classic", "ai", "manual"].includes(activeMode) ? activeMode : null;
-  classicLibrarySection.hidden = readyMode !== "classic";
+  classicLibrarySection.hidden = document.querySelector("#lure-pi-media-dialog")?.open ? false : readyMode !== "classic";
   document.querySelector(".perception-monitor").hidden = readyMode !== "ai";
   localBrainSection.hidden = readyMode !== "manual";
   manualPropControls.hidden = readyMode !== "manual";
@@ -564,7 +564,7 @@ function renderOperation(operation) {
     if (customPersonality && document.activeElement !== customPersonality) customPersonality.value = settings.custom_personality || "";
     if (customPersonalitySetting) customPersonalitySetting.hidden = !savedPersonalityPool.includes("custom");
   }
-  if (document.activeElement !== hardwareProfile) hardwareProfile.value = settings.hardware_profile;
+  if (document.activeElement !== hardwareProfile) document.querySelector("#hardware-profile").value = settings.hardware_profile;
   if (document.activeElement !== defaultOperationMode) defaultOperationMode.value = settings.default_mode;
   autoStartOperation.checked = settings.auto_start === true && settings.default_mode !== "idle";
   autoStartOperation.disabled = settings.default_mode === "idle";
@@ -1266,7 +1266,7 @@ function operationSettingsPayload() {
     personality: selectedPersonalityPool()[0] || "classic",
     personality_pool: selectedPersonalityPool(),
     custom_personality: customPersonality?.value.trim() || "",
-    hardware_profile: hardwareProfile.value,
+    hardware_profile: document.querySelector("#hardware-profile").value,
     default_mode: defaultOperationMode.value,
     auto_start: autoStartOperation.checked && defaultOperationMode.value !== "idle",
     device_configured: currentOperationSettings?.device_configured !== false,
@@ -1280,7 +1280,7 @@ function operationSettingsPayload() {
     jaw_mirror_level_percent: Number(jawMirrorLevel?.value ?? currentOperationSettings?.jaw_mirror_level_percent ?? 100),
     mute_skelly_speaker_on_external: muteSkellySpeakerOnExternal?.checked !== false,
     skelly_speaker_restore_volume: currentOperationSettings?.skelly_speaker_restore_volume ?? 100,
-    allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
+    allow_fpp_override: document.querySelector("#hardware-profile").value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
     listening_sensitivity: Number(listeningSensitivity.value),
@@ -1438,7 +1438,7 @@ defaultOperationMode.addEventListener("change", () => {
 });
 
 hardwareProfile.addEventListener("change", () => {
-  renderFppOverrideAvailability(hardwareProfile.value);
+  renderFppOverrideAvailability(document.querySelector("#hardware-profile").value);
 });
 
 
@@ -1944,6 +1944,25 @@ function restoreMediaSource() {
   }
   selectMediaSource(source, { persist: false });
 }
+
+const lurePiMediaDialog = document.querySelector("#lure-pi-media-dialog");
+const libraryHome = document.createComment("Pi Media library home");
+classicLibrarySection.before(libraryHome);
+let lurePreviousSource = "skelly";
+document.querySelector("#open-lure-pi-media").addEventListener("click", () => {
+  lurePreviousSource = showPiMedia.getAttribute("aria-checked") === "true" ? "pi" : "skelly";
+  document.querySelector("#lure-pi-media-content").append(classicLibrarySection);
+  classicLibrarySection.hidden = false;
+  selectMediaSource("pi", { persist: false });
+  lurePiMediaDialog.showModal();
+});
+document.querySelector("#close-lure-pi-media").addEventListener("click", () => lurePiMediaDialog.close());
+lurePiMediaDialog.addEventListener("close", () => {
+  libraryHome.after(classicLibrarySection);
+  selectMediaSource(lurePreviousSource, { persist: false });
+  updateModeVisibility(currentOperationMode, document.querySelector("#hardware-profile").value);
+  document.querySelector("#open-lure-pi-media").focus();
+});
 
 showSkellyMedia.addEventListener("click", () => selectMediaSource("skelly"));
 showPiMedia.addEventListener("click", () => selectMediaSource("pi"));
