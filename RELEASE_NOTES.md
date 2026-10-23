@@ -1,3 +1,8 @@
+# UltraSkellyAdvanced 0.28.1 Beta
+
+- Fixes TTS and Backup & Restore access from laptops on the local network, including through nginx, without an additional sign-in password.
+- Retains backup-file encryption passwords, cross-origin protection and existing restore safeguards.
+
 # UltraSkellyAdvanced 0.28.0 Beta
 
 - Replaces Classic with **The Lab**, preserving existing media controls.

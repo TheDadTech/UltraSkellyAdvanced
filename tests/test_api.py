@@ -346,7 +346,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
             return None
 
         async def get(self, _url):
-            return Response("0.28.1-beta1")
+            return Response("0.28.2-beta1")
 
     monkeypatch.setattr("skelly_ai.api.httpx.AsyncClient", lambda **_kwargs: Client())
     app = create_app(Settings(data_dir=tmp_path))
@@ -360,7 +360,7 @@ def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) 
 
     assert checked.status_code == 200
     assert checked.json()["channel"] == "beta"
-    assert checked.json()["latest_version"] == "0.28.1-beta1"
+    assert checked.json()["latest_version"] == "0.28.2-beta1"
     assert checked.json()["update_available"] is True
 
 
@@ -1339,25 +1339,21 @@ def test_pi_media_tts_discard_endpoint(tmp_path):
     ("GET", "/api/pi-media/tts/preview/" + "0" * 32, None),
     ("DELETE", "/api/pi-media/tts/preview/" + "0" * 32, None),
 ])
-def test_tts_remote_authentication(tmp_path, method, path, body):
-    app = create_app(Settings(data_dir=tmp_path, tts_password=SecretStr("test-password-123")))
-    with TestClient(app, client=("192.0.2.5", 50000)) as client:
-        for authorization in (None, "Basic !!!", "Bearer abc", "Basic b3BlcmF0b3I6d3Jvbmc="):
-            headers = {} if authorization is None else {"Authorization": authorization}
-            response = client.request(method, path, json=body, headers=headers)
-            assert response.status_code == 401
-            assert "Basic" in response.headers["www-authenticate"]
-        response = client.request(method, path, json=body, auth=("operator", "test-password-123"))
+def test_tts_lan_access_without_operator_password(tmp_path, method, path, body):
+    app = create_app(Settings(data_dir=tmp_path, tts_password=SecretStr("legacy-unused-password")))
+    with TestClient(app, client=("192.168.1.25", 50000)) as client:
+        response = client.request(method, path, json=body)
         assert response.status_code not in (401, 403)
+        assert "www-authenticate" not in response.headers
 
 
-def test_tts_unconfigured_remote_and_proxy_access_denied(tmp_path):
+def test_tts_proxy_allowed_and_public_or_cross_origin_denied(tmp_path):
     app = create_app(Settings(data_dir=tmp_path))
-    with TestClient(app, client=("192.0.2.5", 50000)) as client:
-        assert client.get("/api/pi-media/tts/preview/" + "0" * 32).status_code == 403
+    with TestClient(app, client=("8.8.8.8", 50000)) as client:
+        assert client.get("/api/pi-media/tts/preview/" + "0" * 32, headers={"X-Forwarded-For":"192.168.1.25"}).status_code == 403
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         for header in ("X-Forwarded-For", "Forwarded", "X-Real-IP"):
-            assert client.get("/api/pi-media/tts/preview/" + "0" * 32, headers={header: "127.0.0.1"}).status_code == 403
+            assert client.get("/api/pi-media/tts/preview/" + "0" * 32, headers={header: "192.168.1.25"}).status_code == 404
         for headers in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
             assert client.post("/api/pi-media/tts/generate", json={"text": "Hello"}, headers=headers).status_code == 403
 
