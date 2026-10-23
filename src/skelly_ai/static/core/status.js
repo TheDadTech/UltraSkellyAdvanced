@@ -9,7 +9,7 @@
 
     const skellyReady = Boolean(
       skellyAudio.connected &&
-      (skellyAudio.sink_ready || skellyAudio.sink_id)
+      skellyAudio.sink_ready && skellyAudio.sink_id
     );
 
     const externalReady = Boolean(

@@ -435,6 +435,8 @@ def create_app(
             )
         ),
     )
+    speaker_repair_lock = asyncio.Lock()
+    speaker_repair_state = {"state": "idle", "message": ""}
     nag_media_path = app_settings.data_dir / "nag-media.json"
     pi_media = PiMediaLibrary(app_settings.data_dir)
     tts_previews = TTSPreviewManager(app_settings.data_dir)
@@ -536,6 +538,7 @@ def create_app(
         external_snapshot = external_audio.snapshot()
         skelly_ready = bool(
             skelly_snapshot.connected
+            and skelly_snapshot.sink_ready
             and (skelly_snapshot.sink_name or skelly_snapshot.sink_id)
         )
         external_ready = bool(
@@ -1343,6 +1346,8 @@ def create_app(
     async def maintain_external_audio_connection() -> None:
         while True:
             await asyncio.sleep(15)
+            if speaker_repair_lock.locked():
+                continue
             settings = operation_store.load()
             if settings.audio_output != "external_bluetooth" or not settings.external_bluetooth_address:
                 continue
@@ -1418,6 +1423,16 @@ def create_app(
         await hardware.disconnect()
 
     app = FastAPI(title="UltraSkellyAdvanced", version=__version__, lifespan=lifespan)
+
+    @app.middleware("http")
+    async def protect_speaker_repair(request: Request, call_next):
+        path = request.url.path
+        if speaker_repair_lock.locked() and request.method in {"POST", "PUT", "DELETE"} and (
+            path.startswith(("/api/audio/", "/api/hardware/", "/api/mode/"))
+            or path in {"/api/operation/start", "/api/operation/settings", "/api/setup/forget-skelly", "/api/perception/start"}
+        ):
+            return JSONResponse(status_code=409, content={"detail": "Wait for speaker repair to finish"})
+        return await call_next(request)
 
     @app.middleware("http")
     async def protect_tts(request: Request, call_next):
@@ -1533,6 +1548,8 @@ def create_app(
             )
 
     def require_manual_hardware_access() -> None:
+        if speaker_repair_lock.locked():
+            raise HTTPException(status_code=409, detail="Wait for speaker repair to finish")
         mode = controller.snapshot().mode
         if mode == Mode.SHOW_LOCKED:
             raise HTTPException(
@@ -2140,6 +2157,8 @@ def create_app(
     backups = BackupManager(app_settings.data_dir)
 
     def maintenance_access(request: Request, *, idle: bool = False):
+        if idle and speaker_repair_lock.locked():
+            raise HTTPException(status_code=409, detail="Wait for speaker repair to finish")
         require_local_setup(request)
         origin = request.headers.get("origin")
         if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
@@ -2444,6 +2463,8 @@ def create_app(
     @app.post("/api/operation/start")
     async def start_operation(request: OperationStartRequest) -> dict[str, object]:
         require_manual_hardware_access()
+        if speaker_repair_lock.locked():
+            raise HTTPException(status_code=409, detail="Wait for speaker repair to finish")
         return await start_operation_mode(request.mode)
 
     @app.post("/api/operation/stop")
@@ -2647,7 +2668,7 @@ def create_app(
         check("Pi Media", int(media["quota_remaining_bytes"]) > 0, f"{media['file_count']} clips; {int(media['usage_bytes']) / 1048576:.1f} MiB used", "Remove unused clips or increase Media limit if storage permits.")
         check("Release service", update_connectivity.get("reachable"), update_connectivity.get("error") or ("Release service was reachable at the last check." if update_connectivity.get("reachable") else "Use Check for updates to test connectivity."), "Check Internet access, DNS and controller time; retry Check for updates.")
         check("Skelly control", hardware.snapshot().connected, "Simulated connection" if app_settings.simulation else "Saved controller connection status", "Check prop power, proximity, and Setup → Skelly connections.")
-        check("Skelly Speaker", classic_audio.snapshot().connected, "Saved speaker connection status", "Use Setup → Prepare and connect speaker; confirm Live Mode.")
+        check("Skelly Speaker", bool(classic_audio.snapshot().connected and classic_audio.snapshot().sink_ready and classic_audio.snapshot().sink_id), "Saved speaker connection status", "Use Setup → Prepare and connect speaker; confirm Live Mode.")
         check("External audio", external_audio.snapshot().connected if operation_store.load().audio_output == "external_bluetooth" else None, "External speaker needed only when selected", "Confirm the selected audio output and external speaker pairing.")
         check("Offline speech", bool(shutil.which("espeak-ng")), "espeak-ng " + ("available" if shutil.which("espeak-ng") else "missing"), "Reinstall the USA package if offline speech is unavailable.")
         credentials = credential_store.load()
@@ -2838,9 +2859,50 @@ def create_app(
         apply_audio_output_settings()
         return {"settings": saved.model_dump(), "external_bluetooth": snapshot.to_dict()}
 
+    @app.get("/api/audio/speaker-management")
+    async def speaker_management(request: Request):
+        require_local_setup(request)
+        snapshot = classic_audio.snapshot() if speaker_repair_lock.locked() else await classic_audio.refresh()
+        return {"speaker": snapshot.to_dict(), "repair": dict(speaker_repair_state),
+                "selected_output": operation_store.load().audio_output, "routing": audio_route_state()}
+
+    @app.post("/api/audio/repair-speaker")
+    async def repair_skelly_speaker(request: Request):
+        maintenance_access(request, idle=True)
+        require_manual_hardware_access()
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid speaker repair confirmation") from None
+        if not isinstance(body, dict) or body.get("confirm") != "repair-speaker":
+            raise HTTPException(status_code=409, detail="Confirm that only the Skelly speaker pairing will be reset")
+        if speaker_repair_lock.locked():
+            raise HTTPException(status_code=409, detail="Speaker repair is already running")
+        async with speaker_repair_lock:
+            speaker_repair_state.update(state="repairing", message="Repairing only the Skelly speaker pairing…")
+            settings = operation_store.load()
+            forbidden = {address for address in (hardware.snapshot().address, settings.control_address) if address}
+            try:
+                snapshot = await asyncio.wait_for(classic_audio.repair(app_settings.classic_audio_pin,
+                    forbidden_addresses=forbidden, route=settings.audio_output == "skelly"), timeout=150)
+                if not (snapshot.paired and snapshot.trusted and snapshot.connected and snapshot.sink_ready and snapshot.sink_id):
+                    raise ClassicAudioUnavailable("Speaker audio route is not ready; refresh status and retry")
+                remember_speaker_connection()
+                apply_audio_output_settings()
+                speaker_repair_state.update(state="succeeded", message="Speaker pairing repaired; audio sink is ready. Selected output preserved.")
+                return {"speaker": snapshot.to_dict(), "repair": dict(speaker_repair_state),
+                        "selected_output": settings.audio_output, "routing": audio_route_state()}
+            except (TimeoutError, ClassicAudioUnavailable) as exc:
+                message = str(exc) or "Speaker repair timed out. Keep the speaker in Live Mode and retry. BLE control was preserved."
+                speaker_repair_state.update(state="failed", message=message)
+                raise HTTPException(status_code=503, detail=message) from None
+            except asyncio.CancelledError:
+                speaker_repair_state.update(state="failed", message="Repair interrupted. Refresh status before retrying.")
+                raise
+
     @app.get("/api/audio/status")
     async def classic_audio_status() -> dict[str, object]:
-        return (await classic_audio.refresh()).to_dict()
+        return (classic_audio.snapshot() if speaker_repair_lock.locked() else await classic_audio.refresh()).to_dict()
 
     @app.post("/api/audio/connect")
     async def classic_audio_connect() -> dict[str, object]:

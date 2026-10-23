@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-lure-3">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.1-connections-2">
   </head>
   <body>
     <main>
@@ -539,7 +539,7 @@
             <summary>Lure Visitors</summary>
             <div class="provider-control-grid">
               <label><span>Lure mode</span><select id="nag-mode"><option value="disabled">Disabled</option><option value="media">Classic Media</option><option value="pi_media">Pi Media (Generate and Change in The Lab)</option><option value="ai">AI Generated (uses credits)</option></select><small class="help-copy">If a visitor is present but does not engage, Skelly can try to get their attention.</small></label>
-              <div class="lure-media-shortcut"><span class="lure-shortcut-spacer" aria-hidden="true">Lure mode</span><button id="open-lure-pi-media" type="button" class="secondary">The Lab Pi Media</button><small class="help-copy">Generate speech and change Pi Media lure clips without switching modes.</small></div>
+              <div class="lure-media-shortcut"><span class="lure-shortcut-spacer" aria-hidden="true">Lure mode</span><button id="open-lure-pi-media" type="button" class="secondary">The Lab - Pi Media</button><small class="help-copy">Generate speech and change Pi Media lure clips without switching modes.</small></div>
               <label><span>Delay before first lure <output id="nag-delay-value">2s</output></span><input id="nag-delay" type="range" min="1" max="30" step="1" value="2"><small class="help-copy">After a passerby is confirmed, lure them before the first listening window.</small></label>
               <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
               <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
@@ -847,7 +847,21 @@
 
       <section id="advanced-bluetooth-section">
         <details class="provider-details">
-          <summary>Advanced Bluetooth diagnostics</summary>
+          <summary>Manage Connections</summary>
+          <p class="muted">Repair the Skelly speaker connection separately from BLE prop control.</p>
+          <div class="simulator-readout" id="speaker-management-status" aria-live="polite">
+            <div><span class="label">Discovery / identity</span><strong data-speaker-field="identity">Not checked</strong></div>
+            <div><span class="label">Speaker address</span><strong data-speaker-field="address">Unknown</strong></div>
+            <div><span class="label">Paired</span><strong data-speaker-field="paired">Unknown</strong></div>
+            <div><span class="label">Trusted</span><strong data-speaker-field="trusted">Unknown</strong></div>
+            <div><span class="label">Connected</span><strong data-speaker-field="connected">Unknown</strong></div>
+            <div><span class="label">PipeWire sink</span><strong data-speaker-field="sink">Unknown</strong></div>
+            <div><span class="label">Selected output</span><strong data-speaker-field="selected">Unknown</strong></div>
+            <div><span class="label">Active route</span><strong data-speaker-field="route">Unknown</strong></div>
+          </div>
+          <div class="controls"><button id="refresh-speaker-management" type="button" class="secondary">Refresh speaker status</button><button id="repair-skelly-speaker" type="button">Repair Skelly Speaker</button></div>
+          <p id="speaker-repair-result" class="result" aria-live="polite"></p>
+          <details><summary>Advanced connection details</summary>
           <p class="muted help-copy">Low-level controller addresses and Live Mode commands for troubleshooting. Normal setup does not require these controls.</p>
           <div class="simulator-readout">
             <div><span class="label">Driver</span><strong id="hardware-driver">unknown</strong></div>
@@ -872,6 +886,7 @@
             <button data-live-mode-command data-hardware-action="/api/hardware/live-mode" data-body='{"enabled":true}' data-success="Live Mode enabled. Skelly is ready for Bluetooth speaker audio." class="secondary">Enable Live Mode only</button>
             <button data-live-mode-command data-hardware-action="/api/hardware/live-mode" data-body='{"enabled":false}' data-success="Live Mode disabled." class="secondary">Disable Live Mode</button>
           </div>
+          </details>
         </details>
       </section>
 
@@ -1025,17 +1040,24 @@
         </div></details>
       </section>
       <dialog id="lure-pi-media-dialog" class="lure-pi-media-dialog" aria-labelledby="lure-pi-media-title">
-        <div class="section-heading"><h2 id="lure-pi-media-title">The Lab Pi Media</h2><button id="close-lure-pi-media" type="button" class="secondary">Close</button></div>
+        <div class="section-heading"><h2 id="lure-pi-media-title">The Lab - Pi Media</h2><button id="close-lure-pi-media" type="button" class="secondary">Close</button></div>
         <p class="muted">Your current mode keeps running. Changes apply to the same Pi Media library used by The Lab.</p>
         <div id="lure-pi-media-content"></div>
+      </dialog>
+      <dialog id="repair-speaker-confirmation" class="confirmation-dialog" aria-labelledby="repair-speaker-title">
+        <form method="dialog"><h2 id="repair-speaker-title">Repair Skelly Speaker?</h2>
+          <p>This forgets and recreates only the identified Skelly(Live) speaker pairing. Skelly BLE prop control and other Bluetooth devices are preserved.</p>
+          <p>Stop the current operation first. Keep the intended speaker powered in Live Mode and disconnect other computers or phones using it. The selected audio output will stay unchanged.</p>
+          <div class="controls"><button value="cancel" class="secondary">Cancel</button><button value="repair">Repair speaker pairing</button></div>
+        </form>
       </dialog>
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
     <script src="/static/core/store.js?v=0.27.2"></script>
-    <script src="/static/core/status.js?v=0.27.2"></script>
+    <script src="/static/core/status.js?v=0.28.1-connections-2"></script>
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.28.1-lure-3"></script>
+    <script src="/static/app.js?v=0.28.1-connections-2"></script>
   </body>
 </html>

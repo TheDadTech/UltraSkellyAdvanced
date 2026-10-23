@@ -647,7 +647,7 @@ function renderStatus(body) {
   const selectedAudio = body.operation?.settings?.audio_output || "skelly";
   currentAudioRoute = body.audio_route || null;
   const externalSpeakerReady = Boolean(body.external_audio?.connected && body.external_audio?.sink_id);
-  const skellySpeakerReady = Boolean(body.audio?.connected && body.audio?.sink_id);
+  const skellySpeakerReady = Boolean(body.audio?.connected && body.audio?.sink_ready && body.audio?.sink_id);
   const systemSpeakerReady = selectedAudio === "system";
   const speakerReady = selectedAudio === "external_bluetooth"
     ? externalSpeakerReady
@@ -771,7 +771,9 @@ function renderStatus(body) {
 function renderAudioStatus(audio, currentMode = currentControllerMode) {
   const available = Boolean(audio?.available);
   const connected = Boolean(audio?.connected);
-  const sinkReady = Boolean(audio?.sink_ready);
+  const sinkReady = Boolean(audio?.sink_ready && audio?.sink_id);
+  if (!speakerResult.dataset.busy) speakerResult.textContent = audio?.last_error || (connected && sinkReady ? "Skelly speaker connected; audio sink ready." : connected ? "Speaker connected, but its Pi audio route is not ready yet." : "Skelly speaker disconnected.");
+  renderSpeakerManagement(audio);
   speakerConnection.textContent = connected && sinkReady
     ? "connected + routed"
     : connected
@@ -2584,19 +2586,63 @@ document.querySelector("#hardware-disconnect").addEventListener("click", async (
   }
 });
 
+let speakerRepairBusy = false;
+let speakerRepairLastState = "idle";
+const repairSpeakerButton = document.querySelector("#repair-skelly-speaker");
+const speakerRepairResult = document.querySelector("#speaker-repair-result");
+const repairSpeakerDialog = document.querySelector("#repair-speaker-confirmation");
+function renderSpeakerManagement(audio, management = null) {
+  if (!audio) return;
+  const ready = Boolean(audio.connected && audio.sink_ready && audio.sink_id);
+  const fields = { identity: audio.device_name ? `${audio.device_name} (known record; live scan during repair)` : "Not identified; discovery required",
+    address: audio.address || "Unknown", paired: audio.paired ? "Yes" : "No", trusted: audio.trusted ? "Yes" : "No",
+    connected: audio.connected ? "Yes" : "No", sink: ready ? `Ready (${audio.sink_id})` : "Not ready",
+    selected: management?.selected_output || currentAudioRoute?.preferred || "Unknown",
+    route: management?.routing?.active || currentAudioRoute?.active || "Unknown" };
+  Object.entries(fields).forEach(([key,value]) => { document.querySelector(`[data-speaker-field="${key}"]`).textContent = value; });
+  if (management?.repair) speakerRepairLastState = management.repair.state;
+  const busy = speakerRepairBusy || management?.repair?.state === "repairing";
+  repairSpeakerButton.disabled = busy;
+  if (!busy && speakerRepairLastState === "succeeded") speakerRepairResult.textContent = ready
+    ? "Speaker repair completed; current audio sink is ready."
+    : "Speaker repair previously completed; the current speaker audio route is not ready. Refresh status or retry repair.";
+  else if (!busy && management?.repair?.message) speakerRepairResult.textContent = management.repair.message;
+}
+document.querySelector("#refresh-speaker-management").addEventListener("click", async () => {
+  try { const body = await request("/api/audio/speaker-management"); renderSpeakerManagement(body.speaker, body); }
+  catch (error) { speakerRepairResult.textContent = error.message; }
+});
+repairSpeakerButton.addEventListener("click", () => { repairSpeakerDialog.returnValue = "cancel"; repairSpeakerDialog.showModal(); });
+repairSpeakerDialog.addEventListener("close", async () => {
+  if (repairSpeakerDialog.returnValue !== "repair" || speakerRepairBusy) return;
+  speakerRepairBusy = true; repairSpeakerButton.disabled = true;
+  speakerRepairResult.textContent = "Discovering and repairing only the Skelly speaker. This may take a few minutes…";
+  try {
+    const body = await request("/api/audio/repair-speaker", {method:"POST", body:JSON.stringify({confirm:"repair-speaker"})});
+    speakerRepairLastState = body.repair.state;
+    speakerRepairBusy = false;
+    renderSpeakerManagement(body.speaker, body);
+    await refreshStatus();
+  } catch (error) { speakerRepairLastState = "failed"; speakerRepairResult.textContent = error.message; }
+  finally { speakerRepairBusy = false; repairSpeakerButton.disabled = false; }
+});
+
 speakerConnect.addEventListener("click", async () => {
   speakerConnect.disabled = true;
+  speakerResult.dataset.busy = "1";
   speakerResult.textContent = "Enabling Live Mode and connecting the Skelly speaker...";
   try {
     const audio = await request("/api/audio/prepare-connect", { method: "POST" });
     renderAudioStatus(audio);
     speakerResult.textContent = audio.sink_ready
-      ? "Skelly speaker connected and selected for Pi audio."
+      ? "Skelly speaker connected; audio sink ready."
       : audio.last_error || "Speaker connected, but its Pi audio route is not ready yet.";
     await refreshStatus();
   } catch (error) {
     speakerResult.textContent = `${error.message}. Confirm BLE prop control is connected and the speaker was paired once.`;
     await refreshAudioStatus().catch(() => {});
+  } finally {
+    delete speakerResult.dataset.busy;
   }
 });
 

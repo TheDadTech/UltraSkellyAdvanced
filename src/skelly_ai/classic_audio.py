@@ -35,6 +35,7 @@ class ClassicAudio(Protocol):
     async def connect(self, *, route: bool = True) -> ClassicAudioSnapshot: ...
     async def disconnect(self) -> ClassicAudioSnapshot: ...
     async def forget(self) -> ClassicAudioSnapshot: ...
+    async def repair(self, pin: str, *, forbidden_addresses: set[str], route: bool = True) -> ClassicAudioSnapshot: ...
     def clear_saved_target(self) -> None: ...
     def set_saved_target(self, address: str | None) -> None: ...
     def snapshot(self) -> ClassicAudioSnapshot: ...
@@ -80,6 +81,14 @@ class SimulatedClassicAudio:
 
     async def disconnect(self) -> ClassicAudioSnapshot:
         return self._update(connected=False, sink_ready=False, sink_id=None)
+
+    async def repair(self, pin: str, *, forbidden_addresses: set[str], route: bool = True) -> ClassicAudioSnapshot:
+        address = self._snapshot.address or "00:00:00:00:00:02"
+        if address in forbidden_addresses:
+            raise ClassicAudioUnavailable("Speaker identity conflicts with BLE control; no pairing was removed")
+        return self._update(connected=True, paired=True, trusted=True,
+                            address=address, device_name="Animated Skelly(Live) (simulated)",
+                            sink_ready=True, sink_id="simulated", last_error=None)
 
     async def forget(self) -> ClassicAudioSnapshot:
         return self._update(
@@ -279,6 +288,80 @@ class BluetoothClassicAudio:
                 if claim_active:
                     await self._resume_competing_audio_session()
 
+    async def repair(self, pin: str, *, forbidden_addresses: set[str], route: bool = True) -> ClassicAudioSnapshot:
+        """Reset only a positively identified Classic speaker bond, never BLE."""
+        async with self._lock:
+            self._require_tool()
+            claim_active = False
+            try:
+                forbidden = {address.upper() for address in forbidden_addresses if address}
+                scan = await self._run("--timeout", "12", "scan", "bredr")
+                if scan.returncode:
+                    raise ClassicAudioUnavailable("Speaker discovery could not start. Check that Bluetooth is powered and available; no pairing was removed.")
+                devices = await self._run("devices")
+                candidates = {}
+                for line in devices.output.splitlines():
+                    match = self._DEVICE_PATTERN.match(line.strip())
+                    if match and "skelly(live)" in match.group(2).casefold():
+                        address = match.group(1).upper()
+                        if address not in forbidden:
+                            candidates[address] = match.group(2)
+                if self._address in candidates:
+                    address = self._address
+                elif len(candidates) == 1:
+                    address = next(iter(candidates))
+                else:
+                    raise ClassicAudioUnavailable("No unique Skelly speaker found. Turn on the intended prop and enable Live Mode; keep other Skelly speakers off, then retry.")
+                snapshot = await self._read_info(address)
+                if not snapshot.device_name or "skelly(live)" not in snapshot.device_name.casefold() or address in forbidden:
+                    raise ClassicAudioUnavailable("Speaker identity could not be verified. No pairing was removed.")
+                self._address = address
+                claim_active = self._system_helper is not None and self._system_helper.exists()
+                await self._pause_competing_audio_session()
+                if snapshot.connected:
+                    result = await self._run("disconnect", address)
+                    if result.returncode:
+                        raise ClassicAudioUnavailable("Speaker would not disconnect. No pairing was removed; retry after stopping audio.")
+                result = await self._run("remove", address)
+                if result.returncode:
+                    raise ClassicAudioUnavailable("Could not forget the identified speaker bond. Retry after checking Bluetooth service availability.")
+                self._update(connected=False, paired=False, trusted=False,
+                             sink_ready=False, sink_id=None, sink_name=None)
+                await self._run("--timeout", "12", "scan", "bredr")
+                rediscovered = await self._read_info(address)
+                if not rediscovered.device_name or "skelly(live)" not in rediscovered.device_name.casefold():
+                    raise ClassicAudioUnavailable("Speaker disappeared after forgetting. Enable Live Mode and retry; BLE control was preserved.")
+                paired = await self._pair(address, pin)
+                if paired.returncode:
+                    raise ClassicAudioUnavailable("Speaker authentication failed or was cancelled. Keep the speaker powered in Live Mode, disconnect other hosts, then retry repair.")
+                trusted = await self._run("trust", address)
+                if trusted.returncode:
+                    raise ClassicAudioUnavailable("Speaker paired but could not be trusted. Check Bluetooth service availability and retry repair.")
+                connected = await self._run("connect", address)
+                snapshot = await self._read_info(address)
+                if connected.returncode or not (snapshot.paired and snapshot.trusted and snapshot.connected):
+                    raise ClassicAudioUnavailable("Speaker pairing/connection did not complete. Keep it nearby in Live Mode and retry repair.")
+                snapshot = await (self._route_pipewire_sink() if route else self._find_pipewire_sink_without_routing())
+                if not snapshot.sink_ready or not snapshot.sink_id:
+                    raise ClassicAudioUnavailable("Speaker connected, but its PipeWire audio sink is missing. Check PipeWire/WirePlumber and the selected audio output, then retry.")
+                if route:
+                    executable = shutil.which("wpctl") or str(self._system_helper or "wpctl")
+                    current = await self._run_program(executable, "status")
+                    routed_sink = self._find_sink(current.output)
+                    if current.returncode or routed_sink != (snapshot.sink_id, True):
+                        self._update(sink_ready=False)
+                        raise ClassicAudioUnavailable("Speaker sink exists but is not the selected PipeWire output. Check audio routing and retry repair.")
+                return snapshot
+            except asyncio.CancelledError:
+                self._update(last_error="Speaker repair interrupted or timed out. Refresh status and retry; BLE control was preserved.")
+                raise
+            except ClassicAudioUnavailable as exc:
+                self._update(last_error=str(exc))
+                raise
+            finally:
+                if claim_active:
+                    await self._resume_competing_audio_session()
+
     async def _pause_competing_audio_session(self) -> bool:
         if self._system_helper is None or not self._system_helper.exists():
             return False
@@ -313,6 +396,10 @@ class BluetoothClassicAudio:
             stdout, _ = await asyncio.wait_for(
                 process.communicate(), timeout=max(self._timeout_seconds, 25.0)
             )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
         except TimeoutError as exc:
             process.kill()
             await process.wait()
@@ -478,6 +565,10 @@ class BluetoothClassicAudio:
                 ),
                 timeout=max(self._timeout_seconds, 18.0) if "scan" in arguments else (3.0 if "audio-wpctl" in command else self._timeout_seconds),
             )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
         except TimeoutError as exc:
             process.kill()
             await process.wait()
