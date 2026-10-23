@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.27.6">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.0-eye-picker-3">
   </head>
   <body>
     <main>
@@ -957,7 +957,7 @@
           </label>
           <div class="preset-grid">
             <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label><label id="media-movement-activity-setting" class="movement-activity-setting" hidden><span>Movement activity</span><select id="media-movement-activity"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select><small class="help-copy">Controls how often selected movements retrigger while Pi Media plays.</small></label></fieldset>
-            <label>Eye<select id="media-edit-eye"></select></label>
+            <fieldset class="media-eye-picker"><legend>Eye</legend><input id="media-edit-eye" type="hidden" value="1"><div id="media-edit-eye-choices" class="media-eye-choices" role="group" aria-label="Preset eye"></div></fieldset>
           </div>
           <label id="media-edit-jaw-setting" class="check-setting" hidden><input id="media-edit-jaw-sync" type="checkbox" checked><span><strong>Jaw sync</strong><small class="help-copy">Drive Skelly's jaw from this Pi audio file using the same playback path as AI speech.</small></span></label>
           <div class="light-control-grid">

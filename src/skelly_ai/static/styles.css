@@ -769,3 +769,10 @@ body.help-mode-off .help-copy { display:none !important; }
 .pi-media-quota-controls label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .78rem; }
 .pi-media-quota-controls input { width: 84px; }
 .pi-media-table { min-width: 880px; }
+
+.media-eye-picker { min-width: 0; }
+.media-eye-choices { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.media-eye-choice { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; min-width: 0; }
+.media-eye-choice img { width: 26px; height: 26px; flex: none; object-fit: contain; }
+.media-eye-choice small { font-size: 10px; overflow-wrap: anywhere; }
+.media-eye-choice[aria-pressed="true"] { outline: 2px solid var(--accent, #ffad24); outline-offset: -2px; background: #26364a; }

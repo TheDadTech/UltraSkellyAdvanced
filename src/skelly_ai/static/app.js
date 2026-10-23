@@ -1807,27 +1807,11 @@ function renderPiMediaStatus(body) {
   const table = document.createElement("table");
   table.className = "media-table pi-media-table";
   const head = document.createElement("thead");
-  head.innerHTML = "<tr><th>On</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Lure</th><th>Actions</th></tr>";
+  head.innerHTML = "<tr><th>Lure</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
   const rows = document.createElement("tbody");
   const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
   files.forEach((file) => {
     const row = document.createElement("tr");
-    const enabledCell = document.createElement("td");
-    const enabled = document.createElement("input");
-    enabled.type = "checkbox";
-    enabled.checked = file.enabled !== false;
-    enabled.addEventListener("change", async () => {
-      try {
-        renderPiMediaStatus(await request("/api/pi-media/edit", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...file, enabled: enabled.checked, head_light: file.lights?.[1], torso_light: file.lights?.[0] }),
-        }));
-      } catch (error) {
-        enabled.checked = !enabled.checked;
-        piMediaResult.textContent = error.message;
-      }
-    });
-    enabledCell.append(enabled);
     const nameCell = document.createElement("td");
     const title = document.createElement("strong");
     title.textContent = file.display_name || file.name;
@@ -1920,7 +1904,7 @@ function renderPiMediaStatus(body) {
       } catch (error) { piMediaResult.textContent = error.message; }
     });
     actions.append(play, edit, remove);
-    row.append(enabledCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, lureCell, actions);
+    row.append(lureCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
     rows.append(row);
   });
   table.append(head, rows);
@@ -2142,7 +2126,7 @@ function openMediaEditor(file, source = "skelly") {
   document.querySelector("#media-move-arm").checked = Boolean(action & 2);
   document.querySelector("#media-move-torso").checked = Boolean(action & 4);
   document.querySelector("#media-move-all").checked = (action & 7) === 7 || action === 255;
-  document.querySelector("#media-edit-eye").value = String(file.eye || 1);
+  selectMediaEye(file.eye || 1);
   [["head", file.lights?.[1], "#00ff62"], ["torso", file.lights?.[0], "#3300ff"]].forEach(([name, light, fallback]) => {
     const block = document.querySelector(`[data-edit-light="${name}"]`);
     block.querySelector(".edit-light-color").value = rgbToHex(light, fallback);
@@ -2392,8 +2376,29 @@ const factoryEyeNames = [
   "Fireworks", "American flag", "Hearts", "Clover", "Snowflake", "Confetti",
 ];
 
+function selectMediaEye(index) {
+  document.querySelector("#media-edit-eye").value = String(index);
+  document.querySelectorAll("#media-edit-eye-choices button").forEach((choice) => {
+    choice.setAttribute("aria-pressed", String(choice.dataset.eye === String(index)));
+  });
+}
+
 for (let index = 1; index <= 18; index += 1) {
-  document.querySelector("#media-edit-eye").append(new Option(`${index} · ${factoryEyeNames[index - 1]}`, String(index)));
+  const choice = document.createElement("button");
+  choice.type = "button";
+  choice.className = "secondary media-eye-choice";
+  choice.dataset.eye = String(index);
+  choice.setAttribute("aria-label", `${index} · ${factoryEyeNames[index - 1]}`);
+  choice.setAttribute("aria-pressed", String(index === 1));
+  choice.title = `${index} · ${factoryEyeNames[index - 1]}`;
+  const preview = document.createElement("img");
+  preview.src = `/static/eye_icon_${index}.png`;
+  preview.alt = "";
+  preview.width = 26;
+  preview.height = 26;
+  choice.append(preview);
+  choice.addEventListener("click", () => selectMediaEye(index));
+  document.querySelector("#media-edit-eye-choices").append(choice);
   const button = document.createElement("button");
   button.type = "button";
   button.className = "secondary eye-choice";
