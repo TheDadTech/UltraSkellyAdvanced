@@ -564,7 +564,7 @@ function renderOperation(operation) {
     if (customPersonality && document.activeElement !== customPersonality) customPersonality.value = settings.custom_personality || "";
     if (customPersonalitySetting) customPersonalitySetting.hidden = !savedPersonalityPool.includes("custom");
   }
-  if (document.activeElement !== hardwareProfile) document.querySelector("#hardware-profile").value = settings.hardware_profile;
+  if (document.activeElement !== hardwareProfile) hardwareProfile.value = settings.hardware_profile;
   if (document.activeElement !== defaultOperationMode) defaultOperationMode.value = settings.default_mode;
   autoStartOperation.checked = settings.auto_start === true && settings.default_mode !== "idle";
   autoStartOperation.disabled = settings.default_mode === "idle";
@@ -1266,7 +1266,7 @@ function operationSettingsPayload() {
     personality: selectedPersonalityPool()[0] || "classic",
     personality_pool: selectedPersonalityPool(),
     custom_personality: customPersonality?.value.trim() || "",
-    hardware_profile: document.querySelector("#hardware-profile").value,
+    hardware_profile: hardwareProfile.value,
     default_mode: defaultOperationMode.value,
     auto_start: autoStartOperation.checked && defaultOperationMode.value !== "idle",
     device_configured: currentOperationSettings?.device_configured !== false,
@@ -1280,7 +1280,7 @@ function operationSettingsPayload() {
     jaw_mirror_level_percent: Number(jawMirrorLevel?.value ?? currentOperationSettings?.jaw_mirror_level_percent ?? 100),
     mute_skelly_speaker_on_external: muteSkellySpeakerOnExternal?.checked !== false,
     skelly_speaker_restore_volume: currentOperationSettings?.skelly_speaker_restore_volume ?? 100,
-    allow_fpp_override: document.querySelector("#hardware-profile").value === "dac" && allowFppOverride.checked,
+    allow_fpp_override: hardwareProfile.value === "dac" && allowFppOverride.checked,
     manual_camera_enabled: manualCameraEnabled.checked,
     manual_microphone_enabled: manualMicrophoneEnabled.checked,
     listening_sensitivity: Number(listeningSensitivity.value),
@@ -1438,7 +1438,7 @@ defaultOperationMode.addEventListener("change", () => {
 });
 
 hardwareProfile.addEventListener("change", () => {
-  renderFppOverrideAvailability(document.querySelector("#hardware-profile").value);
+  renderFppOverrideAvailability(hardwareProfile.value);
 });
 
 
@@ -1960,7 +1960,7 @@ document.querySelector("#close-lure-pi-media").addEventListener("click", () => l
 lurePiMediaDialog.addEventListener("close", () => {
   libraryHome.after(classicLibrarySection);
   selectMediaSource(lurePreviousSource, { persist: false });
-  updateModeVisibility(currentOperationMode, document.querySelector("#hardware-profile").value);
+  updateModeVisibility(currentOperationMode, hardwareProfile.value);
   document.querySelector("#open-lure-pi-media").focus();
 });
 
