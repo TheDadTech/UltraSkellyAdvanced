@@ -1,3 +1,10 @@
+# UltraSkellyAdvanced 0.28.2 — local candidate
+
+- Adds Manage Connections with read-only network details and confirmed Skelly speaker pairing repair.
+- Separates Classic Media and Pi Media lure sources, with credit-use labeling for AI generation.
+- Adds The Lab - Pi Media access from lure settings without switching operation modes.
+- Keeps speaker readiness messages aligned with current connection and audio routing.
+
 # UltraSkellyAdvanced 0.28.1 Beta
 
 - Fixes TTS and Backup & Restore access from laptops on the local network, including through nginx, without an additional sign-in password.

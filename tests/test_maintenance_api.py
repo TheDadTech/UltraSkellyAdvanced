@@ -20,7 +20,7 @@ def client_for(tmp_path):
     return TestClient(create_app(Settings(data_dir=tmp_path, simulation=True, tts_password=AUTH[1])))
 
 
-def release(version='0.28.2'):
+def release(version='0.28.3'):
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, 'w') as z:
         z.writestr('pyproject.toml', f'[project]\nname="skelly-ai"\nversion="{version}"')
@@ -60,7 +60,7 @@ def test_backup_api_wrong_password_and_operation_guard(tmp_path):
 
 def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
     data = release()
-    headers = {'X-USA-Version':'0.28.2', 'X-USA-SHA256':hashlib.sha256(data).hexdigest()}
+    headers = {'X-USA-Version':'0.28.3', 'X-USA-SHA256':hashlib.sha256(data).hexdigest()}
     with client_for(tmp_path) as c:
         monkeypatch.setattr('skelly_ai.api.httpx.AsyncClient', lambda **kwargs: pytest.fail('manual ZIP must not contact GitHub'))
         assert c.post('/api/update/manual/verify', content=data, headers={**headers,'Origin':'https://other.invalid'}).status_code == 403
@@ -71,24 +71,24 @@ def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
         assert c.post('/api/update/manual/install', json={'token':token}).status_code == 409
         assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-SHA256':'0'*64}).status_code == 422
         assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.27.4'}).status_code == 409
-        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.2-beta1'}).status_code == 409
+        assert c.post('/api/update/manual/verify', content=data, headers={**headers,'X-USA-Version':'0.28.3-beta1'}).status_code == 409
 
 
 def test_manual_install_uses_existing_helper_path_and_verified_bytes(tmp_path, monkeypatch):
     manager = UpdateManager(tmp_path/'data', tmp_path/'helper')
     archive=tmp_path/'release.zip'; archive.write_bytes(release())
-    result=manager.verify_manual(archive,'0.28.2',hashlib.sha256(archive.read_bytes()).hexdigest())
+    result=manager.verify_manual(archive,'0.28.3',hashlib.sha256(archive.read_bytes()).hexdigest())
     # A modification to extracted code cannot survive the final archive verification.
     (manager._manual['source']/'src/skelly_ai/api.py').write_text('tampered')
     calls=[]
     def run(args,**kwargs):
         calls.append(args)
-        assert Path(args[5]).is_relative_to(manager.update_dir/'0.28.2'/'source')
+        assert Path(args[5]).is_relative_to(manager.update_dir/'0.28.3'/'source')
         assert (Path(args[5])/'src/skelly_ai/api.py').read_text() == 'test fixture'
         return subprocess.CompletedProcess(args,0)
     monkeypatch.setattr('skelly_ai.updates.subprocess.run',run)
     manager.install_manual(result['token'],current_version='0.27.4')
-    assert calls[0][3:5] == ['update-install','0.28.2']
+    assert calls[0][3:5] == ['update-install','0.28.3']
     with pytest.raises(UpdateError):
         manager.install_manual(result['token'],current_version='0.27.4')
 
@@ -96,7 +96,7 @@ def test_manual_install_uses_existing_helper_path_and_verified_bytes(tmp_path, m
 def test_manual_corrupt_archive_never_calls_helper(tmp_path, monkeypatch):
     manager=UpdateManager(tmp_path/'data',tmp_path/'helper')
     archive=tmp_path/'release.zip'; archive.write_bytes(release())
-    verified=manager.verify_manual(archive,'0.28.2',hashlib.sha256(archive.read_bytes()).hexdigest())
+    verified=manager.verify_manual(archive,'0.28.3',hashlib.sha256(archive.read_bytes()).hexdigest())
     (manager._manual['stage']/'release.zip').write_bytes(b'corrupt')
     monkeypatch.setattr('skelly_ai.updates.subprocess.run',lambda *a,**k:pytest.fail('helper must not run'))
     with pytest.raises(UpdateError,match='changed'):
@@ -116,7 +116,7 @@ def test_health_simulation_is_safe_and_secret_free(tmp_path, monkeypatch):
 def test_connectivity_success_failure_and_persistence(tmp_path, monkeypatch):
     class Response:
         def raise_for_status(self): pass
-        def json(self): return {'version':'0.28.2','package_url':'https://example.test/usa.zip','sha256':'0'*64}
+        def json(self): return {'version':'0.28.3','package_url':'https://example.test/usa.zip','sha256':'0'*64}
     class Client:
         async def __aenter__(self): return self
         async def __aexit__(self,*args): pass
@@ -126,7 +126,7 @@ def test_connectivity_success_failure_and_persistence(tmp_path, monkeypatch):
         r=c.post('/api/update/check')
         assert r.status_code == 200
         info=r.json()['connectivity']
-        assert info['stable']=='0.28.2' and info['reachable'] is True and info['last_success']
+        assert info['stable']=='0.28.3' and info['reachable'] is True and info['last_success']
     import httpx
     class Unreachable(Client):
         async def get(self,*args): raise httpx.ConnectError('test network failure')
@@ -134,7 +134,7 @@ def test_connectivity_success_failure_and_persistence(tmp_path, monkeypatch):
     with client_for(tmp_path) as c:
         assert c.post('/api/update/check').status_code == 503
         info=c.get('/api/update/status').json()['connectivity']
-        assert info['reachable'] is False and info['stable']=='0.28.2'
+        assert info['reachable'] is False and info['stable']=='0.28.3'
         assert info['last_success']
         assert 'test network failure' not in info['error']
 
@@ -156,7 +156,7 @@ def test_recovery_copy_list_and_authenticated_download(tmp_path):
 def test_manual_expired_token_and_duplicate_zip_entries(tmp_path, monkeypatch):
     manager=UpdateManager(tmp_path/'data',tmp_path/'helper')
     archive=tmp_path/'release.zip'; archive.write_bytes(release())
-    verified=manager.verify_manual(archive,'0.28.2',hashlib.sha256(archive.read_bytes()).hexdigest())
+    verified=manager.verify_manual(archive,'0.28.3',hashlib.sha256(archive.read_bytes()).hexdigest())
     manager._manual['expires']=0
     monkeypatch.setattr('skelly_ai.updates.subprocess.run',lambda *a,**k:pytest.fail('no helper'))
     with pytest.raises(UpdateError):
@@ -165,7 +165,7 @@ def test_manual_expired_token_and_duplicate_zip_entries(tmp_path, monkeypatch):
         with pytest.warns(UserWarning):
             z.writestr('deploy/bootstrap-pi.sh','replacement')
     with pytest.raises(UpdateError,match='unsafe'):
-        manager.verify_manual(archive,'0.28.2',hashlib.sha256(archive.read_bytes()).hexdigest())
+        manager.verify_manual(archive,'0.28.3',hashlib.sha256(archive.read_bytes()).hexdigest())
 
 
 def test_unicode_backup_password_and_effective_credential_recovery(tmp_path):
