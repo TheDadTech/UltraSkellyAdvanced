@@ -36,19 +36,16 @@ The restore operation is process-local; run a single application worker. A power
 loss during replacement of multiple files is not transactional; the recovery
 copy remains available. Do not restore during other file transfers.
 
-## Protected tools
+## Dashboard tools and backup encryption
 
-TTS and backups share the existing operator Basic credentials:
-`SKELLY_TTS_USERNAME` (default `operator`) and `SKELLY_TTS_PASSWORD` (12+ characters).
-Without credentials configured, TTS and backup routes accept only direct loopback access.
-Proxy/LAN access requires credentials. Existing ordinary control/setup routes
-retain their previous access policy. Use HTTPS for network access.
+TTS and Backup & Restore work from a laptop on the controller's local network,
+including through its nginx proxy, without a separate operator sign-in.
+Cross-origin requests and direct public-network clients are rejected. Do not
+expose the dashboard through an internet-facing reverse proxy.
 
-A sign-in dialog appears only when a protected action requires it. Credentials remain in tab
-memory and are cleared by reload; they are never stored in localStorage. The
-GUI loads protected audio into an in-memory browser preview. This flow works
-without relying on a native browser Basic-auth dialog. The backup password is
-separate from the operator login and is never saved by USA.
+The password entered when creating or restoring a backup protects the encrypted
+backup file; it is still required and is never saved by USA. Existing legacy
+`SKELLY_TTS_PASSWORD` settings no longer impose an additional dashboard login.
 
 ## Normal and manual updates
 

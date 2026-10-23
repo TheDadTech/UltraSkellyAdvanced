@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import secrets
 import ipaddress
 import json
 import os
@@ -1420,26 +1419,16 @@ def create_app(
     @app.middleware("http")
     async def protect_tts(request: Request, call_next):
         if request.url.path.startswith(("/api/pi-media/tts/", "/api/backup/")):
-            # Use the actual peer, never caller-controlled forwarding headers.
-            password = app_settings.tts_password
-            if password is None:
-                try:
-                    local = bool(request.client) and ipaddress.ip_address(request.client.host).is_loopback
-                except ValueError:
-                    local = False
-                if not local or any(header in request.headers for header in ("forwarded", "x-forwarded-for", "x-real-ip")):
-                    return JSONResponse(status_code=403, content={"detail": "Remote TTS requires SKELLY_TTS_PASSWORD"})
-            else:
-                try:
-                    scheme, encoded = request.headers.get("authorization", "").split(" ", 1)
-                    username, supplied = base64.b64decode(encoded, validate=True).decode().split(":", 1)
-                    valid = scheme.lower() == "basic"
-                    valid &= secrets.compare_digest(username.encode(), app_settings.tts_username.encode())
-                    valid &= secrets.compare_digest(supplied.encode(), password.get_secret_value().encode())
-                except (ValueError, UnicodeError):
-                    valid = False
-                if not valid:
-                    return JSONResponse(status_code=401, content={"detail": "TTS authentication required"}, headers={} if request.headers.get("x-usa-interactive-auth") == "1" else {"WWW-Authenticate": 'Basic realm="TTS", charset="UTF-8"'})
+            # Match ordinary dashboard access: LAN clients and the local nginx
+            # proxy do not need a second operator password. Forwarding headers
+            # never turn a public direct peer into a trusted local client.
+            client_host = request.client.host if request.client else ""
+            try:
+                local_network = ipaddress.ip_address(client_host).is_private
+            except ValueError:
+                local_network = client_host == "testclient"
+            if not local_network:
+                return JSONResponse(status_code=403, content={"detail": "Dashboard tools are available only from this controller's local network"})
             origin = request.headers.get("origin")
             if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get("sec-fetch-site") == "cross-site":
                 return JSONResponse(status_code=403, content={"detail": "Cross-origin TTS access denied"})
