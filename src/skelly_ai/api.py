@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
 from .backups import BackupManager, BackupError
-from . import __version__
+from . import __version__, __release_channel__, __stable_transition_target__
 from .brain import BrainResponseError, BrainUnavailable, LocalBrain
 from .audio_output import (
     AudioOutputUnavailable,
@@ -2030,6 +2030,14 @@ def create_app(
     def is_prerelease(value: str) -> bool:
         return bool(re.search(r"(?:beta|b|rc|dev)", value, flags=re.IGNORECASE))
 
+    def planned_stable_transition() -> str | None:
+        # Explicit build metadata, not the selected feed or a broad downgrade
+        # flag. Retained by the delivery candidate; cleared in stable packaging.
+        return __stable_transition_target__ if __release_channel__ == "beta" else None
+
+    def running_beta_build() -> bool:
+        return __release_channel__ == "beta" or is_prerelease(__version__)
+
     connectivity_path = app_settings.data_dir / "update-connectivity.json"
     try:
         update_connectivity = json.loads(connectivity_path.read_text())
@@ -2071,7 +2079,7 @@ def create_app(
             "current_version": __version__,
             "channel": channel,
             "beta_enabled": channel == "beta",
-            "running_beta": is_prerelease(__version__),
+            "running_beta": running_beta_build(),
             "channel_configured": bool(manifest_url),
             "update_available": available,
             "latest_version": latest_version,
@@ -2080,7 +2088,7 @@ def create_app(
             "installable": bool(available and installable),
             "installation": updates.status(),
             "rollback": updates.rollback_status(current_version=__version__),
-            "return_to_stable_available": is_prerelease(__version__),
+            "return_to_stable_available": running_beta_build(),
             "message": message
             or (
                 f"USA {channel} release channel ready. Check for updates when this Pi is online."
@@ -2351,8 +2359,8 @@ def create_app(
 
     @app.post("/api/update/return-stable")
     async def return_to_stable(request: Request) -> dict[str, object]:
-        require_local_setup(request)
-        if not is_prerelease(__version__):
+        maintenance_access(request, idle=True)
+        if not running_beta_build():
             raise HTTPException(
                 status_code=409,
                 detail="This Pi is already running a stable release",
@@ -2361,6 +2369,14 @@ def create_app(
         stable_version = str(manifest.get("version") or "").strip()
         if not stable_version:
             raise HTTPException(status_code=502, detail="The stable manifest has no version")
+        if planned_stable_transition():
+            expected_package = "https://github.com/TheDadTech/UltraSkellyAdvanced/releases/download/v0.28.0/UltraSkellyAdvanced-0.28.0.zip"
+            if planned_stable_transition() != "0.28.0" or stable_version != "0.28.0" or manifest.get("channel") != "stable":
+                raise HTTPException(status_code=409, detail="The 0.28.0 stable transition is not available yet. Nothing was installed.")
+            if manifest.get("package_url") != expected_package:
+                raise HTTPException(status_code=502, detail="The stable transition requires the official 0.28.0 release package")
+        if is_prerelease(stable_version):
+            raise HTTPException(status_code=502, detail="The official stable manifest must identify a stable release")
         if not manifest.get("package_url") or not manifest.get("sha256"):
             raise HTTPException(
                 status_code=502,
