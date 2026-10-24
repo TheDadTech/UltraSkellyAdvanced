@@ -611,3 +611,70 @@ async def test_motion_only_arrival_rearms_after_background_motion_clears():
         assert engine.status()['session_id'] == first + 1
     finally:
         await engine.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mounted',[False, True])
+async def test_camera_mount_filters_self_motion_but_keeps_face_arrival(mounted):
+    sensors = BackgroundAudioSensors()
+    sensors.present = False
+    sensors.noisy = False
+    sensors._motion_percent = 35.42
+    moving = True
+    engine = PerceptionEngine(sensors, show_locked=lambda: False,
+        trigger_settings=lambda: {'audio': False, 'face': True, 'motion': True, 'camera_moves': mounted},
+        camera_motion_active=lambda: moving,
+        camera_interval_seconds=0.005, presence_confirmations=2, clear_confirmations=4,
+        listen_retry_seconds=0.005)
+    try:
+        await engine.start()
+        await wait_until(lambda: sensors.camera_calls >= 3)
+        assert engine.status()['motion_suppressed'] is mounted
+        if mounted:
+            assert not engine.status()['session_active']
+            assert engine.status()['trigger_states']['motion'] is False
+            # A face arriving during self movement still starts a visit.
+            sensors.present = True
+            await wait_until(lambda: engine.status()['session_active'])
+            sensors.present = False
+            await wait_until(lambda: not engine.status()['session_active'])
+            assert engine.status()['nag_count'] == 0
+            # External movement is usable again once movement/settling ends.
+            moving = False
+            calls = sensors.camera_calls
+            await wait_until(lambda: sensors.camera_calls >= calls + 3)
+            assert not engine.status()['session_active']
+            sensors._motion_percent = 0
+            await wait_until(lambda: not engine.status()['motion_rearm_pending'])
+            sensors._motion_percent = 35.42
+            await wait_until(lambda: engine.status()['session_active'])
+        else:
+            assert engine.status()['session_active'] or engine.status()['motion_rearm_pending']
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_filtered_movement_cannot_become_arrival_when_settling_ends():
+    sensors = BackgroundAudioSensors()
+    sensors.present = False
+    sensors.noisy = False
+    sensors._motion_percent = 35.42
+    moving = True
+    engine = PerceptionEngine(sensors, show_locked=lambda: False,
+        trigger_settings=lambda: {'audio': False, 'face': True, 'motion': True, 'camera_moves': True},
+        camera_motion_active=lambda: moving,
+        camera_interval_seconds=0.005, presence_confirmations=2, clear_confirmations=4)
+    try:
+        await engine.start()
+        await wait_until(lambda: engine.status()['motion_rearm_pending'])
+        moving = False
+        calls = sensors.camera_calls
+        await wait_until(lambda: sensors.camera_calls >= calls + 5)
+        assert not engine.status()['session_active']
+        sensors._motion_percent = 0
+        await wait_until(lambda: not engine.status()['motion_rearm_pending'])
+        sensors._motion_percent = 35.42
+        await wait_until(lambda: engine.status()['session_active'])
+    finally:
+        await engine.stop()

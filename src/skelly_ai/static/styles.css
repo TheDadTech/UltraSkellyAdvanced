@@ -798,3 +798,7 @@ body.help-mode-off .help-copy { display:none !important; }
 .lure-pi-media-dialog #classic-library-section > .section-heading,
 .lure-pi-media-dialog .media-source-switch { display: none; }
 .lure-pi-media-dialog #classic-library-section { margin: 0; padding: 0; border: 0; }
+
+.camera-mount-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.camera-mount-choice .trigger-choice { white-space: nowrap; }
+.camera-mount-choice input[type="radio"] { width: auto; padding: 0; flex: 0 0 auto; }

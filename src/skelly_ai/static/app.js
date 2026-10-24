@@ -207,6 +207,7 @@ const nagUnattendedInterval = document.querySelector("#nag-unattended-interval")
 const nagUnattendedIntervalValue = document.querySelector("#nag-unattended-interval-value");
 const triggerOnAudio = document.querySelector("#trigger-on-audio");
 const triggerOnFace = document.querySelector("#trigger-on-face");
+const cameraMountChoices = [...document.querySelectorAll('input[name="camera-mount"]')];
 const triggerOnMotion = document.querySelector("#trigger-on-motion");
 const triggerAudioDot = document.querySelector("#trigger-audio-dot");
 const triggerFaceDot = document.querySelector("#trigger-face-dot");
@@ -586,6 +587,7 @@ function renderOperation(operation) {
   triggerOnAudio.checked = settings.trigger_on_audio !== false;
   triggerOnFace.checked = settings.trigger_on_face !== false;
   triggerOnMotion.checked = settings.trigger_on_motion !== false;
+  cameraMountChoices.forEach((input) => { input.checked = input.value === (settings.camera_mount || "stationary"); });
   if (audioOutputSelect && document.activeElement !== audioOutputSelect && !audioOutputSelectionLocked()) {
     audioOutputSelect.value = settings.audio_output || "skelly";
   }
@@ -1289,6 +1291,7 @@ function operationSettingsPayload() {
     trigger_on_audio: triggerOnAudio.checked,
     trigger_on_face: triggerOnFace.checked,
     trigger_on_motion: triggerOnMotion.checked,
+    camera_mount: cameraMountChoices.find((input) => input.checked)?.value || "stationary",
     welcome_enabled: currentOperationSettings?.welcome_enabled ?? false,
     welcome_message: currentOperationSettings?.welcome_message ?? "",
     nag_mode: nagMode.value,
@@ -1324,7 +1327,7 @@ function formatLureInterval(value) {
   input.addEventListener("input", () => { output.textContent = format(input.value); });
 });
 
-[triggerOnAudio, triggerOnFace, triggerOnMotion].forEach((input) => {
+[triggerOnAudio, triggerOnFace, triggerOnMotion, ...cameraMountChoices].forEach((input) => {
   input.addEventListener("change", async () => {
     if (![triggerOnAudio, triggerOnFace, triggerOnMotion].some((item) => item.checked)) {
       input.checked = true;

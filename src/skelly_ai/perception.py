@@ -101,6 +101,7 @@ class PerceptionEngine:
         unattended_lure_settings: UnattendedLureSettings | None = None,
         snapshotter: Snapshotter | None = None,
         trigger_settings: TriggerSettings | None = None,
+        camera_motion_active: Callable[[], bool] | None = None,
         camera_interval_seconds: float = 2.5,
         presence_confirmations: int = 2,
         clear_confirmations: int = 4,
@@ -122,6 +123,8 @@ class PerceptionEngine:
         self._unattended_lure_settings = unattended_lure_settings
         self._snapshotter = snapshotter
         self._trigger_settings = trigger_settings
+        self._camera_motion_active = camera_motion_active
+        self._motion_suppressed = False
         self._camera_interval_seconds = camera_interval_seconds
         self._presence_confirmations = presence_confirmations
         self._clear_confirmations = clear_confirmations
@@ -181,6 +184,7 @@ class PerceptionEngine:
             "trigger_states": dict(self._trigger_states),
             "audio_rearm_pending": self._audio_rearm_required,
             "motion_rearm_pending": self._motion_rearm_required,
+            "motion_suppressed": self._motion_suppressed,
         }
 
     async def start(self) -> dict[str, object]:
@@ -343,6 +347,7 @@ class PerceptionEngine:
 
                 try:
                     self._phase = "scanning"
+                    moving_before_frame = bool(self._camera_motion_active and self._camera_motion_active())
                     await self._sensors.analyze_camera()
                     sensor_status = self._sensors.status()
                     camera = sensor_status["camera"]
@@ -352,7 +357,10 @@ class PerceptionEngine:
                         else {"audio": False, "face": True, "motion": False}
                     )
                     face_active = bool(camera.get("face_count"))
-                    motion_active = float(camera.get("motion_percent") or 0.0) >= self._departure_motion_threshold
+                    raw_motion_active = float(camera.get("motion_percent") or 0.0) >= self._departure_motion_threshold
+                    self._motion_suppressed = bool(trigger_settings.get("camera_moves", False) and
+                        (moving_before_frame or (self._camera_motion_active and self._camera_motion_active())))
+                    motion_active = raw_motion_active and not self._motion_suppressed
                     audio_active = False
                     if trigger_settings.get("audio", False):
                         if self._session_active:
@@ -382,7 +390,11 @@ class PerceptionEngine:
                     # Trees, traffic and changing light can move continuously.
                     visual_present = bool(visual_enabled and
                         (face_active or camera.get("person_count", 0)))
-                    if not motion_active:
+                    # A filtered moving frame is not a fresh arrival when filtering
+                    # ends. Require a clear frame before accepting motion again.
+                    if self._motion_suppressed and raw_motion_active:
+                        self._motion_rearm_required = True
+                    if not raw_motion_active and not self._motion_suppressed:
                         self._motion_rearm_required = False
                     if not audio_active:
                         self._audio_rearm_required = False
@@ -408,7 +420,7 @@ class PerceptionEngine:
                                 # from the same continuous background sound.
                                 # A visual arrival can still start the next visit.
                                 self._audio_rearm_required = audio_active
-                                self._motion_rearm_required = motion_active
+                                self._motion_rearm_required = raw_motion_active
                                 self._phase = "rearmed"
                                 await asyncio.sleep(self._camera_interval_seconds)
                                 continue

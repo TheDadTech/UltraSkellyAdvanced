@@ -37,6 +37,7 @@ class OperationSettings(BaseModel):
     trigger_on_audio: bool = True
     trigger_on_face: bool = True
     trigger_on_motion: bool = True
+    camera_mount: Literal["stationary", "moving"] = "stationary"
     welcome_enabled: bool = False
     welcome_message: str = Field(
         default="Well, well... somebody wandered into the wrong yard.",

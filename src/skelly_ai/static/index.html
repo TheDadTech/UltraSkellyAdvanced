@@ -532,6 +532,11 @@
             <label class="trigger-choice"><input id="trigger-on-audio" type="checkbox" checked><span class="trigger-live-dot" id="trigger-audio-dot" aria-hidden="true"></span><strong>Audio</strong></label>
             <label class="trigger-choice"><input id="trigger-on-face" type="checkbox" checked><span class="trigger-live-dot" id="trigger-face-dot" aria-hidden="true"></span><strong>Face</strong></label>
             <label class="trigger-choice"><input id="trigger-on-motion" type="checkbox" checked><span class="trigger-live-dot" id="trigger-motion-dot" aria-hidden="true"></span><strong>Motion</strong></label>
+            <div class="camera-mount-choice" role="group" aria-label="Camera mounting" title="Moves with Skelly filters motion triggers during commanded movement and a short settling period. Face/person detection stays active.">
+              <span class="label">Camera:</span>
+              <label class="trigger-choice"><input type="radio" name="camera-mount" value="stationary" checked>Stationary</label>
+              <label class="trigger-choice"><input type="radio" name="camera-mount" value="moving">Moves with Skelly</label>
+            </div>
             <small id="trigger-source-result" class="muted" aria-live="polite"></small>
           </div>
 

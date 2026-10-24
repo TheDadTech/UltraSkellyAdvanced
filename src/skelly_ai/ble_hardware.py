@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
@@ -71,6 +72,7 @@ class BleSkelly:
         self._live_mode = False
         self._eye_icon = EyeIcon.NORMAL
         self._eye_index = EYE_INDEX[EyeIcon.NORMAL]
+        self._last_movement_at = float("-inf")
         self._movement = Movement.NONE
         self._movement_armed = False
         self._last_error: str | None = None
@@ -107,7 +109,16 @@ class BleSkelly:
     def _now() -> str:
         return datetime.now(UTC).isoformat()
 
+    def camera_motion_active(self) -> bool:
+        """Commanded movement plus 1.5s settling; not physical feedback."""
+        return bool(
+            (self._connected and self._movement_armed and self._movement != Movement.NONE)
+            or time.monotonic() - self._last_movement_at < 1.5
+        )
+
     def _record(self, action: str, value: str) -> None:
+        if action in {"movement", "movement_armed"}:
+            self._last_movement_at = time.monotonic()
         self._changed_at = self._now()
         self._events.append({"at": self._changed_at, "action": action, "value": value})
 

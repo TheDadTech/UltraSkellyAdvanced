@@ -1295,6 +1295,7 @@ def create_app(
             "audio": settings.trigger_on_audio,
             "face": settings.trigger_on_face,
             "motion": settings.trigger_on_motion,
+            "camera_moves": settings.camera_mount == "moving",
         }
 
     perception = PerceptionEngine(
@@ -1310,6 +1311,7 @@ def create_app(
         unattended_lure_settings=unattended_lure_settings,
         snapshotter=save_interaction_snapshot,
         trigger_settings=perception_trigger_settings,
+        camera_motion_active=hardware.camera_motion_active,
         camera_interval_seconds=app_settings.perception_camera_interval_seconds,
         presence_confirmations=app_settings.perception_presence_confirmations,
         clear_confirmations=app_settings.perception_clear_confirmations,

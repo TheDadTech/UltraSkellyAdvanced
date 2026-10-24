@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -101,6 +102,7 @@ class HardwareSnapshot:
 
 
 class SkellyHardware(Protocol):
+    def camera_motion_active(self) -> bool: ...
     async def connect(self, address: str | None = None) -> HardwareSnapshot: ...
     async def disconnect(self) -> HardwareSnapshot: ...
     async def forget(self) -> HardwareSnapshot: ...
@@ -135,6 +137,7 @@ class SimulatedSkelly:
         self._live_mode = False
         self._eye_icon = EyeIcon.NORMAL
         self._eye_index = EYE_INDEX[EyeIcon.NORMAL]
+        self._last_movement_at = float("-inf")
         self._movement = Movement.NONE
         self._movement_armed = True
         self._changed_at = self._now()
@@ -173,7 +176,16 @@ class SimulatedSkelly:
     def _now() -> str:
         return datetime.now(UTC).isoformat()
 
+    def camera_motion_active(self) -> bool:
+        """Commanded movement plus 1.5s settling; not physical feedback."""
+        return bool(
+            (self._connected and self._movement_armed and self._movement != Movement.NONE)
+            or time.monotonic() - self._last_movement_at < 1.5
+        )
+
     def _record(self, action: str, value: str) -> None:
+        if action in {"movement", "movement_armed"}:
+            self._last_movement_at = time.monotonic()
         self._changed_at = self._now()
         self._events.append(
             {"at": self._changed_at, "action": action, "value": value}

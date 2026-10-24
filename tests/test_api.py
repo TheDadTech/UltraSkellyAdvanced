@@ -1369,3 +1369,16 @@ def test_tts_quota_checked_before_provider_call(tmp_path, monkeypatch):
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         response = client.post("/api/pi-media/tts/generate", json={"text": "Hello"})
         assert response.status_code == 429
+
+
+def test_camera_mount_setting_persists_and_rejects_invalid_values(tmp_path):
+    settings = Settings(data_dir=tmp_path, simulation=True)
+    with TestClient(create_app(settings)) as client:
+        original = client.get('/api/operation/status').json()['settings']
+        assert original['camera_mount'] == 'stationary'
+        result = client.post('/api/operation/settings', json={**original, 'camera_mount': 'moving'})
+        assert result.status_code == 200
+        assert client.post('/api/operation/settings', json={**original, 'camera_mount': 'wrong'}).status_code == 422
+    with TestClient(create_app(settings)) as client:
+        stored = client.get('/api/operation/status').json()['settings']
+        assert stored == {**original, 'camera_mount': 'moving'}

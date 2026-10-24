@@ -335,3 +335,26 @@ def test_head_and_arm_combination_uses_verified_bitfield_layout() -> None:
 
 def test_head_and_torso_combination_uses_verified_bitfield_layout() -> None:
     assert ble_protocol.set_movement(5).hex().upper().startswith("AACA05")
+
+
+@pytest.mark.asyncio
+async def test_ble_camera_motion_tracks_commands_and_settling(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr('skelly_ai.ble_hardware.time.monotonic', lambda: clock[0])
+    hardware = BleSkelly(address=FakeDevice.address, scanner=FakeScanner, client_factory=FakeClient)
+    assert not hardware.camera_motion_active()
+    # Fake transport: exercise the same successful BLE command/state path.
+    async def write(command):
+        pass
+    hardware._write_locked = write
+    from types import SimpleNamespace
+    hardware._client = SimpleNamespace(is_connected=True)
+    hardware._connected = True
+    await hardware.arm_movement(True)
+    await hardware.set_movement(Movement.TORSO_ONLY)
+    clock[0] += 10
+    assert hardware.camera_motion_active()
+    await hardware.stop()
+    assert hardware.camera_motion_active()
+    clock[0] += 1.6
+    assert not hardware.camera_motion_active()
