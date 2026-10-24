@@ -1,3 +1,8 @@
+# UltraSkellyAdvanced 0.28.3-beta2 — local test build
+
+- Prevents background audio from keeping a departed visitor session active or immediately creating a phantom new session.
+- Resets lure limits for the next visitor and clarifies the per-visitor limit label.
+
 # UltraSkellyAdvanced 0.28.3-beta1 — local test build
 
 - Enables the verified transition to the planned official 0.28.0 stable release through Return to Stable.

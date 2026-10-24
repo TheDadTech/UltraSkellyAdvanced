@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.3-beta1-connections-3">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.3-beta2-connections-3">
   </head>
   <body>
     <main>
@@ -279,7 +279,7 @@
         <details class="tools-card" id="manual-update-tools"><summary>Manual ZIP update<span>Upload and verify a downloaded release</span></summary><div class="tools-card-content">
         <p>Select a USA release ZIP and enter its version and published SHA-256 checksum. Verify first, then install through USA’s updater. Installation restarts USA.</p>
         <label>Release ZIP <input id="manual-update-file" type="file" accept=".zip,application/zip"></label>
-        <label>Version <input id="manual-update-version" placeholder="0.28.3-beta1"></label>
+        <label>Version <input id="manual-update-version" placeholder="0.28.3-beta2"></label>
         <label>SHA-256 <input id="manual-update-sha256" minlength="64" maxlength="64"></label>
         <button id="verify-manual-update" type="button">Upload and verify ZIP</button>
         <button id="install-manual-update" type="button" disabled>Install verified ZIP</button>
@@ -542,7 +542,7 @@
               <div class="lure-media-shortcut"><span class="lure-shortcut-spacer" aria-hidden="true">Lure mode</span><button id="open-lure-pi-media" type="button" class="secondary">The Lab - Pi Media</button><small class="help-copy">Generate speech and change Pi Media lure clips without switching modes.</small></div>
               <label><span>Delay before first lure <output id="nag-delay-value">2s</output></span><input id="nag-delay" type="range" min="1" max="30" step="1" value="2"><small class="help-copy">After a passerby is confirmed, lure them before the first listening window.</small></label>
               <label><span>Cooldown <output id="nag-cooldown-value">30s</output></span><input id="nag-cooldown" type="range" min="10" max="120" step="5" value="30"></label>
-              <label><span>Max lures <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"></label>
+              <label><span>Max lures per visitor <output id="nag-max-value">2</output></span><input id="nag-max" type="range" min="1" max="5" step="1" value="2"><small class="help-copy">Resets after the visitor leaves and departure is confirmed.</small></label>
               <label><span>Unattended interval <output id="nag-unattended-interval-value">2m</output></span><input id="nag-unattended-interval" type="range" min="60" max="600" step="30" value="120"><small class="help-copy">How often Skelly may advertise that people can talk to him when nobody is interacting.</small></label>
             </div>
             <label class="check-setting"><input id="nag-require-presence" type="checkbox" checked><span><strong>Require visitor presence for visitor lures</strong><small class="help-copy">Visitor-session lures stop as soon as the visitor leaves.</small></span></label>
@@ -1059,10 +1059,10 @@
     </main>
     <script src="/static/core/api.js?v=0.27.1"></script>
     <script src="/static/core/store.js?v=0.27.2"></script>
-    <script src="/static/core/status.js?v=0.28.3-beta1-connections-3"></script>
+    <script src="/static/core/status.js?v=0.28.3-beta2-connections-3"></script>
     <script src="/static/core/header.js?v=0.27.2"></script>
     <script src="/static/core/audio.js?v=0.27.2"></script>
     <script src="/static/core/polling.js?v=0.27.2"></script>
-    <script src="/static/app.js?v=0.28.3-beta1-connections-3"></script>
+    <script src="/static/app.js?v=0.28.3-beta2-connections-3"></script>
   </body>
 </html>
