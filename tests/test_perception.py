@@ -472,3 +472,112 @@ def test_active_conversation_turn_delay_defaults_under_half_second() -> None:
     import inspect
     signature = inspect.signature(PerceptionEngine)
     assert signature.parameters["conversation_turn_delay_seconds"].default <= 0.5
+
+
+class BackgroundAudioSensors(FakeSensors):
+    def __init__(self, transcript=''):
+        super().__init__([],motion_percent=0.0)
+        self.present=True
+        self.noisy=True
+        self.transcript=transcript
+    async def analyze_camera(self):
+        self.camera_calls+=1
+        self._current_presence=self.present
+        return b'jpeg'
+    async def sample_microphone(self,duration_seconds):
+        return self.status()
+    def status(self):
+        data=super().status()
+        data['microphone']['voice_active']=self.noisy
+        data['microphone']['transcript']=self.transcript
+        return data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('background_transcript',['','television is talking in the room'])
+async def test_background_audio_does_not_hold_departed_session_or_reuse_lure_count(background_transcript):
+    sensors=BackgroundAudioSensors()
+    lures=[];ended=[]
+    async def nag(count,elapsed,since):
+        if sensors.present and count<2:
+            lures.append(count)
+            return {'performed':True}
+        return None
+    async def session_ended():ended.append(True)
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,nagger=nag,session_ended=session_ended,
+        trigger_settings=lambda:{'audio':True,'face':True,'motion':True},
+        camera_interval_seconds=0.005,presence_confirmations=2,clear_confirmations=4,
+        listen_retry_seconds=0.005,conversation_turn_delay_seconds=0.005)
+    try:
+        await engine.start()
+        await wait_until(lambda:engine.status()['nag_count']==2)
+        first_id=engine.status()['session_id']
+        sensors.transcript=background_transcript
+        sensors.present=False
+        await wait_until(lambda:not engine.status()['session_active'])
+        assert engine.status()['nag_count']==0 and ended==[True]
+        assert engine.status()['audio_rearm_pending'] is True
+        # Continuous noise must not immediately manufacture another visitor.
+        calls=sensors.camera_calls
+        await wait_until(lambda:sensors.camera_calls>=calls+5)
+        assert not engine.status()['session_active']
+        lures.clear();sensors.transcript="";sensors.present=True
+        await wait_until(lambda:engine.status()['session_active'] and bool(lures))
+        assert engine.status()['session_id']==first_id+1
+        assert lures[0]==0
+    finally:await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_visual_confirmation_still_tolerates_a_brief_missed_frame():
+    sensors=BackgroundAudioSensors('hello visitor')
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,
+        trigger_settings=lambda:{'audio':True,'face':True,'motion':False},
+        camera_interval_seconds=0.005,presence_confirmations=2,clear_confirmations=4,
+        listen_retry_seconds=0.005,conversation_turn_delay_seconds=0.005)
+    try:
+        await engine.start();await wait_until(lambda:engine.status()['session_active'])
+        session=engine.status()['session_id'];sensors.present=False
+        await wait_until(lambda:engine.status()['clear_streak']>=1)
+        sensors.present=True
+        await wait_until(lambda:engine.status()['clear_streak']==0)
+        assert engine.status()['session_id']==session
+    finally:await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_audio_only_noise_rearms_after_quiet_and_fresh_audio_can_start_next_visit():
+    sensors=BackgroundAudioSensors();sensors.present=False
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,
+        trigger_settings=lambda:{'audio':True,'face':False,'motion':False},
+        camera_interval_seconds=0.005,presence_confirmations=2,clear_confirmations=4,
+        listen_retry_seconds=0.005)
+    try:
+        await engine.start();await wait_until(lambda:engine.status()['session_active'])
+        first=engine.status()['session_id']
+        await wait_until(lambda:engine.status()['audio_rearm_pending'])
+        assert not engine.status()['session_active']
+        sensors.noisy=False
+        await wait_until(lambda:not engine.status()['audio_rearm_pending'])
+        sensors.noisy=True
+        await wait_until(lambda:engine.status()['session_active'])
+        assert engine.status()['session_id']==first+1
+    finally:await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_audio_only_conversation_continues_on_accepted_speech_not_sound_level():
+    sensors=BackgroundAudioSensors('a visitor is speaking');sensors.present=False
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,
+        trigger_settings=lambda:{'audio':True,'face':False,'motion':False},
+        camera_interval_seconds=0.005,presence_confirmations=2,clear_confirmations=4,
+        listen_retry_seconds=0.005,conversation_turn_delay_seconds=0.005)
+    try:
+        await engine.start();await wait_until(lambda:engine.status()['session_active'])
+        session=engine.status()['session_id'];calls=sensors.camera_calls
+        await wait_until(lambda:sensors.camera_calls>=calls+8)
+        assert engine.status()['session_active'] and engine.status()['session_id']==session
+        sensors.transcript=''
+        await wait_until(lambda:not engine.status()['session_active'])
+        assert engine.status()['nag_count']==0
+    finally:await engine.stop()

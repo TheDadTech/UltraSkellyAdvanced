@@ -153,6 +153,7 @@ class PerceptionEngine:
         self._nag_count = 0
         self._last_unattended_nag_at = 0.0
         self._trigger_states = {"audio": False, "face": False, "motion": False}
+        self._audio_rearm_required = False
 
     def status(self) -> dict[str, object]:
         events = [event.to_dict() for event in reversed(self._events)]
@@ -177,6 +178,7 @@ class PerceptionEngine:
             "ai_enabled": self._responder is not None,
             "nag_count": self._nag_count,
             "trigger_states": dict(self._trigger_states),
+            "audio_rearm_pending": self._audio_rearm_required,
         }
 
     async def start(self) -> dict[str, object]:
@@ -232,6 +234,7 @@ class PerceptionEngine:
         return self.status()
 
     def _reset_session(self) -> None:
+        self._audio_rearm_required = False
         self._armed = True
         self._session_active = False
         self._turn_count = 0
@@ -351,9 +354,8 @@ class PerceptionEngine:
                     if trigger_settings.get("audio", False):
                         if self._session_active:
                             # Do not add an extra one-second microphone sample before every
-                            # conversation turn. Accepted speech below resets departure
-                            # confirmation, so Audio can keep an active session alive without
-                            # making the green-listening cue feel sluggish.
+                            # conversation turn. Raw microphone activity is displayed,
+                            # but cannot override visual departure confirmation.
                             microphone = sensor_status.get("microphone", {})
                             audio_active = bool(
                                 isinstance(microphone, dict) and microphone.get("voice_active")
@@ -372,10 +374,21 @@ class PerceptionEngine:
                         "face": face_active,
                         "motion": motion_active,
                     }
-                    presence = bool(
-                        (trigger_settings.get("audio", False) and audio_active)
-                        or (trigger_settings.get("face", False) and face_active)
+                    visual_enabled = bool(trigger_settings.get("face", False) or trigger_settings.get("motion", False))
+                    visual_present = bool(
+                        (trigger_settings.get("face", False) and (face_active or camera.get("person_count", 0)))
                         or (trigger_settings.get("motion", False) and motion_active)
+                    )
+                    if not audio_active:
+                        self._audio_rearm_required = False
+                    # Arrival remains OR across the enabled triggers. Once a
+                    # session exists, sound level alone is not visitor presence.
+                    # With visual triggers, even a recognized background phrase
+                    # must not erase consecutive clear camera observations.
+                    presence = visual_present if self._session_active else bool(
+                        (trigger_settings.get("face", False) and face_active)
+                        or (trigger_settings.get("motion", False) and motion_active)
+                        or (trigger_settings.get("audio", False) and audio_active and not self._audio_rearm_required)
                     )
 
                     if not presence:
@@ -386,6 +399,10 @@ class PerceptionEngine:
                             if self._clear_streak >= self._clear_confirmations:
                                 await self._notify_session_ended()
                                 self._reset_session()
+                                # Do not immediately create a phantom visitor
+                                # from the same continuous background sound.
+                                # A visual arrival can still start the next visit.
+                                self._audio_rearm_required = audio_active
                                 self._phase = "rearmed"
                                 await asyncio.sleep(self._camera_interval_seconds)
                                 continue
@@ -503,7 +520,9 @@ class PerceptionEngine:
                         )
                         continue
 
-                    if trigger_settings.get("audio", False) and microphone.get("voice_active"):
+                    if not visual_enabled and trigger_settings.get("audio", False) and microphone.get("voice_active"):
+                        # Audio-only operation may continue on accepted speech,
+                        # rather than the raw voice-activity/noise flag.
                         self._clear_streak = 0
                     snapshot_url: str | None = None
                     if self._snapshotter is not None:
