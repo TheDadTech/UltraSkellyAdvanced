@@ -1,6 +1,6 @@
 """Skelly AI animatronic control system."""
 
-__version__ = "0.28.3-beta2"
+__version__ = "0.28.3-beta3"
 
 # Build identity is independent of the user's selected update feed.
 # Final stable packaging must set this to "stable".

@@ -154,6 +154,7 @@ class PerceptionEngine:
         self._last_unattended_nag_at = 0.0
         self._trigger_states = {"audio": False, "face": False, "motion": False}
         self._audio_rearm_required = False
+        self._motion_rearm_required = False
 
     def status(self) -> dict[str, object]:
         events = [event.to_dict() for event in reversed(self._events)]
@@ -179,6 +180,7 @@ class PerceptionEngine:
             "nag_count": self._nag_count,
             "trigger_states": dict(self._trigger_states),
             "audio_rearm_pending": self._audio_rearm_required,
+            "motion_rearm_pending": self._motion_rearm_required,
         }
 
     async def start(self) -> dict[str, object]:
@@ -235,6 +237,7 @@ class PerceptionEngine:
 
     def _reset_session(self) -> None:
         self._audio_rearm_required = False
+        self._motion_rearm_required = False
         self._armed = True
         self._session_active = False
         self._turn_count = 0
@@ -375,10 +378,12 @@ class PerceptionEngine:
                         "motion": motion_active,
                     }
                     visual_enabled = bool(trigger_settings.get("face", False) or trigger_settings.get("motion", False))
-                    visual_present = bool(
-                        (trigger_settings.get("face", False) and (face_active or camera.get("person_count", 0)))
-                        or (trigger_settings.get("motion", False) and motion_active)
-                    )
+                    # Motion is an arrival cue, not proof that a visitor remains.
+                    # Trees, traffic and changing light can move continuously.
+                    visual_present = bool(visual_enabled and
+                        (face_active or camera.get("person_count", 0)))
+                    if not motion_active:
+                        self._motion_rearm_required = False
                     if not audio_active:
                         self._audio_rearm_required = False
                     # Arrival remains OR across the enabled triggers. Once a
@@ -387,7 +392,7 @@ class PerceptionEngine:
                     # must not erase consecutive clear camera observations.
                     presence = visual_present if self._session_active else bool(
                         (trigger_settings.get("face", False) and face_active)
-                        or (trigger_settings.get("motion", False) and motion_active)
+                        or (trigger_settings.get("motion", False) and motion_active and not self._motion_rearm_required)
                         or (trigger_settings.get("audio", False) and audio_active and not self._audio_rearm_required)
                     )
 
@@ -403,6 +408,7 @@ class PerceptionEngine:
                                 # from the same continuous background sound.
                                 # A visual arrival can still start the next visit.
                                 self._audio_rearm_required = audio_active
+                                self._motion_rearm_required = motion_active
                                 self._phase = "rearmed"
                                 await asyncio.sleep(self._camera_interval_seconds)
                                 continue

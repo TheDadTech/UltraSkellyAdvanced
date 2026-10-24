@@ -495,8 +495,10 @@ class BackgroundAudioSensors(FakeSensors):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('background_transcript',['','television is talking in the room'])
-async def test_background_audio_does_not_hold_departed_session_or_reuse_lure_count(background_transcript):
+@pytest.mark.parametrize('background_motion',[0.0,35.42])
+async def test_background_audio_does_not_hold_departed_session_or_reuse_lure_count(background_transcript,background_motion):
     sensors=BackgroundAudioSensors()
+    sensors._motion_percent=background_motion
     lures=[];ended=[]
     async def nag(count,elapsed,since):
         if sensors.present and count<2:
@@ -581,3 +583,31 @@ async def test_audio_only_conversation_continues_on_accepted_speech_not_sound_le
         await wait_until(lambda:not engine.status()['session_active'])
         assert engine.status()['nag_count']==0
     finally:await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_motion_only_arrival_rearms_after_background_motion_clears():
+    sensors = BackgroundAudioSensors()
+    sensors.present = False
+    sensors.noisy = False
+    sensors._motion_percent = 35.42
+    engine = PerceptionEngine(sensors, show_locked=lambda: False,
+        trigger_settings=lambda: {'audio': False, 'face': False, 'motion': True},
+        camera_interval_seconds=0.005, presence_confirmations=2, clear_confirmations=4,
+        listen_retry_seconds=0.005)
+    try:
+        await engine.start()
+        await wait_until(lambda: engine.status()['session_active'])
+        first = engine.status()['session_id']
+        await wait_until(lambda: engine.status()['motion_rearm_pending'])
+        calls = sensors.camera_calls
+        await wait_until(lambda: sensors.camera_calls >= calls + 5)
+        assert not engine.status()['session_active']
+        assert engine.status()['nag_count'] == 0
+        sensors._motion_percent = 0
+        await wait_until(lambda: not engine.status()['motion_rearm_pending'])
+        sensors._motion_percent = 35.42
+        await wait_until(lambda: engine.status()['session_active'])
+        assert engine.status()['session_id'] == first + 1
+    finally:
+        await engine.stop()
