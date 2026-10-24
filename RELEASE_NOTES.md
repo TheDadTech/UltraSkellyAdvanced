@@ -1,26 +1,4 @@
-# UltraSkellyAdvanced 0.28.3-beta2 — local test build
-
-- Prevents background audio from keeping a departed visitor session active or immediately creating a phantom new session.
-- Resets lure limits for the next visitor and clarifies the per-visitor limit label.
-
-# UltraSkellyAdvanced 0.28.3-beta1 — local test build
-
-- Enables the verified transition to the planned official 0.28.0 stable release through Return to Stable.
-- Distinguishes installed Beta build identity from the selected update channel.
-
-# UltraSkellyAdvanced 0.28.2 — local candidate
-
-- Adds Manage Connections with read-only network details and confirmed Skelly speaker pairing repair.
-- Separates Classic Media and Pi Media lure sources, with credit-use labeling for AI generation.
-- Adds The Lab - Pi Media access from lure settings without switching operation modes.
-- Keeps speaker readiness messages aligned with current connection and audio routing.
-
-# UltraSkellyAdvanced 0.28.1 Beta
-
-- Fixes TTS and Backup & Restore access from laptops on the local network, including through nginx, without an additional sign-in password.
-- Retains backup-file encryption passwords, cross-origin protection and existing restore safeguards.
-
-# UltraSkellyAdvanced 0.28.0 Beta
+# UltraSkellyAdvanced 0.28.0
 
 - Replaces Classic with **The Lab**, preserving existing media controls.
 - Adds friendly Pi Media names, a dedicated Lure column and graphical Eye Picker.
@@ -29,8 +7,11 @@
 - Adds encrypted settings and credentials backups, optional media backup and restore previews.
 - Added Manual/Offline Update Option.
 - More robust System & Tools, added System Health and GitHub connectivity reporting.
+- Adds Manage Connections with network information and Skelly speaker pairing repair.
+- Adds separate Classic Media and Pi Media lure choices, with access to The Lab - Pi Media without switching modes.
+- Adds an optional camera mounting setting to filter motion caused by Skelly's movement.
 
-**Beta limitations:** Backups exclude host Wi-Fi/Bluetooth configuration and environment files. The 0.27.4 upgrade has passed Ubuntu package/staging checks; installation and rollback validation on a spare card remain pending.
+Backups exclude host Wi-Fi/Bluetooth configuration and environment files. Configure networking and pair devices on a replacement card. Visitor departure confirmation can take around 30 seconds; lures may continue until departure is confirmed.
 
 # UltraSkellyAdvanced 0.27.1
 

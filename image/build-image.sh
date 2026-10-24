@@ -82,7 +82,7 @@ tar -C "${PROJECT_DIR}" -czf \
 
 cat >"${CONFIG_FILE}" <<EOF
 IMG_NAME='UltraSkellyAdvanced-${SKELLY_VERSION}'
-PI_GEN_RELEASE='UltraSkellyAdvanced ${SKELLY_VERSION} Beta'
+PI_GEN_RELEASE='UltraSkellyAdvanced ${SKELLY_VERSION}'
 RELEASE='trixie'
 DEPLOY_COMPRESSION='xz'
 TARGET_HOSTNAME='usa-controller'
@@ -140,7 +140,7 @@ for image in "${images[@]}"; do
   )
   cat >"${image}.build-info.txt" <<EOF
 USA version: ${SKELLY_VERSION}
-Release channel: Beta
+Release channel: $(sed -n 's/^__release_channel__ = "\([^"]*\)"/\1/p' "${PROJECT_DIR}/src/skelly_ai/__init__.py")
 Raspberry Pi OS: trixie arm64
 pi-gen commit: $(git -C "${PI_GEN_DIR}" rev-parse HEAD)
 Built UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)

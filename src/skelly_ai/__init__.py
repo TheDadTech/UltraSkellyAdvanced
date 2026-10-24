@@ -1,10 +1,5 @@
 """Skelly AI animatronic control system."""
 
-__version__ = "0.28.3-beta4"
-
-# Build identity is independent of the user's selected update feed.
-# Final stable packaging must set this to "stable".
-__release_channel__ = "beta"
-# Explicit destination for this development cycle, including its delivery candidate.
-# Final stable packaging must set this to None.
-__stable_transition_target__ = "0.28.0"
+__version__ = "0.28.0"
+__release_channel__ = "stable"
+__stable_transition_target__ = None
