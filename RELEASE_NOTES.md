@@ -1,17 +1,16 @@
-# UltraSkellyAdvanced 0.28.0
+## UltraSkellyAdvanced 0.28.0
 
-- Replaces Classic with **The Lab**, preserving existing media controls.
-- Adds friendly Pi Media names, a dedicated Lure column and graphical Eye Picker.
-- Adds TTS media generation, browser preview, caching, save and discard.
-- Improves uploads with progress, cancellation and clearer errors.
-- Adds encrypted settings and credentials backups, optional media backup and restore previews.
+- Replaces Classic with **The Lab**.
+- Adds friendly Pi Media names, Lure selection, and a graphical Eye Picker.
+- Generate and save canned responses to Pi Media for reuse without additional speech-generation credits.
+- Improves uploads and error messages.
+- Adds encrypted Backup & Restore for settings and credentials.
 - Added Manual/Offline Update Option.
 - More robust System & Tools, added System Health and GitHub connectivity reporting.
-- Adds Manage Connections with network information and Skelly speaker pairing repair.
-- Adds separate Classic Media and Pi Media lure choices, with access to The Lab - Pi Media without switching modes.
-- Adds an optional camera mounting setting to filter motion caused by Skelly's movement.
+- Adds Manage Connections with network details and Skelly speaker repair.
+- Adds an optional **Camera: Stationary / Moves with Skelly** setting.
 
-Backups exclude host Wi-Fi/Bluetooth configuration and environment files. Configure networking and pair devices on a replacement card. Visitor departure confirmation can take around 30 seconds; lures may continue until departure is confirmed.
+**Existing users can upgrade without reflashing.** Backups exclude Wi-Fi settings and Bluetooth pairings.
 
 # UltraSkellyAdvanced 0.27.1
 
