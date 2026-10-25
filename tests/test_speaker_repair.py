@@ -209,3 +209,15 @@ async def test_speaker_repair_is_offline_and_preserves_ble(monkeypatch):
     audio,calls=audio_fixture(monkeypatch,initially_paired=False)
     assert (await audio.repair('0000',forbidden_addresses={BLE})).connected
     assert all(BLE not in command for command in calls)
+
+
+def test_synthetic_audio_session_failure_returns_http503_without_identity(tmp_path,monkeypatch):
+    app=create_app(Settings(data_dir=tmp_path,simulation=True))
+    async def unavailable(*args,**kwargs):
+        raise ClassicAudioUnavailable('Audio session user unavailable')
+    monkeypatch.setattr(app.state.classic_audio,'repair',unavailable)
+    with TestClient(app) as client:
+        client.post('/api/hardware/connect',json={'address':BLE})
+        result=client.post('/api/audio/repair-speaker',json={'confirm':'repair-speaker'})
+        assert result.status_code==503
+        assert result.json()['detail']=='Audio session user unavailable'

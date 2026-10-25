@@ -9,6 +9,7 @@ import pathlib
 import pwd
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -708,113 +709,68 @@ def _configured_audio_service_user() -> str:
     # Authorization comes from systemd's root-owned unit, never SUDO_USER/USER/HOME.
     result = run("systemctl", "show", "skelly-ai.service", "-p", "User", "--value", check=False)
     user = result.stdout.strip()
-    if result.returncode or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*[$]?", user):
+    if result.returncode or not user or "\n" in user or "\x00" in user:
         raise SystemExit("Configured USA audio service user is unavailable")
     try:
-        account = pwd.getpwnam(user)
-    except KeyError:
+        account = pwd.getpwuid(int(user)) if user.isdecimal() else pwd.getpwnam(user)
+    except (KeyError, ValueError):
         raise SystemExit("Configured USA audio service user is unavailable") from None
     if account.pw_uid == 0:
         raise SystemExit("USA audio service must use a non-root account")
-    return user
+    return account.pw_name
+
+
+def _audio_role_users() -> tuple[str, set[str]]:
+    service = _configured_audio_service_user()
+    users = {service}
+    path = pathlib.Path("/etc/skelly-ai/audio-sessions.json")
+    try:
+        info = path.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022 or not stat.S_ISREG(info.st_mode):
+            return service, users
+        roles = json.loads(path.read_text())
+        if not isinstance(roles, dict):
+            return service, users
+        speaker = roles["speaker_user"]
+        if roles.get("service_user") == service and isinstance(speaker, str):
+            account = pwd.getpwnam(speaker)
+            if account.pw_uid != 0:
+                users.add(speaker)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return service, users
 
 
 def _authorize_audio_session(user: str) -> None:
-    if user not in {_configured_audio_service_user(), SUPPORT_USER}:
+    if user not in _audio_role_users()[1]:
         raise SystemExit("Unsupported audio session")
 
 
 def _audio_competitor(target: str) -> str | None:
-    _authorize_audio_session(target)
-    # Only the packaged image deliberately maintains two competing sessions.
-    # A custom install must not stop a secondary, unrelated user's audio.
-    if _configured_audio_service_user() != "skelly-ai":
-        return None
-    competitor = "skelly-ai" if target == SUPPORT_USER else SUPPORT_USER
-    try:
-        pwd.getpwnam(competitor)
-    except KeyError:
-        return None
-    return competitor
+    _, users = _audio_role_users()
+    if target not in users:
+        raise SystemExit("Unsupported audio session")
+    return next((user for user in users if user != target), None)
 
 
-def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
-    """Ensure an allowlisted PipeWire user session is available for Bluetooth audio."""
-    _authorize_audio_session(session_user)
-    if session_user != SUPPORT_USER:
-        uid, env = _audio_session_env(session_user)
-        run("loginctl", "enable-linger", session_user, check=False)
-        run("systemctl", "start", f"user@{uid}.service", check=False)
-        runtime = f"/run/user/{uid}"
-        bus = pathlib.Path(runtime) / "bus"
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not bus.exists():
-            time.sleep(0.25)
-        run(
-            "runuser", "-u", session_user, "--", *env,
-            "systemctl", "--user", "enable", "--now",
-            "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service",
-            check=False, timeout=20,
-        )
-        return
-
-    # dadtech is the managed Skelly jaw-audio session.
-    if run("id", SUPPORT_USER, check=False).returncode != 0:
-        run("useradd", "--create-home", "--shell", "/bin/bash", SUPPORT_USER)
-        run("passwd", "--lock", SUPPORT_USER, check=False)
-    uid = run("id", "-u", SUPPORT_USER).stdout.strip()
-    group = run("id", "-gn", SUPPORT_USER).stdout.strip()
-    passwd_entry = run("getent", "passwd", SUPPORT_USER).stdout.strip()
-    home = pathlib.Path(passwd_entry.split(":")[5] if passwd_entry.count(":") >= 5 else f"/home/{SUPPORT_USER}")
-    config_dir = home / ".config" / "wireplumber" / "wireplumber.conf.d"
-    config_path = config_dir / "50-headless-bluetooth.conf"
-    desired = (
-        "wireplumber.profiles = {\n"
-        "  main = {\n"
-        "    monitor.bluez = required\n"
-        "    monitor.bluez.seat-monitoring = disabled\n"
-        "  }\n"
-        "}\n"
-        "monitor.bluez.properties = {\n"
-        "  bluez5.roles = [ a2dp_sink a2dp_source ]\n"
-        "}\n"
-    )
-    config_changed = True
-    try:
-        config_changed = config_path.read_text("utf-8") != desired
-    except OSError:
-        pass
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(desired, encoding="utf-8")
-    shutil.chown(home / ".config", user=SUPPORT_USER, group=group)
-    for path in [home / ".config" / "wireplumber", config_dir, config_path]:
-        shutil.chown(path, user=SUPPORT_USER, group=group)
-
-    for hardware_group in ("audio", "video", "render", "plugdev", "bluetooth"):
-        if run("getent", "group", hardware_group, check=False).returncode == 0:
-            run("usermod", "-aG", hardware_group, SUPPORT_USER, check=False)
-    run("loginctl", "enable-linger", SUPPORT_USER, check=False)
+def audio_session_prepare(session_user: str | None = None) -> None:
+    """Start only configured sessions; policy installation belongs to bootstrap."""
+    session_user = session_user or _configured_audio_service_user()
+    uid, env = _audio_session_env(session_user)
+    run("loginctl", "enable-linger", session_user, check=False)
     run("systemctl", "start", f"user@{uid}.service", check=False)
-
-    runtime = f"/run/user/{uid}"
-    bus = pathlib.Path(runtime) / "bus"
+    bus = pathlib.Path(f"/run/user/{uid}/bus")
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and not bus.exists():
         time.sleep(0.25)
-    _, env = _audio_session_env(SUPPORT_USER)
+    # Bootstrap installs headless policy as part of the application update.
+    # Do not write root-owned configuration through user-controlled home paths.
     run(
-        "runuser", "-u", SUPPORT_USER, "--", *env,
+        "runuser", "-u", session_user, "--", *env,
         "systemctl", "--user", "enable", "--now",
         "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service",
         check=False, timeout=20,
     )
-    if config_changed:
-        run(
-            "runuser", "-u", SUPPORT_USER, "--", *env,
-            "systemctl", "--user", "restart",
-            "wireplumber.service", "pipewire.service", "pipewire-pulse.service",
-            check=False, timeout=20,
-        )
 
 def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
     _authorize_audio_session(session_user)
@@ -826,6 +782,17 @@ def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
         raise SystemExit("Root audio sessions are not supported")
     uid = str(account.pw_uid)
     runtime = f"/run/user/{uid}"
+    runtime_path = pathlib.Path(runtime)
+    if runtime_path.exists():
+        info = runtime_path.lstat()
+        if info.st_uid != account.pw_uid or not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+            raise SystemExit("Audio runtime directory has unsafe ownership or permissions")
+        for name in ("bus", "pipewire-0", "pulse/native"):
+            socket = runtime_path / name
+            if socket.exists():
+                info = socket.lstat()
+                if info.st_uid != account.pw_uid or not stat.S_ISSOCK(info.st_mode):
+                    raise SystemExit("Audio session socket has unsafe ownership or type")
     return uid, [
         "env", f"HOME={account.pw_dir}", f"USER={session_user}", f"LOGNAME={session_user}",
         f"XDG_RUNTIME_DIR={runtime}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
@@ -866,7 +833,7 @@ def audio_session_resume_competitor(target_session: str) -> None:
 
 def audio_session_exec(program: str, arguments: list[str]) -> None:
     """Execute an allowlisted PipeWire client in an explicitly allowlisted user session."""
-    session_user = SUPPORT_USER
+    session_user = _configured_audio_service_user()
     if len(arguments) >= 2 and arguments[0] == "--session":
         session_user = arguments[1]
         arguments = arguments[2:]
@@ -913,7 +880,7 @@ def main() -> None:
     action = sys.argv[1]
     if action == "audio-session-prepare":
         args = sys.argv[2:]
-        session_user = SUPPORT_USER
+        session_user = _configured_audio_service_user()
         if len(args) == 2 and args[0] == "--session":
             session_user = args[1]
         elif args:

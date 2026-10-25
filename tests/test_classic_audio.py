@@ -503,7 +503,7 @@ async def test_connect_does_not_bounce_skelly_when_dadtech_already_owns_sink(mon
 @pytest.mark.parametrize('fallback',[False,True])
 async def test_wpctl_helper_receives_explicit_custom_session(tmp_path,monkeypatch,fallback):
     helper=tmp_path/'usa-system-helper';helper.touch()
-    audio=BluetoothClassicAudio(system_helper=helper,pipewire_session='custom_user_a')
+    audio=BluetoothClassicAudio(system_helper=helper,pipewire_session='testoperator')
     commands=[]
     class Process:
         returncode=0
@@ -511,12 +511,12 @@ async def test_wpctl_helper_receives_explicit_custom_session(tmp_path,monkeypatc
     async def create(*args,**kwargs):commands.append(args);return Process()
     monkeypatch.setattr('skelly_ai.classic_audio.asyncio.create_subprocess_exec',create)
     await audio._run_program(str(helper) if fallback else '/usr/bin/wpctl','status')
-    assert commands==[('sudo',str(helper),'audio-wpctl','--session','custom_user_a','status')]
+    assert commands==[('sudo',str(helper),'audio-wpctl','--session','testoperator','status')]
 
 
 @pytest.mark.asyncio
 async def test_audio_helper_failure_is_reported_without_sink_retry_loop(monkeypatch):
-    audio=BluetoothClassicAudio(pipewire_session='custom_user_a')
+    audio=BluetoothClassicAudio(pipewire_session='testoperator')
     calls=[]
     async def run(*args,**kwargs):calls.append(args);return _CommandResult(1,'Audio session user is unavailable')
     monkeypatch.setattr('skelly_ai.classic_audio.shutil.which',lambda _: '/usr/bin/wpctl')

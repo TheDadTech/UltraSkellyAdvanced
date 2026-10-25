@@ -82,6 +82,9 @@ install -d -m 0755 /usr/local/libexec
 install -d -m 0755 /etc/NetworkManager/dnsmasq-shared.d
 install -d -m 0700 -o skelly-ai -g "${SKELLY_GROUP}" /var/lib/skelly-ai
 install -d -m 0750 -o root -g "${SKELLY_GROUP}" /etc/skelly-ai
+python3 -c 'import json,sys; print(json.dumps({"service_user":sys.argv[1],"speaker_user":sys.argv[2]}))' "$(id -un "${SKELLY_UID}")" "$(id -un "${SUPPORT_UID}")" > /etc/skelly-ai/audio-sessions.json
+chown root:root /etc/skelly-ai/audio-sessions.json
+chmod 0644 /etc/skelly-ai/audio-sessions.json
 
 python3 -m venv /opt/skelly-ai/venv
 /opt/skelly-ai/venv/bin/pip install --upgrade pip

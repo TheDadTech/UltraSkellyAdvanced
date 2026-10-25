@@ -7,18 +7,23 @@ fi
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLING_USER="${USA_INSTALLING_USER:-$(id -un)}"
-if id skelly-ai >/dev/null 2>&1; then
-  # Preserve the dedicated service identity used by distributable USA images.
+CONFIGURED_USER="$(systemctl show skelly-ai.service -p User --value 2>/dev/null || true)"
+DEDICATED_AUDIO_ROLES=0
+if [[ -n "${CONFIGURED_USER}" ]] && id "${CONFIGURED_USER}" >/dev/null 2>&1 && [[ "$(id -u "${CONFIGURED_USER}")" != 0 ]]; then
+  # Updates preserve the existing service identity even with other local accounts.
+  SKELLY_USER="$(id -un "${CONFIGURED_USER}")"
+elif id skelly-ai >/dev/null 2>&1; then
   SKELLY_USER="skelly-ai"
-  SKELLY_GROUP="$(id -gn skelly-ai)"
-  SKELLY_UID="$(id -u skelly-ai)"
-  SKELLY_HOME="$(getent passwd skelly-ai | cut -d: -f6)"
 else
   SKELLY_USER="${INSTALLING_USER}"
-  SKELLY_GROUP="$(id -gn "${INSTALLING_USER}")"
-  SKELLY_UID="$(id -u "${INSTALLING_USER}")"
-  SKELLY_HOME="$(getent passwd "${INSTALLING_USER}" | cut -d: -f6)"
 fi
+# Migrate the existing appliance's deliberately separate speaker role to metadata.
+if [[ "${SKELLY_USER}" == "skelly-ai" ]]; then
+  DEDICATED_AUDIO_ROLES=1
+fi
+SKELLY_GROUP="$(id -gn "${SKELLY_USER}")"
+SKELLY_UID="$(id -u "${SKELLY_USER}")"
+SKELLY_HOME="$(getent passwd "${SKELLY_USER}" | cut -d: -f6)"
 
 SUPPORT_USER="dadtech"
 if ! id "${SUPPORT_USER}" >/dev/null 2>&1; then
@@ -111,6 +116,14 @@ printf '%s\n' 'address=/#/192.168.4.1' \
 sudo chmod 0440 /etc/sudoers.d/usa-system-helper
 
 sudo install -d -m 0750 -o root -g "${SKELLY_GROUP}" /etc/skelly-ai
+AUDIO_SPEAKER_USER="${SKELLY_USER}"
+if [[ "${DEDICATED_AUDIO_ROLES}" == 1 ]]; then
+  AUDIO_SPEAKER_USER="${SUPPORT_USER}"
+fi
+python3 -c 'import json,sys; print(json.dumps({"service_user":sys.argv[1],"speaker_user":sys.argv[2]}))' "${SKELLY_USER}" "${AUDIO_SPEAKER_USER}" \
+  | sudo tee /etc/skelly-ai/audio-sessions.json >/dev/null
+sudo chown root:root /etc/skelly-ai/audio-sessions.json
+sudo chmod 0644 /etc/skelly-ai/audio-sessions.json
 if [[ ! -f /etc/skelly-ai/skelly-ai.env ]]; then
   sudo install -m 0640 -o root -g "${SKELLY_GROUP}" \
     "${PROJECT_DIR}/deploy/skelly-ai.env.example" \
