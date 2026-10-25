@@ -371,12 +371,17 @@ def create_app(
         speaker_preroll_seconds=app_settings.local_speech_speaker_preroll_seconds,
         system_helper=app_settings.system_helper,
     )
+    from .audio_sessions import audio_session_users
+    skelly_audio_session, primary_audio_session = (
+        ("dadtech", "skelly-ai") if app_settings.simulation else audio_session_users()
+    )
     classic_audio = classic_audio_client or (
         SimulatedClassicAudio()
         if app_settings.simulation
         else BluetoothClassicAudio(
             address=app_settings.classic_audio_address,
             name_filter=app_settings.classic_audio_name,
+            pipewire_session=skelly_audio_session,
             timeout_seconds=app_settings.classic_audio_connect_timeout_seconds,
             system_helper=app_settings.system_helper,
         )
@@ -387,7 +392,7 @@ def create_app(
         else ExternalBluetoothAudio(
             timeout_seconds=app_settings.classic_audio_connect_timeout_seconds,
             system_helper=app_settings.system_helper,
-            pipewire_session="skelly-ai",
+            pipewire_session=primary_audio_session,
         )
     )
     groq_brain = GroqBrain()
@@ -565,9 +570,9 @@ def create_app(
         settings = operation_store.load()
         playback_target: str | None = None
         jaw_mirror_target: str | None = None
-        playback_session = "dadtech"
+        playback_session = skelly_audio_session
         jaw_mirror_volume_target = None
-        jaw_mirror_session = "dadtech"
+        jaw_mirror_session = skelly_audio_session
         playback_target_required = False
         skelly_snapshot = classic_audio.snapshot()
         external_snapshot = external_audio.snapshot()
@@ -575,8 +580,8 @@ def create_app(
         if settings.audio_output == "skelly":
             playback_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
         elif settings.audio_output == "external_bluetooth":
-            # Proven 3-Bluetooth topology: external audio belongs to skelly-ai's
-            # PipeWire session while Animated Skelly(Live) belongs to dadtech.
+            # Keep the image's two-session topology; custom installations use
+            # their actual service account for both speaker and external audio.
             # If the external speaker is unavailable, fail over to Skelly rather
             # than dropping speech.  The maintenance loop keeps retrying the
             # preferred external speaker and switches back only between speech
@@ -584,14 +589,14 @@ def create_app(
             external_target = external_snapshot.sink_name or external_snapshot.sink_id
             skelly_target = skelly_snapshot.sink_name or skelly_snapshot.sink_id
             if route_state["active"] == "external_bluetooth" and external_target:
-                playback_session = "skelly-ai"
+                playback_session = primary_audio_session
                 playback_target_required = True
                 playback_target = external_target
                 if settings.jaw_follow_speech:
                     jaw_mirror_target = skelly_target
                     jaw_mirror_volume_target = skelly_snapshot.sink_id
             else:
-                playback_session = "dadtech"
+                playback_session = skelly_audio_session
                 playback_target_required = False
                 playback_target = skelly_target
         elif settings.jaw_follow_speech:

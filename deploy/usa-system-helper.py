@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import pwd
 import re
 import shutil
 import subprocess
@@ -18,7 +19,6 @@ HOTSPOT = "USA-Setup"
 HOME = "USA-Home"
 HOTSPOT_SSID = "UltraSkellyAdvanced-Setup"
 SUPPORT_USER = "dadtech"
-AUDIO_SESSION_USERS = {"dadtech", "skelly-ai"}
 DATA_DIR = pathlib.Path("/var/lib/skelly-ai")
 ENV_FILE = pathlib.Path("/etc/skelly-ai/skelly-ai.env")
 STATE = DATA_DIR / "onboarding.json"
@@ -704,14 +704,45 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
 
 
 
+def _configured_audio_service_user() -> str:
+    # Authorization comes from systemd's root-owned unit, never SUDO_USER/USER/HOME.
+    result = run("systemctl", "show", "skelly-ai.service", "-p", "User", "--value", check=False)
+    user = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*[$]?", user):
+        raise SystemExit("Configured USA audio service user is unavailable")
+    try:
+        account = pwd.getpwnam(user)
+    except KeyError:
+        raise SystemExit("Configured USA audio service user is unavailable") from None
+    if account.pw_uid == 0:
+        raise SystemExit("USA audio service must use a non-root account")
+    return user
+
+
+def _authorize_audio_session(user: str) -> None:
+    if user not in {_configured_audio_service_user(), SUPPORT_USER}:
+        raise SystemExit("Unsupported audio session")
+
+
+def _audio_competitor(target: str) -> str | None:
+    _authorize_audio_session(target)
+    # Only the packaged image deliberately maintains two competing sessions.
+    # A custom install must not stop a secondary, unrelated user's audio.
+    if _configured_audio_service_user() != "skelly-ai":
+        return None
+    competitor = "skelly-ai" if target == SUPPORT_USER else SUPPORT_USER
+    try:
+        pwd.getpwnam(competitor)
+    except KeyError:
+        return None
+    return competitor
+
+
 def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
     """Ensure an allowlisted PipeWire user session is available for Bluetooth audio."""
-    if session_user not in AUDIO_SESSION_USERS:
-        raise SystemExit("Unsupported audio session")
+    _authorize_audio_session(session_user)
     if session_user != SUPPORT_USER:
-        if run("id", session_user, check=False).returncode != 0:
-            raise SystemExit("Audio session user is unavailable")
-        uid = run("id", "-u", session_user).stdout.strip()
+        uid, env = _audio_session_env(session_user)
         run("loginctl", "enable-linger", session_user, check=False)
         run("systemctl", "start", f"user@{uid}.service", check=False)
         runtime = f"/run/user/{uid}"
@@ -719,11 +750,6 @@ def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and not bus.exists():
             time.sleep(0.25)
-        env = [
-            "env",
-            f"XDG_RUNTIME_DIR={runtime}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
-        ]
         run(
             "runuser", "-u", session_user, "--", *env,
             "systemctl", "--user", "enable", "--now",
@@ -775,11 +801,7 @@ def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and not bus.exists():
         time.sleep(0.25)
-    env = [
-        "env",
-        f"XDG_RUNTIME_DIR={runtime}",
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
-    ]
+    _, env = _audio_session_env(SUPPORT_USER)
     run(
         "runuser", "-u", SUPPORT_USER, "--", *env,
         "systemctl", "--user", "enable", "--now",
@@ -795,18 +817,20 @@ def audio_session_prepare(session_user: str = SUPPORT_USER) -> None:
         )
 
 def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
-    if session_user not in AUDIO_SESSION_USERS:
-        raise SystemExit("Unsupported audio session")
-    if run("id", session_user, check=False).returncode != 0:
-        raise SystemExit("Audio session user is unavailable")
-    uid = run("id", "-u", session_user).stdout.strip()
+    _authorize_audio_session(session_user)
+    try:
+        account = pwd.getpwnam(session_user)
+    except KeyError:
+        raise SystemExit("Audio session user is unavailable") from None
+    if account.pw_uid == 0:
+        raise SystemExit("Root audio sessions are not supported")
+    uid = str(account.pw_uid)
     runtime = f"/run/user/{uid}"
-    env = [
-        "env",
-        f"XDG_RUNTIME_DIR={runtime}",
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+    return uid, [
+        "env", f"HOME={account.pw_dir}", f"USER={session_user}", f"LOGNAME={session_user}",
+        f"XDG_RUNTIME_DIR={runtime}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+        f"PULSE_SERVER=unix:{runtime}/pulse/native",
     ]
-    return uid, env
 
 
 def audio_session_pause_competitor(target_session: str) -> None:
@@ -817,9 +841,10 @@ def audio_session_pause_competitor(target_session: str) -> None:
     otherwise be claimed by whichever WirePlumber wins the race.  Pause only the
     competing session while the requested session establishes its transport.
     """
-    if target_session not in AUDIO_SESSION_USERS:
-        raise SystemExit("Unsupported audio session")
-    competitor = next(user for user in AUDIO_SESSION_USERS if user != target_session)
+    competitor = _audio_competitor(target_session)
+    if competitor is None:
+        audio_session_prepare(target_session)
+        return
     _, env = _audio_session_env(competitor)
     run(
         "runuser", "-u", competitor, "--", *env,
@@ -834,10 +859,9 @@ def audio_session_pause_competitor(target_session: str) -> None:
 
 
 def audio_session_resume_competitor(target_session: str) -> None:
-    if target_session not in AUDIO_SESSION_USERS:
-        raise SystemExit("Unsupported audio session")
-    competitor = next(user for user in AUDIO_SESSION_USERS if user != target_session)
-    audio_session_prepare(competitor)
+    competitor = _audio_competitor(target_session)
+    if competitor is not None:
+        audio_session_prepare(competitor)
 
 
 def audio_session_exec(program: str, arguments: list[str]) -> None:
@@ -846,8 +870,7 @@ def audio_session_exec(program: str, arguments: list[str]) -> None:
     if len(arguments) >= 2 and arguments[0] == "--session":
         session_user = arguments[1]
         arguments = arguments[2:]
-    if session_user not in AUDIO_SESSION_USERS:
-        raise SystemExit("Unsupported audio session")
+    _authorize_audio_session(session_user)
     if program not in {"wpctl", "pw-play"}:
         raise SystemExit("Unsupported audio program")
     if program == "wpctl":
@@ -880,15 +903,8 @@ def audio_session_exec(program: str, arguments: list[str]) -> None:
     # WirePlumber policy; skelly-ai is merely started/enabled so its existing
     # Soundcore ownership is preserved.
     audio_session_prepare(session_user)
-    uid = run("id", "-u", session_user).stdout.strip()
-    runtime = f"/run/user/{uid}"
-    env = [
-        "env",
-        f"XDG_RUNTIME_DIR={runtime}",
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
-        program,
-        *arguments,
-    ]
+    _, env = _audio_session_env(session_user)
+    env += [program, *arguments]
     os.execvp("runuser", ["runuser", "-u", session_user, "--", *env])
 
 def main() -> None:

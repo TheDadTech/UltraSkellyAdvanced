@@ -11,10 +11,10 @@ SPEAKER='AA:BB:CC:DD:EE:02'
 BLE='AA:BB:CC:DD:EE:01'
 
 
-def audio_fixture(monkeypatch, *, missing=False, auth_failure=False, sink=True, wrong_name=False):
+def audio_fixture(monkeypatch, *, missing=False, auth_failure=False, sink=True, wrong_name=False, initially_paired=True):
     monkeypatch.setattr('skelly_ai.classic_audio.shutil.which',lambda _: '/usr/bin/tool')
     audio=BluetoothClassicAudio(address=SPEAKER)
-    state={'paired':True,'trusted':True,'connected':True}
+    state={'paired':initially_paired,'trusted':initially_paired,'connected':initially_paired}
     calls=[]
     async def run(*args, **kwargs):
         calls.append(args)
@@ -168,3 +168,44 @@ async def test_failed_authentication_restores_competing_session(monkeypatch,tmp_
     with pytest.raises(ClassicAudioUnavailable,match='authentication'):
         await audio.repair('0000',forbidden_addresses={BLE})
     assert restored==[True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route_ok',[True,False])
+async def test_audio_helper_failure_does_not_block_bluetooth_pairing(monkeypatch,route_ok):
+    audio,calls=audio_fixture(monkeypatch)
+    async def unavailable():raise ClassicAudioUnavailable('Audio session user is unavailable')
+    monkeypatch.setattr(audio,'_pause_competing_audio_session',unavailable)
+    if not route_ok:monkeypatch.setattr(audio,'_route_pipewire_sink',unavailable)
+    if route_ok:
+        assert (await audio.repair('0000',forbidden_addresses={BLE})).sink_ready
+    else:
+        with pytest.raises(ClassicAudioUnavailable,match='paired and connected, but audio verification failed'):
+            await audio.repair('0000',forbidden_addresses={BLE})
+        status=audio.snapshot()
+        assert status.connected and status.paired and not status.sink_ready
+        assert 'Audio session user' in status.last_error
+    assert ('remove',SPEAKER) in calls and ('connect',SPEAKER) in calls
+    assert all(BLE not in command for command in calls)
+
+
+@pytest.mark.asyncio
+async def test_repair_pairs_without_a_preexisting_sink_or_pairing(monkeypatch):
+    audio,calls=audio_fixture(monkeypatch,initially_paired=False)
+    # Existing fixture's remove resets all bond state; no sink lookup is allowed
+    # until fresh pairing, trust and connection have completed.
+    async def route():
+        assert ('connect',SPEAKER) in calls
+        return audio._update(sink_ready=True,sink_id='91')
+    monkeypatch.setattr(audio,'_route_pipewire_sink',route)
+    assert (await audio.repair('0000',forbidden_addresses={BLE})).sink_ready
+
+
+@pytest.mark.asyncio
+async def test_speaker_repair_is_offline_and_preserves_ble(monkeypatch):
+    import socket
+    def no_network(*args,**kwargs):raise AssertionError('Internet must not be needed for repair')
+    monkeypatch.setattr(socket,'create_connection',no_network)
+    audio,calls=audio_fixture(monkeypatch,initially_paired=False)
+    assert (await audio.repair('0000',forbidden_addresses={BLE})).connected
+    assert all(BLE not in command for command in calls)

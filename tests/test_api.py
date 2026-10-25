@@ -324,6 +324,7 @@ def test_beta_update_channel_requires_explicit_acknowledgement(tmp_path) -> None
 
 
 def test_update_version_comparison_handles_beta_versions(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("skelly_ai.api.__version__", "0.28.0")
     class Response:
         def __init__(self, version: str) -> None:
             self._version = version

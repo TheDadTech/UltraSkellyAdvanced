@@ -293,6 +293,7 @@ class BluetoothClassicAudio:
         async with self._lock:
             self._require_tool()
             claim_active = False
+            bluetooth_ready = False
             try:
                 forbidden = {address.upper() for address in forbidden_addresses if address}
                 scan = await self._run("--timeout", "12", "scan", "bredr")
@@ -317,7 +318,12 @@ class BluetoothClassicAudio:
                     raise ClassicAudioUnavailable("Speaker identity could not be verified. No pairing was removed.")
                 self._address = address
                 claim_active = self._system_helper is not None and self._system_helper.exists()
-                await self._pause_competing_audio_session()
+                try:
+                    await self._pause_competing_audio_session()
+                except ClassicAudioUnavailable:
+                    # Audio-session preparation is not a prerequisite for BlueZ
+                    # pairing. Verify/report the audio result after connection.
+                    pass
                 if snapshot.connected:
                     result = await self._run("disconnect", address)
                     if result.returncode:
@@ -341,9 +347,10 @@ class BluetoothClassicAudio:
                 snapshot = await self._read_info(address)
                 if connected.returncode or not (snapshot.paired and snapshot.trusted and snapshot.connected):
                     raise ClassicAudioUnavailable("Speaker pairing/connection did not complete. Keep it nearby in Live Mode and retry repair.")
+                bluetooth_ready = True
                 snapshot = await (self._route_pipewire_sink() if route else self._find_pipewire_sink_without_routing())
                 if not snapshot.sink_ready or not snapshot.sink_id:
-                    raise ClassicAudioUnavailable("Speaker connected, but its PipeWire audio sink is missing. Check PipeWire/WirePlumber and the selected audio output, then retry.")
+                    raise ClassicAudioUnavailable(snapshot.last_error or "Speaker connected, but its PipeWire audio sink is missing. Check PipeWire/WirePlumber and the selected audio output, then retry.")
                 if route:
                     executable = shutil.which("wpctl") or str(self._system_helper or "wpctl")
                     current = await self._run_program(executable, "status")
@@ -356,6 +363,10 @@ class BluetoothClassicAudio:
                 self._update(last_error="Speaker repair interrupted or timed out. Refresh status and retry; BLE control was preserved.")
                 raise
             except ClassicAudioUnavailable as exc:
+                if bluetooth_ready:
+                    message = f"Speaker paired and connected, but audio verification failed: {exc}"
+                    self._update(sink_ready=False, sink_id=None, sink_name=None, last_error=message)
+                    raise ClassicAudioUnavailable(message) from None
                 self._update(last_error=str(exc))
                 raise
             finally:
@@ -550,8 +561,10 @@ class BluetoothClassicAudio:
         self, executable: str, *arguments: str, input_text: str | None = None
     ) -> _CommandResult:
         command = [executable, *arguments]
-        if Path(executable).name == "wpctl" and self._system_helper is not None and self._system_helper.exists():
-            command = ["sudo", str(self._system_helper), "audio-wpctl", *arguments]
+        if self._system_helper is not None and self._system_helper.exists() and (
+            Path(executable).name == "wpctl" or Path(executable) == self._system_helper
+        ):
+            command = ["sudo", str(self._system_helper), "audio-wpctl", "--session", self._pipewire_session, *arguments]
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -592,6 +605,9 @@ class BluetoothClassicAudio:
             )
         for _ in range(30):
             result = await self._run_program(executable, "status")
+            if result.returncode:
+                return self._update(sink_ready=False, sink_id=None, sink_name=None,
+                    last_error=self._useful_output(result.output) or "PipeWire session could not be queried")
             sink = self._find_sink(result.output)
             if sink is not None:
                 sink_id, is_default = sink
@@ -650,6 +666,9 @@ class BluetoothClassicAudio:
         # publishes the sink.
         for _ in range(120):
             result = await self._run_program(executable, "status")
+            if result.returncode:
+                return self._update(sink_ready=False, sink_id=None, sink_name=None,
+                    last_error=self._useful_output(result.output) or "PipeWire session could not be queried")
             sink = self._find_sink(result.output)
             if sink is not None:
                 sink_id, _ = sink

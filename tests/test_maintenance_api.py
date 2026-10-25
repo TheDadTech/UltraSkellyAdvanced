@@ -59,6 +59,7 @@ def test_backup_api_wrong_password_and_operation_guard(tmp_path):
 
 
 def test_manual_verify_and_simulation_install_guard(tmp_path, monkeypatch):
+    monkeypatch.setattr("skelly_ai.api.__version__", "0.28.0")
     data = release()
     headers = {'X-USA-Version':'0.28.3', 'X-USA-SHA256':hashlib.sha256(data).hexdigest()}
     with client_for(tmp_path) as c:

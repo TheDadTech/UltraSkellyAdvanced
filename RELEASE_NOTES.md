@@ -1,3 +1,8 @@
+# UltraSkellyAdvanced 0.28.4
+
+- Fixes Skelly speaker repair and audio playback on installations using a custom Linux account.
+- Reports when Bluetooth pairing succeeds but audio routing still needs attention.
+
 ## UltraSkellyAdvanced 0.28.0
 
 - Replaces Classic with **The Lab**.
