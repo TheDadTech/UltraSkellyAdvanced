@@ -1360,6 +1360,19 @@ def create_app(
             if speaker_repair_lock.locked():
                 continue
             settings = operation_store.load()
+            if settings.audio_output == "skelly" and settings.device_configured and settings.speaker_address:
+                try:
+                    snapshot = await classic_audio.refresh()
+                    if not snapshot.connected or not snapshot.sink_ready or not snapshot.sink_id:
+                        snapshot = await classic_audio.connect(route=True)
+                    if snapshot.connected and snapshot.sink_ready and snapshot.sink_id:
+                        remember_speaker_connection()
+                        apply_audio_output_settings()
+                except ClassicAudioUnavailable:
+                    # Do not reset a bond or change the selected output during
+                    # unattended recovery. The existing status shows the error.
+                    pass
+                continue
             if settings.audio_output != "external_bluetooth" or not settings.external_bluetooth_address:
                 continue
             try:

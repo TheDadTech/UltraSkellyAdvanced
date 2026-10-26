@@ -71,7 +71,7 @@ def test_custom_service_identity_ignores_caller_environment(monkeypatch,user,uid
     assert audio_session_users()==(user,user)
 
 
-@pytest.mark.parametrize('owner,mode,expected',[(0,stat.S_IFREG|0o644,SPEAKER),(2620,stat.S_IFREG|0o644,SERVICE),(0,stat.S_IFREG|0o666,SERVICE),(0,stat.S_IFLNK|0o777,SERVICE)])
+@pytest.mark.parametrize('owner,mode,expected',[(0,stat.S_IFREG|0o644,SERVICE),(2620,stat.S_IFREG|0o644,SERVICE),(0,stat.S_IFREG|0o666,SERVICE),(0,stat.S_IFLNK|0o777,SERVICE)])
 def test_speaker_role_requires_root_owned_nonwritable_regular_metadata(monkeypatch,owner,mode,expected):
     monkeypatch.setattr('skelly_ai.audio_sessions.pwd.getpwuid',lambda uid:account(SERVICE,2620))
     monkeypatch.setattr('skelly_ai.audio_sessions.pwd.getpwnam',lambda name:account(name,3781))
@@ -104,7 +104,7 @@ def test_caller_cannot_authorize_secondary_account_via_environment(monkeypatch):
     with pytest.raises(SystemExit,match='Unsupported'):h._audio_session_env(SECONDARY)
 
 
-@pytest.mark.parametrize('role_owner,role_mode,allowed',[(0,stat.S_IFREG|0o644,True),(2620,stat.S_IFREG|0o644,False),(0,stat.S_IFREG|0o666,False),(0,stat.S_IFLNK|0o777,False)])
+@pytest.mark.parametrize('role_owner,role_mode,allowed',[(0,stat.S_IFREG|0o644,False),(2620,stat.S_IFREG|0o644,False),(0,stat.S_IFREG|0o666,False),(0,stat.S_IFLNK|0o777,False)])
 def test_helper_only_accepts_explicit_trusted_secondary_role(monkeypatch,role_owner,role_mode,allowed):
     users={SERVICE:account(SERVICE,2620),SPEAKER:account(SPEAKER,3781)}
     h,calls=load_helper(monkeypatch,users,roles={'service_user':SERVICE,'speaker_user':SPEAKER},role_owner=role_owner,role_mode=role_mode)

@@ -71,6 +71,7 @@ fi
 rm -rf "${CUSTOM_STAGE}"
 cp -a "${SCRIPT_DIR}/pi-gen-stage" "${CUSTOM_STAGE}"
 mkdir -p "${CUSTOM_STAGE}/00-install-skelly-ai/files"
+cp "${PROJECT_DIR}/deploy/audio-session-policy.py" "${CUSTOM_STAGE}/00-install-skelly-ai/files/usa-audio-session-policy.py"
 
 # A whitelist prevents local credentials, pairings, caches, release ZIPs, and
 # development state from ever entering the image build context.

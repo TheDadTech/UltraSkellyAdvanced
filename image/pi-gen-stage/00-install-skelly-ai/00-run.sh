@@ -11,7 +11,9 @@ install -m 0644 \
   files/SKELLY-AI-README.txt \
   "${ROOTFS_DIR}/boot/firmware/SKELLY-AI-README.txt"
 
+install -m 0644 files/usa-audio-session-policy.py "${ROOTFS_DIR}/root/usa-audio-session-policy.py"
+
 on_chroot <<'EOF'
 /root/install-skelly-ai-image.sh
-rm -f /root/install-skelly-ai-image.sh /root/skelly-ai-source.tar.gz
+rm -f /root/install-skelly-ai-image.sh /root/skelly-ai-source.tar.gz /root/usa-audio-session-policy.py
 EOF

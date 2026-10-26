@@ -48,41 +48,26 @@ SUPPORT_UID="$(id -u dadtech)"
 SUPPORT_GROUP="$(id -gn dadtech)"
 SUPPORT_HOME="$(getent passwd dadtech | cut -d: -f6)"
 
-configure_headless_audio_user() {
-  local user="$1" group="$2" home="$3"
-  install -d -m 0755 -o "${user}" -g "${group}" \
-    "${home}/.config/wireplumber/wireplumber.conf.d"
-  cat >"${home}/.config/wireplumber/wireplumber.conf.d/50-headless-bluetooth.conf" <<'CFG'
-wireplumber.profiles = {
-  main = {
-    monitor.bluez = required
-    monitor.bluez.seat-monitoring = disabled
-  }
-}
-monitor.bluez.properties = {
-  bluez5.roles = [ a2dp_sink a2dp_source ]
-}
-CFG
-  chown -R "${user}:${group}" "${home}/.config"
-  for hardware_group in audio video render plugdev bluetooth; do
-    if getent group "${hardware_group}" >/dev/null; then
-      usermod -aG "${hardware_group}" "${user}"
-    fi
-  done
-}
+if ! wireplumber --version | grep -Eq 'libwireplumber 0\.5\.'; then
+  echo "USA Bluetooth ownership policy requires WirePlumber 0.5" >&2
+  exit 1
+fi
 
-# 0.25.7+ intentionally uses two independent PipeWire sessions:
-#   skelly-ai -> external Bluetooth speech
-#   dadtech   -> Animated Skelly(Live) jaw-driving audio
-configure_headless_audio_user skelly-ai "${SKELLY_GROUP}" "${SKELLY_HOME}"
-configure_headless_audio_user dadtech "${SUPPORT_GROUP}" "${SUPPORT_HOME}"
+# Fresh images use the same reversible per-account policy as updates.
+runuser -u skelly-ai -- python3 - owner < /root/usa-audio-session-policy.py
+runuser -u dadtech -- python3 - fresh-secondary < /root/usa-audio-session-policy.py
+for hardware_group in audio video render plugdev bluetooth; do
+  if getent group "${hardware_group}" >/dev/null; then
+    usermod -aG "${hardware_group}" skelly-ai
+  fi
+done
 
 install -d -m 0755 /opt/skelly-ai
 install -d -m 0755 /usr/local/libexec
 install -d -m 0755 /etc/NetworkManager/dnsmasq-shared.d
 install -d -m 0700 -o skelly-ai -g "${SKELLY_GROUP}" /var/lib/skelly-ai
 install -d -m 0750 -o root -g "${SKELLY_GROUP}" /etc/skelly-ai
-python3 -c 'import json,sys; print(json.dumps({"service_user":sys.argv[1],"speaker_user":sys.argv[2]}))' "$(id -un "${SKELLY_UID}")" "$(id -un "${SUPPORT_UID}")" > /etc/skelly-ai/audio-sessions.json
+python3 -c 'import json,sys; print(json.dumps({"service_user":sys.argv[1],"speaker_user":sys.argv[2]}))' "$(id -un "${SKELLY_UID}")" "$(id -un "${SKELLY_UID}")" > /etc/skelly-ai/audio-sessions.json
 chown root:root /etc/skelly-ai/audio-sessions.json
 chmod 0644 /etc/skelly-ai/audio-sessions.json
 
@@ -148,7 +133,7 @@ if grep -q '@[A-Z_][A-Z_]*@' /etc/systemd/system/skelly-ai.service; then
 fi
 rm -rf "${PACKAGE_ROOT}"
 
-# Both audio owners must have persistent user managers before skelly-ai starts.
+# The USA service owner has a persistent audio session before startup.
 install -d -m 0755 /var/lib/systemd/linger
 touch /var/lib/systemd/linger/skelly-ai
 touch /var/lib/systemd/linger/dadtech

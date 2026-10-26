@@ -1,3 +1,8 @@
+# UltraSkellyAdvanced 0.28.6 Beta 1
+
+- Improves Bluetooth speaker audio ownership and reconnection.
+- Repairs missing audio routes while preserving valid speaker pairings.
+
 # UltraSkellyAdvanced 0.28.5
 
 - Adds a speaker pairing PIN setting for props using a custom PIN.

@@ -722,23 +722,7 @@ def _configured_audio_service_user() -> str:
 
 def _audio_role_users() -> tuple[str, set[str]]:
     service = _configured_audio_service_user()
-    users = {service}
-    path = pathlib.Path("/etc/skelly-ai/audio-sessions.json")
-    try:
-        info = path.lstat()
-        if info.st_uid != 0 or info.st_mode & 0o022 or not stat.S_ISREG(info.st_mode):
-            return service, users
-        roles = json.loads(path.read_text())
-        if not isinstance(roles, dict):
-            return service, users
-        speaker = roles["speaker_user"]
-        if roles.get("service_user") == service and isinstance(speaker, str):
-            account = pwd.getpwnam(speaker)
-            if account.pw_uid != 0:
-                users.add(speaker)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return service, users
+    return service, {service}
 
 
 def _authorize_audio_session(user: str) -> None:
@@ -756,23 +740,26 @@ def _audio_competitor(target: str) -> str | None:
 def audio_session_prepare(session_user: str | None = None) -> None:
     """Start only configured sessions; policy installation belongs to bootstrap."""
     session_user = session_user or _configured_audio_service_user()
-    uid, env = _audio_session_env(session_user)
+    uid, env = _audio_session_env(session_user, require_runtime=False)
     run("loginctl", "enable-linger", session_user, check=False)
     run("systemctl", "start", f"user@{uid}.service", check=False)
     bus = pathlib.Path(f"/run/user/{uid}/bus")
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and not bus.exists():
         time.sleep(0.25)
+    if not bus.exists():
+        raise SystemExit("USA audio runtime is unavailable; check the service user manager and lingering")
+    _audio_session_env(session_user)
     # Bootstrap installs headless policy as part of the application update.
     # Do not write root-owned configuration through user-controlled home paths.
     run(
         "runuser", "-u", session_user, "--", *env,
         "systemctl", "--user", "enable", "--now",
         "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service",
-        check=False, timeout=20,
+        check=True, timeout=20,
     )
 
-def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
+def _audio_session_env(session_user: str, *, require_runtime: bool = True) -> tuple[str, list[str]]:
     _authorize_audio_session(session_user)
     try:
         account = pwd.getpwnam(session_user)
@@ -783,6 +770,8 @@ def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
     uid = str(account.pw_uid)
     runtime = f"/run/user/{uid}"
     runtime_path = pathlib.Path(runtime)
+    if require_runtime and not runtime_path.exists():
+        raise SystemExit("USA audio runtime is unavailable; prepare the service user session first")
     if runtime_path.exists():
         info = runtime_path.lstat()
         if info.st_uid != account.pw_uid or not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
@@ -801,34 +790,39 @@ def _audio_session_env(session_user: str) -> tuple[str, list[str]]:
 
 
 def audio_session_pause_competitor(target_session: str) -> None:
-    """Temporarily remove the other WirePlumber/PipeWire stack from a new A2DP claim.
-
-    USA intentionally uses two user audio sessions. BlueZ exposes the same A2DP
-    endpoints to both session managers, so a newly paired/reconnected device can
-    otherwise be claimed by whichever WirePlumber wins the race.  Pause only the
-    competing session while the requested session establishes its transport.
-    """
-    competitor = _audio_competitor(target_session)
-    if competitor is None:
-        audio_session_prepare(target_session)
-        return
-    _, env = _audio_session_env(competitor)
-    run(
-        "runuser", "-u", competitor, "--", *env,
-        "systemctl", "--user", "stop",
-        "wireplumber.service", "pipewire.service", "pipewire-pulse.service",
-        "pipewire.socket", "pipewire-pulse.socket",
-        check=False, timeout=20,
-    )
-    # The socket units can immediately respawn PipeWire and re-enter the A2DP
-    # ownership race. Stop them too; this matches the proven manual recovery.
+    """Compatibility action: prepare only USA; never stop another user."""
     audio_session_prepare(target_session)
 
 
 def audio_session_resume_competitor(target_session: str) -> None:
-    competitor = _audio_competitor(target_session)
-    if competitor is not None:
-        audio_session_prepare(competitor)
+    _authorize_audio_session(target_session)
+    # No other account was stopped. Restarting another Bluetooth monitor would
+    # recreate the ownership race this compatibility action used to introduce.
+
+
+def audio_session_recover(target_session: str) -> None:
+    audio_session_prepare(target_session)
+    _, env = _audio_session_env(target_session)
+    result = run("runuser", "-u", target_session, "--", *env,
+                 "systemctl", "--user", "restart", "wireplumber.service",
+                 check=False, timeout=20)
+    if result.returncode:
+        raise SystemExit("USA WirePlumber could not restart; check the service user audio session")
+
+
+def audio_session_diagnose(target_session: str) -> None:
+    uid, _ = _audio_session_env(target_session)
+    result = run("ps", "-eo", "uid=,comm=", check=False, timeout=10)
+    if result.returncode:
+        raise SystemExit("Unable to inspect audio ownership; check USA WirePlumber and Bluetooth monitor configuration")
+    competing = {fields[0] for line in result.stdout.splitlines()
+                 if len(fields := line.split()) == 2 and fields[1] == "wireplumber"
+                 and fields[0].isdigit() and fields[0] != uid}
+    if competing:
+        # Process presence is evidence of possible contention, not proof of
+        # ownership. Do not name accounts or stop unrelated audio services.
+        raise SystemExit("Speaker is connected but USA has no Bluetooth audio sink. Another account runs WirePlumber; possible audio ownership conflict. Review the other account's Bluetooth monitor policy; its services were left running.")
+    raise SystemExit("Speaker is connected but USA has no Bluetooth audio sink. Check USA WirePlumber Bluetooth monitor, libspa Bluetooth support and speaker audio profile.")
 
 
 def audio_session_exec(program: str, arguments: list[str]) -> None:
@@ -886,6 +880,14 @@ def main() -> None:
         elif args:
             raise SystemExit("Unsupported audio-session-prepare arguments")
         audio_session_prepare(session_user)
+    elif action in {"audio-session-recover", "audio-session-diagnose"}:
+        args = sys.argv[2:]
+        if len(args) != 2 or args[0] != "--session":
+            raise SystemExit("Unsupported audio session recovery arguments")
+        if action == "audio-session-recover":
+            audio_session_recover(args[1])
+        else:
+            audio_session_diagnose(args[1])
     elif action in {"audio-session-pause-competitor", "audio-session-resume-competitor"}:
         args = sys.argv[2:]
         if len(args) != 2 or args[0] != "--session":

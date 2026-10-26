@@ -210,8 +210,8 @@ class BluetoothClassicAudio:
                     if not current.sink_ready:
                         # BlueZ can remain connected even when the A2DP transport
                         # was claimed by the wrong user session. Reconnect once
-                        # while the competing session is paused so dadtech owns
-                        # Skelly's jaw/audio sink deterministically.
+                        # after recovering USA's own WirePlumber session.
+                        await self._recover_audio_owner()
                         await self._run("disconnect", address)
                         await asyncio.sleep(0.5)
                         snapshot = await self._read_info(address)
@@ -267,11 +267,12 @@ class BluetoothClassicAudio:
                         raise ClassicAudioUnavailable(message)
 
                 # A previous attempt may leave BlueZ connected while another
-                # WirePlumber session owns the transport. If dadtech cannot see
+                # WirePlumber session owns the transport. If USA cannot see
                 # the sink, reconnect once while the competitor is paused.
                 if snapshot.connected:
                     current = await self._read_pipewire_status()
                     if not current.sink_ready:
+                        await self._recover_audio_owner()
                         await self._run("disconnect", address)
                         await asyncio.sleep(0.5)
                         snapshot = await self._read_info(address)
@@ -288,6 +289,85 @@ class BluetoothClassicAudio:
                 if claim_active:
                     await self._resume_competing_audio_session()
 
+    async def _recover_audio_owner(self) -> None:
+        if self._system_helper is not None and self._system_helper.exists():
+            result = await self._run_helper("audio-session-recover", "--session", self._pipewire_session)
+            if result.returncode:
+                raise ClassicAudioUnavailable(self._useful_output(result.output) or "USA audio session recovery failed")
+
+    async def _missing_sink_error(self) -> str:
+        if self._system_helper is not None and self._system_helper.exists():
+            result = await self._run_helper("audio-session-diagnose", "--session", self._pipewire_session)
+            if result.returncode and result.output:
+                return self._useful_output(result.output)
+        return "Speaker connected, but its PipeWire audio sink is missing. Check USA WirePlumber Bluetooth ownership and the selected output."
+
+    async def _verified_repair_route(self, route: bool) -> ClassicAudioSnapshot:
+        snapshot = await (self._route_pipewire_sink() if route else self._find_pipewire_sink_without_routing())
+        if not snapshot.sink_ready or not snapshot.sink_id:
+            if snapshot.last_error and (snapshot.sink_id or "did not appear" not in snapshot.last_error):
+                raise ClassicAudioUnavailable(snapshot.last_error)
+            raise ClassicAudioUnavailable(await self._missing_sink_error())
+        if route:
+            executable = shutil.which("wpctl") or str(self._system_helper or "wpctl")
+            current = await self._run_program(executable, "status")
+            if current.returncode or self._find_sink(current.output) != (snapshot.sink_id, True):
+                self._update(sink_ready=False)
+                raise ClassicAudioUnavailable("Speaker sink exists but is not the selected PipeWire output. Check audio routing and retry repair.")
+        current = await self._read_info(self._address)
+        if not (current.connected and current.paired and current.trusted):
+            self._update(sink_ready=False, sink_id=None, sink_name=None)
+            raise ClassicAudioUnavailable("Speaker disconnected during audio routing; retry recovery. Existing pairing was preserved.")
+        return current
+
+    async def _repair_known_speaker(self, forbidden: set[str], route: bool) -> ClassicAudioSnapshot | None:
+        # An intact bond does not need rediscovery or destructive re-pairing.
+        # Only explicit stale-authentication failures enter the bond-reset stage.
+        try:
+            address = await self._resolve_address()
+            snapshot = await self._read_info(address)
+        except ClassicAudioUnavailable:
+            return None
+        if address.upper() in forbidden or not snapshot.device_name or "skelly(live)" not in snapshot.device_name.casefold():
+            return None
+        if not snapshot.paired:
+            return None
+        self._address = address
+        if not snapshot.trusted:
+            await self._run("trust", address)
+            snapshot = await self._read_info(address)
+        if not snapshot.trusted:
+            raise ClassicAudioUnavailable("Speaker paired but could not be trusted; its bond was preserved.")
+        await self._pause_competing_audio_session()
+        if snapshot.connected:
+            current = await self._read_pipewire_status()
+            if current.sink_ready and current.sink_id:
+                return await self._verified_repair_route(route)
+        await self._recover_audio_owner()
+        # A WirePlumber restart may itself drop the Bluetooth transport.
+        snapshot = await self._read_info(address)
+        if snapshot.connected:
+            disconnected = await self._run("disconnect", address)
+            if disconnected.returncode:
+                raise ClassicAudioUnavailable("Speaker would not disconnect during audio recovery; the existing bond was preserved.")
+            await asyncio.sleep(0.5)
+        connected = await self._run("connect", address)
+        if connected.returncode:
+            if self._is_stale_pairing_error(connected.output.casefold()) and "authentication" in connected.output.casefold():
+                return None
+            raise ClassicAudioUnavailable("Speaker could not reconnect after audio recovery; the existing bond was preserved. Enable Live Mode and retry.")
+        snapshot = await self._read_info(address)
+        if not snapshot.trusted:
+            await self._run("trust", address)
+            snapshot = await self._read_info(address)
+        if not (snapshot.connected and snapshot.paired and snapshot.trusted):
+            raise ClassicAudioUnavailable("Speaker reconnection is incomplete; the existing bond was preserved.")
+        try:
+            return await self._verified_repair_route(route)
+        except ClassicAudioUnavailable as exc:
+            self._update(sink_ready=False, sink_id=None, sink_name=None)
+            raise ClassicAudioUnavailable(f"Speaker paired and connected, but audio verification failed: {exc}") from None
+
     async def repair(self, pin: str, *, forbidden_addresses: set[str], route: bool = True) -> ClassicAudioSnapshot:
         """Reset only a positively identified Classic speaker bond, never BLE."""
         async with self._lock:
@@ -296,6 +376,9 @@ class BluetoothClassicAudio:
             bluetooth_ready = False
             try:
                 forbidden = {address.upper() for address in forbidden_addresses if address}
+                recovered = await self._repair_known_speaker(forbidden, route)
+                if recovered is not None:
+                    return recovered
                 scan = await self._run("--timeout", "12", "scan", "bredr")
                 if scan.returncode:
                     raise ClassicAudioUnavailable("Speaker discovery could not start. Check that Bluetooth is powered and available; no pairing was removed.")
@@ -350,17 +433,7 @@ class BluetoothClassicAudio:
                 if connected.returncode or not (snapshot.paired and snapshot.trusted and snapshot.connected):
                     raise ClassicAudioUnavailable("Speaker pairing/connection did not complete. Keep it nearby in Live Mode and retry repair.")
                 bluetooth_ready = True
-                snapshot = await (self._route_pipewire_sink() if route else self._find_pipewire_sink_without_routing())
-                if not snapshot.sink_ready or not snapshot.sink_id:
-                    raise ClassicAudioUnavailable(snapshot.last_error or "Speaker connected, but its PipeWire audio sink is missing. Check PipeWire/WirePlumber and the selected audio output, then retry.")
-                if route:
-                    executable = shutil.which("wpctl") or str(self._system_helper or "wpctl")
-                    current = await self._run_program(executable, "status")
-                    routed_sink = self._find_sink(current.output)
-                    if current.returncode or routed_sink != (snapshot.sink_id, True):
-                        self._update(sink_ready=False)
-                        raise ClassicAudioUnavailable("Speaker sink exists but is not the selected PipeWire output. Check audio routing and retry repair.")
-                return snapshot
+                return await self._verified_repair_route(route)
             except asyncio.CancelledError:
                 self._update(last_error="Speaker repair interrupted or timed out. Refresh status and retry; BLE control was preserved.")
                 raise

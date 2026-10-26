@@ -8,7 +8,6 @@ fi
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLING_USER="${USA_INSTALLING_USER:-$(id -un)}"
 CONFIGURED_USER="$(systemctl show skelly-ai.service -p User --value 2>/dev/null || true)"
-DEDICATED_AUDIO_ROLES=0
 if [[ -n "${CONFIGURED_USER}" ]] && id "${CONFIGURED_USER}" >/dev/null 2>&1 && [[ "$(id -u "${CONFIGURED_USER}")" != 0 ]]; then
   # Updates preserve the existing service identity even with other local accounts.
   SKELLY_USER="$(id -un "${CONFIGURED_USER}")"
@@ -16,10 +15,6 @@ elif id skelly-ai >/dev/null 2>&1; then
   SKELLY_USER="skelly-ai"
 else
   SKELLY_USER="${INSTALLING_USER}"
-fi
-# Migrate the existing appliance's deliberately separate speaker role to metadata.
-if [[ "${SKELLY_USER}" == "skelly-ai" ]]; then
-  DEDICATED_AUDIO_ROLES=1
 fi
 SKELLY_GROUP="$(id -gn "${SKELLY_USER}")"
 SKELLY_UID="$(id -u "${SKELLY_USER}")"
@@ -60,37 +55,35 @@ sudo apt-get install -y \
   v4l-utils \
   wireplumber
 
-# Both the dedicated USA service identity and the support/login identity may
-# exist on an appliance. External Bluetooth speech and the stock Skelly jaw
-# mirror deliberately use separate persistent PipeWire sessions, so configure
-# both users for headless Bluetooth audio.
-configure_headless_audio_user() {
-  local user="$1" group="$2" home="$3"
-  sudo install -d -m 0755 -o "${user}" -g "${group}" "${home}/.config/wireplumber/wireplumber.conf.d"
-  sudo tee "${home}/.config/wireplumber/wireplumber.conf.d/50-headless-bluetooth.conf" >/dev/null <<'EOF'
-wireplumber.profiles = {
-  main = {
-    monitor.bluez = required
-    monitor.bluez.seat-monitoring = disabled
-  }
-}
-monitor.bluez.properties = {
-  bluez5.roles = [ a2dp_sink a2dp_source ]
-}
-EOF
-  sudo chown -R "${user}:${group}" "${home}/.config"
-  for hardware_group in audio video render plugdev bluetooth; do
-    if getent group "${hardware_group}" >/dev/null; then
-      sudo usermod -aG "${hardware_group}" "${user}"
-    fi
-  done
-  sudo loginctl enable-linger "${user}"
-}
-
-configure_headless_audio_user "${SKELLY_USER}" "${SKELLY_GROUP}" "${SKELLY_HOME}"
-if [[ "${SUPPORT_USER}" != "${SKELLY_USER}" ]]; then
-  configure_headless_audio_user "${SUPPORT_USER}" "${SUPPORT_GROUP}" "${SUPPORT_HOME}"
+# WirePlumber 0.4 uses a different configuration language. Do not silently
+# install an ineffective 0.5 policy on an unsupported OS.
+if ! wireplumber --version | grep -Eq 'libwireplumber 0\.5\.'; then
+  echo "USA Bluetooth ownership migration requires WirePlumber 0.5; existing policies were not changed." >&2
+  exit 1
 fi
+
+# Run policy migration as its owner; preserve custom fragments and backups.
+migrate_audio_policy() {
+  local user="$1" role="$2" uid output
+  uid="$(id -u "${user}")"
+  output="$(sudo runuser -u "${user}" -- python3 - "${role}" < "${PROJECT_DIR}/deploy/audio-session-policy.py")"
+  if [[ "${output}" == "changed" && -S "/run/user/${uid}/bus" ]]; then
+    if sudo runuser -u "${user}" -- env XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" systemctl --user is-active --quiet wireplumber.service; then
+      # Only an account with an exact known USA policy was migrated.
+      sudo runuser -u "${user}" -- env XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" systemctl --user restart wireplumber.service
+    fi
+  fi
+}
+migrate_audio_policy "${SKELLY_USER}" owner
+if [[ "${SUPPORT_USER}" != "${SKELLY_USER}" ]]; then
+  migrate_audio_policy "${SUPPORT_USER}" secondary
+fi
+for hardware_group in audio video render plugdev bluetooth; do
+  if getent group "${hardware_group}" >/dev/null; then
+    sudo usermod -aG "${hardware_group}" "${SKELLY_USER}"
+  fi
+done
+sudo loginctl enable-linger "${SKELLY_USER}"
 
 sudo install -d -m 0755 /opt/skelly-ai
 sudo install -d -m 0755 /usr/local/libexec
@@ -116,10 +109,13 @@ printf '%s\n' 'address=/#/192.168.4.1' \
 sudo chmod 0440 /etc/sudoers.d/usa-system-helper
 
 sudo install -d -m 0750 -o root -g "${SKELLY_GROUP}" /etc/skelly-ai
-AUDIO_SPEAKER_USER="${SKELLY_USER}"
-if [[ "${DEDICATED_AUDIO_ROLES}" == 1 ]]; then
-  AUDIO_SPEAKER_USER="${SUPPORT_USER}"
+# Keep the previous role map for an explicit migration reversal. Never replace
+# the first recovery copy on subsequent updates.
+if [[ -f /etc/skelly-ai/audio-sessions.json && ! -e /etc/skelly-ai/audio-sessions.before-single-owner.json ]]; then
+  sudo cp -p /etc/skelly-ai/audio-sessions.json /etc/skelly-ai/audio-sessions.before-single-owner.json
+  sudo chmod 0600 /etc/skelly-ai/audio-sessions.before-single-owner.json
 fi
+AUDIO_SPEAKER_USER="${SKELLY_USER}"
 python3 -c 'import json,sys; print(json.dumps({"service_user":sys.argv[1],"speaker_user":sys.argv[2]}))' "${SKELLY_USER}" "${AUDIO_SPEAKER_USER}" \
   | sudo tee /etc/skelly-ai/audio-sessions.json >/dev/null
 sudo chown root:root /etc/skelly-ai/audio-sessions.json
@@ -160,9 +156,7 @@ sudo systemctl enable usa-network
 sudo systemctl enable hciuart.service 2>/dev/null || true
 sudo systemctl enable skelly-ai
 
-# Raspberry Pi OS Lite has no desktop login to create an audio session. Start
-# both user managers now, with dadtech's PipeWire session established before
-# USA restarts. Linger keeps the same session available after cold boot.
+# Headless USA owns one lingering audio session, independent of SSH logins.
 start_user_audio() {
   local user="$1" uid="$2"
   sudo systemctl start "user@${uid}.service"
@@ -176,9 +170,6 @@ start_user_audio() {
     systemctl --user restart pipewire.service wireplumber.service pipewire-pulse.service 2>/dev/null || true
 }
 start_user_audio "${SKELLY_USER}" "${SKELLY_UID}"
-if [[ "${SUPPORT_UID}" != "${SKELLY_UID}" ]]; then
-  start_user_audio "${SUPPORT_USER}" "${SUPPORT_UID}"
-fi
 
 # `enable --now` does not restart an already-running service during an update.
 # Restart explicitly only after the persistent audio session is available.

@@ -265,8 +265,13 @@ def test_image_enables_required_system_helper_and_radio_support() -> None:
     assert '"SKELLY_ONBOARDING_REQUIRED": "true"' in helper
     assert 'run("hostnamectl", "set-hostname", "usa-controller"' in helper
     assert "address=/#/192.168.4.1" in image_installer
-    assert "monitor.bluez = required" in image_installer
-    assert "bluez5.roles = [ a2dp_sink a2dp_source ]" in image_installer
+    policy = (ROOT / "deploy" / "audio-session-policy.py").read_text()
+    assert "monitor.bluez = required" in policy
+    assert "monitor.bluez = disabled" in policy
+    assert "python3 - owner" in image_installer
+    assert "python3 - fresh-secondary" in image_installer
+    stage = (ROOT / "image/pi-gen-stage/00-install-skelly-ai/00-run.sh").read_text()
+    assert "files/usa-audio-session-policy.py" in stage
     assert "dadtech ALL=(root) NOPASSWD: /usr/local/libexec/usa-system-helper *" in image_installer
     assert "SKELLY_BRAIN_IMAGE_INSTALL=1" in image_installer
     assert "SKELLY_BRAIN_SERVICE_USER=skelly-ai" in image_installer
@@ -287,8 +292,10 @@ def test_live_installer_configures_headless_bluetooth_audio_and_wifi_retries() -
         encoding="utf-8"
     )
 
-    assert "monitor.bluez = required" in installer
-    assert "bluez5.roles = [ a2dp_sink a2dp_source ]" in installer
+    assert 'migrate_audio_policy "${SKELLY_USER}" owner' in installer
+    assert 'migrate_audio_policy "${SUPPORT_USER}" secondary' in installer
+    assert 'start_user_audio "${SUPPORT_USER}"' not in installer
+    assert 'user@@SUPPORT_UID@.service' not in (ROOT / "deploy/skelly-ai.service.in").read_text()
     assert 'systemctl --user restart pipewire.service wireplumber.service' in installer
     assert "def scan_and_cache(device: str, attempts: int = 5)" in helper
     assert "for _ in range(attempts):" in helper

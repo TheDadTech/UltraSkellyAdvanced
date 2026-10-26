@@ -11,7 +11,7 @@ SPEAKER='AA:BB:CC:DD:EE:02'
 BLE='AA:BB:CC:DD:EE:01'
 
 
-def audio_fixture(monkeypatch, *, missing=False, auth_failure=False, sink=True, wrong_name=False, initially_paired=True):
+def audio_fixture(monkeypatch, *, missing=False, auth_failure=False, sink=True, wrong_name=False, initially_paired=False):
     monkeypatch.setattr('skelly_ai.classic_audio.shutil.which',lambda _: '/usr/bin/tool')
     audio=BluetoothClassicAudio(address=SPEAKER)
     state={'paired':initially_paired,'trusted':initially_paired,'connected':initially_paired}
