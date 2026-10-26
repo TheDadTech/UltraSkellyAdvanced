@@ -339,7 +339,9 @@ class BluetoothClassicAudio:
                     raise ClassicAudioUnavailable("Speaker disappeared after forgetting. Enable Live Mode and retry; BLE control was preserved.")
                 paired = await self._pair(address, pin)
                 if paired.returncode:
-                    raise ClassicAudioUnavailable("Speaker authentication failed or was cancelled. Keep the speaker powered in Live Mode, disconnect other hosts, then retry repair.")
+                    if any(error in paired.output.casefold() for error in ("authenticationcanceled", "authenticationfailed", "authenticationrejected")):
+                        raise ClassicAudioUnavailable("Speaker pairing failed. If you changed the prop’s pairing PIN, save the matching PIN.")
+                    raise ClassicAudioUnavailable("Speaker pairing did not complete. Confirm Live Mode is enabled and retry.")
                 trusted = await self._run("trust", address)
                 if trusted.returncode:
                     raise ClassicAudioUnavailable("Speaker paired but could not be trusted. Check Bluetooth service availability and retry repair.")

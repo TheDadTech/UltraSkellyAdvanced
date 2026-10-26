@@ -137,7 +137,10 @@ class BackupManager:
                 except ValueError:
                     raise BackupError("Invalid installation or voice settings") from None
             elif name == "credentials.json":
-                if set(value) - {"groq_api_key", "elevenlabs_api_key"} or any(not isinstance(v, str) or len(v) > 4096 for v in value.values()):
+                pin = value.get("speaker_pin")
+                if pin is not None and (not isinstance(pin, str) or not 4 <= len(pin) <= 16 or not pin.isascii() or not pin.isdecimal()):
+                    raise BackupError("Invalid speaker pairing PIN in backup")
+                if set(value) - {"groq_api_key", "elevenlabs_api_key", "speaker_pin"} or any(not isinstance(v, str) or len(v) > 4096 for v in value.values()):
                     raise BackupError("Invalid credential settings")
             elif name == "nag-media.json":
                 if set(value) != {"serials"} or not isinstance(value["serials"], list) or len(value["serials"]) > 65536 or any(type(v) is not int or not 0 <= v <= 65535 for v in value["serials"]):

@@ -709,7 +709,7 @@ def create_app(
             await asyncio.sleep(1.5)
             prepare = getattr(classic_audio, "prepare", None)
             snapshot = (
-                await prepare(app_settings.classic_audio_pin)
+                await prepare(effective_speaker_pin())
                 if prepare is not None
                 else await classic_audio.connect()
             )
@@ -1331,6 +1331,10 @@ def create_app(
             groq_api_key=app_settings.groq_api_key,
         ),
     )
+    def effective_speaker_pin() -> str:
+        saved = credential_store.load().speaker_pin
+        return saved.get_secret_value() if saved else app_settings.classic_audio_pin
+
     static_dir = Path(__file__).parent / "static"
     operator_gesture_lock = asyncio.Lock()
     operator_gesture_task: asyncio.Task[dict[str, object]] | None = None
@@ -2240,7 +2244,7 @@ def create_app(
         overrides = {
             "operation-settings.json": operation_store.load().model_dump_json().encode(),
             "provider-settings.json": provider_store.load().model_dump_json().encode(),
-            "credentials.json": json.dumps({"groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
+            "credentials.json": json.dumps({"speaker_pin": effective_speaker_pin(), "groq_api_key": credentials.groq_api_key.get_secret_value() if credentials.groq_api_key else "", "elevenlabs_api_key": credentials.api_key.get_secret_value() if credentials.api_key else ""}).encode(),
         }
         return overrides
 
@@ -2916,7 +2920,7 @@ def create_app(
             settings = operation_store.load()
             forbidden = {address for address in (hardware.snapshot().address, settings.control_address) if address}
             try:
-                snapshot = await asyncio.wait_for(classic_audio.repair(app_settings.classic_audio_pin,
+                snapshot = await asyncio.wait_for(classic_audio.repair(effective_speaker_pin(),
                     forbidden_addresses=forbidden, route=settings.audio_output == "skelly"), timeout=150)
                 if not (snapshot.paired and snapshot.trusted and snapshot.connected and snapshot.sink_ready and snapshot.sink_id):
                     raise ClassicAudioUnavailable("Speaker audio route is not ready; refresh status and retry")
@@ -2947,6 +2951,26 @@ def create_app(
         except ClassicAudioUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    @app.get("/api/audio/speaker-pin")
+    async def speaker_pin_status():
+        return {"configured": credential_store.load().speaker_pin is not None}
+
+    @app.post("/api/audio/speaker-pin")
+    async def save_speaker_pin(request: Request):
+        maintenance_access(request, idle=True)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Enter a valid speaker pairing PIN") from None
+        pin = body.get("pin") if isinstance(body, dict) else None
+        if not isinstance(pin, str) or not (4 <= len(pin) <= 16 and pin.isascii() and pin.isdecimal()):
+            raise HTTPException(status_code=422, detail="Use 4–16 digits for the speaker pairing PIN")
+        try:
+            credential_store.save_speaker_pin(pin)
+        except CredentialStoreError:
+            raise HTTPException(status_code=503, detail="Unable to save speaker pairing PIN") from None
+        return {"configured": True}
+
     @app.post("/api/audio/prepare-connect")
     async def prepare_and_connect_classic_audio() -> dict[str, object]:
         """Enable Live Mode, pair when needed, then route the Classic speaker."""
@@ -2962,7 +2986,7 @@ def create_app(
             await asyncio.sleep(1.5)
             prepare = getattr(classic_audio, "prepare", None)
             snapshot = (
-                await prepare(app_settings.classic_audio_pin)
+                await prepare(effective_speaker_pin())
                 if prepare is not None
                 else await classic_audio.connect()
             )

@@ -56,7 +56,7 @@ async def test_repair_removes_stale_speaker_bond_and_preserves_ble(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('option,message,removed',[
     ('missing','No unique',False),('wrong_name','identity',False),
-    ('auth_failure','authentication',True),('sink','PipeWire',True),
+    ('auth_failure','pairing PIN',True),('sink','PipeWire',True),
 ])
 async def test_repair_failure_is_actionable_and_never_removes_other_devices(monkeypatch,option,message,removed):
     audio,calls=audio_fixture(monkeypatch,**{option:False if option=='sink' else True})
@@ -165,7 +165,7 @@ async def test_failed_authentication_restores_competing_session(monkeypatch,tmp_
     restored=[]
     async def resume():restored.append(True)
     monkeypatch.setattr(audio,'_resume_competing_audio_session',resume)
-    with pytest.raises(ClassicAudioUnavailable,match='authentication'):
+    with pytest.raises(ClassicAudioUnavailable,match='pairing PIN'):
         await audio.repair('0000',forbidden_addresses={BLE})
     assert restored==[True]
 

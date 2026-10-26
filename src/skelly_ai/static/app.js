@@ -774,7 +774,8 @@ function renderAudioStatus(audio, currentMode = currentControllerMode) {
   const available = Boolean(audio?.available);
   const connected = Boolean(audio?.connected);
   const sinkReady = Boolean(audio?.sink_ready && audio?.sink_id);
-  if (!speakerResult.dataset.busy) speakerResult.textContent = audio?.last_error || (connected && sinkReady ? "Skelly speaker connected; audio sink ready." : connected ? "Speaker connected, but its Pi audio route is not ready yet." : "Skelly speaker disconnected.");
+  if (connected && sinkReady) delete speakerResult.dataset.pairingError;
+  if (!speakerResult.dataset.busy) speakerResult.textContent = speakerResult.dataset.pairingError || (audio?.last_error ? speakerPairingError(audio.last_error) : "") || (connected && sinkReady ? "Skelly speaker connected; audio sink ready." : connected ? "Speaker connected, but its Pi audio route is not ready yet." : "Skelly speaker disconnected.");
   renderSpeakerManagement(audio);
   speakerConnection.textContent = connected && sinkReady
     ? "connected + routed"
@@ -2656,7 +2657,44 @@ repairSpeakerDialog.addEventListener("close", async () => {
   finally { speakerRepairBusy = false; repairSpeakerButton.disabled = false; }
 });
 
+const speakerPin = document.querySelector("#speaker-pairing-pin");
+const speakerPinResult = document.querySelector("#speaker-pin-result");
+const saveSpeakerPin = document.querySelector("#save-speaker-pin");
+document.querySelector("#show-speaker-pin").addEventListener("click", (event) => {
+  const show = speakerPin.type === "password";
+  speakerPin.type = show ? "text" : "password";
+  event.currentTarget.textContent = show ? "Hide" : "Show";
+  event.currentTarget.setAttribute("aria-pressed", String(show));
+});
+request("/api/audio/speaker-pin").then((body) => {
+  speakerPin.placeholder = body.configured ? "Saved PIN (enter to replace)" : "1234";
+}).catch(() => {});
+saveSpeakerPin.addEventListener("click", async () => {
+  if (!/^[0-9]{4,16}$/.test(speakerPin.value)) {
+    speakerPinResult.textContent = "Use 4–16 digits for the speaker pairing PIN";
+    return;
+  }
+  saveSpeakerPin.disabled = true;
+  try {
+    await request("/api/audio/speaker-pin", {method:"POST", body:JSON.stringify({pin:speakerPin.value})});
+    speakerPin.value = "";
+    speakerPin.type = "password";
+    document.querySelector("#show-speaker-pin").textContent = "Show";
+    document.querySelector("#show-speaker-pin").setAttribute("aria-pressed", "false");
+    speakerPin.placeholder = "Saved PIN (enter to replace)";
+    delete speakerResult.dataset.pairingError;
+    speakerPinResult.textContent = "Speaker pairing PIN saved.";
+  } catch (error) { speakerPinResult.textContent = error.message; }
+  finally { saveSpeakerPin.disabled = false; }
+});
+function speakerPairingError(message) {
+  return /AuthenticationCanceled|AuthenticationFailed|AuthenticationRejected/i.test(message)
+    ? "Speaker pairing failed. If you changed the prop’s pairing PIN, save the matching PIN."
+    : message;
+}
+
 speakerConnect.addEventListener("click", async () => {
+  delete speakerResult.dataset.pairingError;
   speakerConnect.disabled = true;
   speakerResult.dataset.busy = "1";
   speakerResult.textContent = "Enabling Live Mode and connecting the Skelly speaker...";
@@ -2668,7 +2706,9 @@ speakerConnect.addEventListener("click", async () => {
       : audio.last_error || "Speaker connected, but its Pi audio route is not ready yet.";
     await refreshStatus();
   } catch (error) {
-    speakerResult.textContent = `${error.message}. Confirm BLE prop control is connected and the speaker was paired once.`;
+    const message = speakerPairingError(error.message);
+    if (/pairing PIN/.test(message)) speakerResult.dataset.pairingError = message;
+    speakerResult.textContent = message;
     await refreshAudioStatus().catch(() => {});
   } finally {
     delete speakerResult.dataset.busy;

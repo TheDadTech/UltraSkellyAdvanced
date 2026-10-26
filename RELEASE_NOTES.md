@@ -1,3 +1,9 @@
+# UltraSkellyAdvanced 0.28.5
+
+- Adds a speaker pairing PIN setting for props using a custom PIN.
+- Improves pairing-error guidance.
+- Removes duplicate section headings throughout the interface.
+
 # UltraSkellyAdvanced 0.28.4
 
 - Fixes Skelly speaker repair and audio playback on installations using a custom Linux account.

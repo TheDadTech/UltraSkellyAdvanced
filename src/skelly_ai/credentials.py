@@ -19,6 +19,7 @@ class CredentialValidationError(RuntimeError):
 class ElevenLabsCredentials:
     api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
+    speaker_pin: SecretStr | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,7 @@ class CredentialStore:
         raw_key = str(payload.get("elevenlabs_api_key", "")).strip()
         raw_groq_key = str(payload.get("groq_api_key", "")).strip()
         return ElevenLabsCredentials(
+            speaker_pin=SecretStr(payload["speaker_pin"]) if payload.get("speaker_pin") else self._defaults.speaker_pin,
             api_key=SecretStr(raw_key) if raw_key else self._defaults.api_key,
             groq_api_key=(
                 SecretStr(raw_groq_key)
@@ -70,6 +72,11 @@ class CredentialStore:
                 else self._defaults.groq_api_key
             ),
         )
+
+    def save_speaker_pin(self, pin: str) -> None:
+        if not (4 <= len(pin) <= 16 and pin.isascii() and pin.isdecimal()):
+            raise CredentialStoreError("Use 4–16 digits for the speaker pairing PIN")
+        self._save_payload({"speaker_pin": pin})
 
     def status(self) -> CredentialStatus:
         credentials = self.load()
@@ -139,6 +146,9 @@ class CredentialStore:
     def _save_payload(self, payload: dict[str, str]) -> None:
 
         try:
+            if self._path.exists():
+                existing = json.loads(self._path.read_text(encoding="utf-8"))
+                payload = {**existing, **payload}
             self._data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self._data_dir, 0o700)
             temporary_path = self._data_dir / ".credentials.json.tmp"

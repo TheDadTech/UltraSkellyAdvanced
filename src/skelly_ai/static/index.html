@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.0-stable">
+    <link rel="stylesheet" href="/static/styles.css?v=0.28.5">
   </head>
   <body>
     <main>
@@ -231,7 +231,7 @@
         <div class="section-heading">
           <div>
             <p class="section-kicker">SOFTWARE</p>
-            <h2>USA updates</h2>
+
             <p class="muted help-copy">Check, verify, and install a published USA update from this controller.</p>
           </div>
           <span id="update-version" class="driver-badge neutral">checking</span>
@@ -809,14 +809,14 @@
         <details id="skelly-connections-details" class="smart-setup-details" open>
         <summary><span><strong>Skelly connections</strong><small id="skelly-connections-summary">Setup required</small></span><span id="hardware-connection" class="driver-badge">prop disconnected</span></summary>
         <div class="smart-setup-body">
-        <div class="section-heading">
-          <div>
-            <h2>Skelly connections</h2>
-            <p class="muted help-copy">The header connects prop control. Prepare the speaker once to route every speaking voice through Skelly.</p>
-          </div>
-          </div>
         <h3>Skelly Speaker</h3>
         <p class="security-note help-copy">Prepare and connect enables Live Mode, discovers and pairs the Skelly(Live) speaker when needed, and selects it for Pi audio.</p>
+        <div class="speaker-pin-settings">
+          <label for="speaker-pairing-pin">Speaker pairing PIN</label>
+          <div class="controls"><input id="speaker-pairing-pin" type="password" minlength="4" maxlength="16" inputmode="numeric" autocomplete="off" placeholder="Enter pairing PIN" aria-describedby="speaker-pin-help"><button id="show-speaker-pin" type="button" class="secondary" aria-pressed="false">Show</button><button id="save-speaker-pin" type="button" class="secondary">Save PIN</button></div>
+          <p id="speaker-pin-help" class="muted">Must match the PIN configured on your prop. Default: 1234.</p>
+          <p id="speaker-pin-result" class="result" aria-live="polite"></p>
+        </div>
         <div class="controls">
           <button id="speaker-connect" type="button">Prepare and connect speaker</button>
           <button id="speaker-disconnect" type="button" class="secondary">Disconnect speaker</button>
@@ -831,7 +831,7 @@
         <div class="smart-setup-body">
         <div class="section-heading">
           <div>
-            <h2>WiFi settings</h2>
+
             <p class="muted help-copy">Change the controller's network at any time or return to the private USA setup hotspot.</p>
           </div>
           </div>
@@ -901,8 +901,8 @@
       </section>
 
       <section id="ssh-access-section">
-        <details class="tools-card" id="ssh-access-section-details"><summary>Support access<span>Temporary SSH access</span></summary><div class="tools-card-content">
-        <div class="section-heading"><div><h2>Support access (SSH)</h2><p class="muted help-copy">Disabled by default. Regular operation never requires SSH.</p></div><span id="ssh-status" class="driver-badge neutral">disabled</span></div>
+        <details class="tools-card" id="ssh-access-section-details"><summary class="status-summary">Support access<span>Temporary SSH access</span><span id="ssh-status" class="driver-badge neutral">disabled</span></summary><div class="tools-card-content">
+
         <form id="ssh-enable-form" class="ssh-control-form">
           <label><span>Private support password</span><input id="ssh-password" type="password" minlength="10" autocomplete="new-password" placeholder="Create a unique password"></label>
           <label class="check-inline"><input id="ssh-persistent" type="checkbox"> Keep SSH enabled after 30 minutes</label>
@@ -915,7 +915,7 @@
 
       <section id="controller-power-section">
         <details class="tools-card" id="controller-power-section-details"><summary>Power & restart<span>Restart USA, reboot or shut down</span></summary><div class="tools-card-content">
-        <div class="section-heading"><div><h2>Controller power</h2><p class="muted help-copy">Manage the USA service or safely restart and shut down the Raspberry Pi.</p></div></div>
+        <div class="section-heading"><div><p class="muted help-copy">Manage the USA service or safely restart and shut down the Raspberry Pi.</p></div></div>
         <div class="controls"><button id="restart-usa-service" type="button" class="secondary">Restart USA service</button><button id="reboot-controller" type="button" class="warning">Reboot Raspberry Pi</button><button id="shutdown-controller" type="button" class="disconnect">Shut down Raspberry Pi</button></div>
         <p id="controller-power-result" class="result" aria-live="polite"></p>
 
@@ -1039,7 +1039,7 @@
         <details class="tools-card" id="diagnostics-section-details"><summary>System Health<span>Checks and practical next steps</span></summary><div class="tools-card-content">
         <div class="section-heading">
           <div>
-            <h2>System Health</h2>
+
             <p class="muted help-copy">Checks Bluetooth, PipeWire, microphone, camera, and networking.</p>
           </div>
           <button id="run-diagnostics" class="secondary">Run checks</button>
@@ -1062,12 +1062,12 @@
         </form>
       </dialog>
     </main>
-    <script src="/static/core/api.js?v=0.28.0-stable"></script>
-    <script src="/static/core/store.js?v=0.28.0-stable"></script>
-    <script src="/static/core/status.js?v=0.28.0-stable"></script>
-    <script src="/static/core/header.js?v=0.28.0-stable"></script>
-    <script src="/static/core/audio.js?v=0.28.0-stable"></script>
-    <script src="/static/core/polling.js?v=0.28.0-stable"></script>
-    <script src="/static/app.js?v=0.28.0-stable"></script>
+    <script src="/static/core/api.js?v=0.28.5"></script>
+    <script src="/static/core/store.js?v=0.28.5"></script>
+    <script src="/static/core/status.js?v=0.28.5"></script>
+    <script src="/static/core/header.js?v=0.28.5"></script>
+    <script src="/static/core/audio.js?v=0.28.5"></script>
+    <script src="/static/core/polling.js?v=0.28.5"></script>
+    <script src="/static/app.js?v=0.28.5"></script>
   </body>
 </html>

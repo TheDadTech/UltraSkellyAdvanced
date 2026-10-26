@@ -802,3 +802,9 @@ body.help-mode-off .help-copy { display:none !important; }
 .camera-mount-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; }
 .camera-mount-choice .trigger-choice { white-space: nowrap; }
 .camera-mount-choice input[type="radio"] { width: auto; padding: 0; flex: 0 0 auto; }
+
+.speaker-pin-settings { max-width: 520px; margin-bottom: 16px; }
+.speaker-pin-settings .controls { flex-wrap: nowrap; margin-top: 6px; }
+.speaker-pin-settings input { flex: 1; min-width: 80px; }
+.tools-card > summary.status-summary { position: relative; padding-right: 100px; }
+.tools-card > summary.status-summary > .driver-badge { position: absolute; right: 16px; top: 14px; margin: 0; font-weight: 700; }
