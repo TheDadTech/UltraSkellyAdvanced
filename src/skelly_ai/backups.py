@@ -7,6 +7,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -20,6 +21,8 @@ from . import __version__
 from .operation_settings import OperationSettings
 from .provider_settings import ProviderSettings
 from .pi_media import PiMediaLibrary
+from .fpp_sync import FppSettings
+from .fseq_import import basename
 
 
 class BackupError(ValueError):
@@ -29,7 +32,7 @@ class BackupError(ValueError):
 class BackupManager:
     MAGIC = b"USA-BACKUP-1\n"
     MAX_BYTES = 128 * 1024 * 1024
-    SETTINGS = {"operation-settings.json", "provider-settings.json", "credentials.json", "pi-media.json", "nag-media.json"}
+    SETTINGS = {"operation-settings.json", "provider-settings.json", "credentials.json", "pi-media.json", "nag-media.json", "fpp-settings.json", "fpp-sequence-map.json"}
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -53,13 +56,13 @@ class BackupManager:
         except InvalidTag:
             raise BackupError("Incorrect password or damaged backup") from None
 
-    def inventory(self, include_media: bool = False) -> dict:
-        files = self._files(include_media)
+    def inventory(self, include_media: bool = False, include_generated: bool | None = None) -> dict:
+        files = self._files(include_media, include_generated)
         total = sum(path.stat().st_size for path in files.values())
         return {"files": sorted(files), "bytes": total, "limit_bytes": self.MAX_BYTES,
-                "includes_media": include_media, "fits": total < self.MAX_BYTES - 1024 * 1024}
+                "includes_media": include_media, "includes_generated": include_media if include_generated is None else include_generated, "fits": total < self.MAX_BYTES - 1024 * 1024}
 
-    def _files(self, include_media: bool) -> dict[str, Path]:
+    def _files(self, include_media: bool, include_generated: bool | None = None) -> dict[str, Path]:
         files = {}
         for name in self.SETTINGS:
             path = self.data_dir / name
@@ -70,19 +73,25 @@ class BackupManager:
         media = self.data_dir / "media"
         if media.is_symlink():
             raise BackupError("Backup refuses a linked media directory")
-        if include_media and media.exists():
+        # Omitted generated flag preserves the legacy "all media" API behavior.
+        generated_selected = include_media if include_generated is None else include_generated
+        metadata_path = self.data_dir / "pi-media.json"
+        metadata = json.loads(metadata_path.read_text()).get("files", {}) if metadata_path.is_file() else {}
+        if (include_media or generated_selected) and media.exists():
             for path in media.iterdir():
                 if path.is_file() and not path.is_symlink() and path.suffix.lower() in PiMediaLibrary.ALLOWED_SUFFIXES:
-                    files[f"media/{path.name}"] = path
+                    generated = bool(re.fullmatch(r"fseq-[a-f0-9]{32}\.wav", path.name, re.IGNORECASE)) or metadata.get(path.name, {}).get("generated_fseq") is True
+                    if (generated_selected if generated else include_media):
+                        files[f"media/{path.name}"] = path
         return files
 
-    def create(self, password: str, include_media: bool = False, overrides: dict[str, bytes] | None = None) -> bytes:
-        files = self._files(include_media)
-        if not self.inventory(include_media)["fits"]:
+    def create(self, password: str, include_media: bool = False, overrides: dict[str, bytes] | None = None, include_generated: bool | None = None) -> bytes:
+        files = self._files(include_media, include_generated)
+        if not self.inventory(include_media, include_generated)["fits"]:
             raise BackupError("Backup exceeds 128 MiB; omit audio files and copy large media separately")
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.json", json.dumps({"format": 1, "version": __version__, "media": include_media}))
+            archive.writestr("manifest.json", json.dumps({"format": 1, "version": __version__, "media": include_media, "generated": include_media if include_generated is None else include_generated}))
             for name, path in files.items():
                 archive.writestr(name, (overrides or {}).get(name, path.read_bytes()))
             for name, payload in (overrides or {}).items():
@@ -128,7 +137,7 @@ class BackupManager:
             value = json.loads(payload)
             if not isinstance(value, dict):
                 raise BackupError("Settings must be objects")
-            model = {"operation-settings.json": OperationSettings, "provider-settings.json": ProviderSettings}.get(name)
+            model = {"operation-settings.json": OperationSettings, "provider-settings.json": ProviderSettings, "fpp-settings.json": FppSettings}.get(name)
             if model:
                 if set(value) - model.model_fields.keys():
                     raise BackupError("Settings contain unsupported fields")
@@ -136,6 +145,20 @@ class BackupManager:
                     model.model_validate(value)
                 except ValueError:
                     raise BackupError("Invalid installation or voice settings") from None
+            elif name == "fpp-sequence-map.json":
+                if len(value) > 4096:
+                    raise BackupError("Too many FPP song links")
+                for song, entry in value.items():
+                    basename(song)
+                    if not isinstance(entry, dict):
+                        raise BackupError("Invalid FPP song link")
+                    for field in ("file", "sequence_file", "audio_file"):
+                        if field in entry and entry[field] is not None:
+                            basename(entry[field])
+                    if "file" not in entry or not isinstance(entry.get("track"), str) or len(entry["track"]) > 160:
+                        raise BackupError("Invalid FPP singing part")
+                    if entry.get("source", "sequence") not in {"sequence", "audio"}:
+                        raise BackupError("Invalid FPP song source")
             elif name == "credentials.json":
                 pin = value.get("speaker_pin")
                 if pin is not None and (not isinstance(pin, str) or not 4 <= len(pin) <= 16 or not pin.isascii() or not pin.isdecimal()):

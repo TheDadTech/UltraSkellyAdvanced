@@ -4,24 +4,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UltraSkellyAdvanced Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css?v=0.28.5">
+    <link rel="stylesheet" href="/static/styles.css?v=030-rc1">
   </head>
   <body>
     <main>
       <header class="product-header">
         <div class="product-hero">
-          <img src="/static/ultra-skelly-banner.png" alt="Ultra Skelly Advanced — Build, Automate, Connect">
+          <img src="/static/ultra-skelly-holiday-banner.png" alt="Ultra Skelly Advanced — holiday Skelly">
           <h1 class="sr-only">UltraSkellyAdvanced</h1>
         </div>
         <div class="product-control-bar">
           <div class="product-control-copy">
             <p class="eyebrow">ULTRASKELLYADVANCED · A THEDADTECH PROJECT</p>
-            <p class="header-summary">Bring your animatronic to life with AI conversation and operator control from one Raspberry Pi, with optional DAC/xLights show integration.</p>
+            <p class="header-summary">Bring your animatronic to life with AI conversation and operator control from one Raspberry Pi, now with FPP integration.</p>
           </div>
           <div class="header-actions">
             <div class="header-connection-group">
               <a id="version-pill" class="connection-pill" href="https://github.com/TheDadTech/UltraSkellyAdvanced/releases" target="_blank" rel="noopener noreferrer">Loading controller...</a>
               <button id="update-available-badge" type="button" class="update-available-badge" hidden>Update available</button>
+              <button id="wifi-status-light" class="header-wifi-icon waiting" type="button" title="Network status checking" aria-label="Network status checking. Open Wi-Fi settings"><svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 16a5.5 5.5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg><span id="header-network-label" class="sr-only">Network</span><span id="header-wifi-status" class="sr-only">checking</span></button>
               <button id="top-connect-skelly" type="button">Connect to Skelly</button>
             </div>
             <div class="header-volume-control">
@@ -65,7 +66,7 @@
 
       <section class="status-card" aria-label="Live service status">
         <div class="service-status"><span id="pi-status-light" class="status-light waiting"></span><span><small>PI SERVICE</small><strong id="connection">Connecting…</strong></span></div>
-        <div class="service-status"><span id="wifi-status-light" class="status-light waiting"></span><span><small id="header-network-label">NETWORK</small><strong id="header-wifi-status">checking</strong></span></div>
+        <div class="service-status"><span id="fpp-status-light" class="status-light waiting"></span><span><small>FPP</small><strong id="header-fpp-status">Checking…</strong></span></div>
         <div class="service-status"><span id="prop-status-light" class="status-light waiting"></span><span><small>PROP BLE</small><strong id="header-prop-status">checking</strong></span></div>
         <div class="service-status"><span id="speaker-status-light" class="status-light waiting"></span><span><small id="header-speaker-label">SKELLY SPEAKER</small><strong id="header-speaker-status">checking</strong></span></div>
         <div class="service-status"><span id="dac-status-light" class="status-light waiting"></span><span><small>HEAD + JAW</small><strong id="header-dac-status">checking</strong></span></div>
@@ -74,14 +75,14 @@
 
       <nav class="dashboard-tabs" role="tablist" aria-label="UltraSkellyAdvanced dashboard">
         <button type="button" role="tab" id="tab-operate" aria-controls="panel-operate" aria-selected="true" data-dashboard-tab="operate">Operate</button>
-        <button type="button" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" data-dashboard-tab="setup">Setup</button>
-        <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false" data-dashboard-tab="voice">Voice Tuning</button>
+        <button type="button" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false" data-dashboard-tab="setup">Setup and Features</button>
+        <button type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="false" data-dashboard-tab="voice">AI &amp; Voice</button>
         <button type="button" role="tab" id="tab-diagnostics" aria-controls="panel-diagnostics" aria-selected="false" data-dashboard-tab="diagnostics">System &amp; Tools</button>
       </nav>
 
       <div id="panel-operate" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-operate" data-dashboard-panel="operate"></div>
       <div id="panel-setup" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-setup" data-dashboard-panel="setup" hidden>
-        <section id="saved-skelly-section" class="setup-device-card">
+        <section id="saved-skelly-section" class="setup-device-card"><details class="setup-fold"><summary>Your Skelly</summary><div class="setup-fold-content">
           <div class="section-heading">
             <div>
               <p class="section-kicker">YOUR SKELLY</p>
@@ -112,9 +113,9 @@
             <button id="start-default-operation" type="button">Start default mode</button>
           </div>
           <p id="setup-start-result" class="result" aria-live="polite"></p>
-        </section>
+        </div></details></section>
 
-        <section id="audio-output-section" class="setup-device-card">
+        <section id="audio-output-section" class="setup-device-card"><details class="setup-fold"><summary>Speaker routing & jaw sync</summary><div class="setup-fold-content">
           <div class="section-heading">
             <div>
               <p class="section-kicker">AUDIO OUTPUT</p>
@@ -131,7 +132,7 @@
                 <option value="system">USB / Pi Audio</option>
               </select>
             </label>
-            <label class="check-setting"><input id="jaw-follow-speech" type="checkbox" checked><span><strong>Jaw follows speech</strong><small class="help-copy">With DAC, USA animates the jaw from the speech waveform. Without DAC, USA mirrors speech to Skelly's speaker so its audio-reactive jaw can still move.</small></span></label>
+            <label class="check-setting"><input id="jaw-follow-speech" type="checkbox" checked><span><strong>Jaw follows speech</strong><small class="help-copy">Skelly moves its jaw in response to the audio played through its speaker.</small></span></label>
             <label class="range-setting sync-setting"><span>Jaw / Audio timing <output id="jaw-sync-offset-value">Jaw sooner by 750 ms</output></span><div class="sync-direction-labels" aria-hidden="true"><span>Jaw sooner</span><span></span><span>Audio sooner</span></div><input id="jaw-sync-offset" type="range" min="-1000" max="1000" step="25" value="-750"><small class="help-copy">Move the slider toward whichever one needs to start sooner. USA still applies Bluetooth latency compensation behind the scenes.</small></label>
             <label class="range-setting"><span>Jaw mirror level <output id="jaw-mirror-level-value">100%</output></span><input id="jaw-mirror-level" type="range" min="70" max="100" step="5" value="100"><small class="help-copy">Level sent to Skelly's speaker to trigger its stock audio-reactive jaw. Lower values may stop jaw movement.</small></label>
             <label class="check-setting"><input id="mute-skelly-speaker-on-external" type="checkbox" checked><span><strong>Mute Skelly speaker with external audio</strong><small class="help-copy">Keeps the jaw-driving Bluetooth stream at full strength while muting only Skelly's onboard speaker. Your previous Skelly volume is restored when you switch back.</small></span></label>
@@ -153,11 +154,11 @@
           <p id="audio-output-note" class="muted help-copy"></p>
           <div class="controls"><button id="save-audio-output" type="button">Save audio output</button></div>
           <p id="audio-output-result" class="result" aria-live="polite"></p>
-        </section>
+        </div></details></section>
       </div>
       <div id="panel-voice" class="dashboard-panel" role="tabpanel" aria-labelledby="tab-voice" data-dashboard-panel="voice" hidden>
         <section class="advanced-intro">
-          <p class="section-kicker">VOICE TUNING</p>
+          <p class="section-kicker">AI &amp; VOICE</p>
           <h2>Choose the brain, voice, and talking behavior</h2>
           <p class="muted help-copy">Voice settings are shared by AI Mode and Operator Mode. Personality affects AI-generated replies.</p>
         </section>
@@ -195,7 +196,7 @@
         </section>
       </div>
 
-      <section id="operation-preferences-section">
+      <section id="operation-preferences-section"><details class="setup-fold"><summary>Default mode & installation</summary><div class="setup-fold-content">
         <div class="section-heading">
           <div>
             <p class="section-kicker">STARTUP BEHAVIOR</p>
@@ -206,14 +207,14 @@
         </div>
         <form id="operation-settings-form" class="operation-settings-form">
           <label><span>Skelly Name</span><input id="skelly-name" type="text" minlength="1" maxlength="30" value="Skelly" autocomplete="off"><small class="help-copy">The name the AI uses for itself during conversations.</small></label>
-          <label><span>Hardware setup</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label>
+          <label><span>Installation</span><select id="installation-profile"><option value="standard">Standard</option><option value="fpp">With FPP</option></select><small>FPP works with standard Skelly hardware.</small></label><details class="advanced-motor-settings" hidden><summary>Advanced motor hardware</summary><label><span>Motor hardware</span><select id="hardware-profile"><option value="stock">Standard — no DAC or ESP32</option><option value="dac">Advanced — DAC + ESP32 installed</option></select></label></details>
           <label><span>Default mode</span><select id="default-operation-mode"><option value="classic">The Lab</option><option value="ai">AI Mode — Unmanned</option><option value="manual">Operator Mode — Manned</option><option value="idle">Remain idle</option></select></label>
           <label class="check-setting"><input id="auto-start-operation" type="checkbox"><span><strong>Start automatically when this Pi boots</strong><small class="help-copy">Uses the saved default mode. Remain idle disables automatic startup.</small></span></label>
           <label id="fpp-override-setting" class="check-setting" hidden><input id="allow-fpp-override" type="checkbox"><span><strong>Allow FPP/xLights override</strong><small class="help-copy">When enabled, a show can temporarily take priority and release local DAC output.</small></span></label>
           <button type="submit">Save installation choices</button>
         </form>
         <p id="operation-settings-result" class="result" aria-live="polite"></p>
-      </section>
+      </div></details></section>
 
       <details id="replace-skelly-section" class="replace-skelly-section">
         <summary>Replace or reset Skelly</summary>
@@ -264,9 +265,10 @@
       <section id="maintenance-section">
 
         <details class="tools-card" id="backup-tools"><summary>Backup &amp; Restore<span>Encrypted settings, credentials and recovery copies</span></summary><div class="tools-card-content">
-        <p>Encrypted backups include installation settings, voice settings, saved API credentials, and Pi Media presets. Optionally include audio files (128 MiB backup limit). WiFi passwords, host Bluetooth pairings, environment files, models and temporary previews are excluded. Keep the password safe: it cannot be recovered.</p>
+        <p>Encrypted backups include installation settings, voice settings, saved API credentials, FPP settings and song links, and Pi Media presets. Optionally include audio files (128 MiB backup limit). WiFi passwords, host Bluetooth pairings, environment files, models and temporary previews are excluded. Keep the password safe: it cannot be recovered.</p>
         <label>Backup password (at least 12 characters) <input id="backup-password" type="password" minlength="12" maxlength="256" autocomplete="off"></label>
-        <label class="check-setting"><input id="backup-include-media" type="checkbox"><span>Include Pi Media audio files</span></label>
+        <label class="check-setting"><input id="backup-include-media" type="checkbox"><span>Include uploaded audio and speech clips</span></label>
+        <label class="check-setting"><input id="backup-include-generated" type="checkbox"><span>Include generated FPP jaw tracks</span></label>
         <button id="backup-size" type="button">Check backup size</button>
         <button id="download-settings-backup" type="button">Download Backup</button>
         <label>Encrypted backup <input id="settings-backup-file" type="file" accept=".usabackup"></label>
@@ -325,7 +327,7 @@
           </div>
         </div>
         <div class="mode-card-grid">
-          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>The Lab</h3><p>Skelly and Pi Media with saved eyes, lights and movement.</p><button type="button" data-start-operation="classic">Start The Lab</button></article>
+          <article class="mode-card" data-mode-card="classic"><span class="mode-icon">▶</span><h3>The Lab</h3><p>Upload your own sounds to Pi Media, or play Skelly’s stored sounds with saved eyes, lights and movement.</p><button type="button" data-start-operation="classic">Start The Lab</button></article>
 
           <article class="mode-card featured" data-mode-card="ai"><span class="mode-icon">◎</span><h3>AI Mode <small>UNMANNED</small></h3><p>Detect visitors, listen, answer, track, and animate automatically.</p><button type="button" data-start-operation="ai">Start AI Mode</button></article>
           <article class="mode-card" data-mode-card="manual"><span class="mode-icon">✦</span><h3>Operator Mode <small>MANNED</small></h3><p>Type Skelly’s dialogue and puppeteer gestures, eyes, lights, and movement live.</p><button type="button" data-start-operation="manual">Start Operator Mode</button></article>
@@ -932,8 +934,8 @@
         </div>
         <div id="operator-gestures">
           <div class="section-heading">
-            <div><h2>Gestures</h2><p class="muted help-copy">Direct head positioning and animated reactions for live puppeteering.</p></div>
-            <span id="gesture-capability" class="driver-badge neutral">checking DAC</span>
+            <div><h2>Gestures</h2><p class="muted help-copy">Play a laugh during a live conversation.</p></div>
+            <span id="gesture-capability" class="driver-badge neutral">checking</span>
           </div>
           <div class="gesture-console">
             <div class="head-direction-pad" aria-label="Head direction controls">
@@ -954,7 +956,7 @@
               <button id="stop-operator-gesture" type="button" class="warning">Stop Gesture</button>
             </div>
           </div>
-          <p class="security-note">Directional gestures use the configured full-safe DAC travel and restore the previous position after animated Yes, No, Confused, or Laugh actions. Laugh uses the active cloud voice when available and falls back to stored Laugh/Cackle media or the Pi’s offline voice.</p>
+          <p class="security-note">Laugh uses your selected voice when available, or a stored laugh or the Pi’s offline voice.</p>
           <p id="gesture-result" class="result" aria-live="polite"></p>
         </div>
       </section>
@@ -1025,7 +1027,7 @@
             <fieldset class="movement-checks"><legend>Movement</legend><label class="check-inline"><input id="media-move-all" type="checkbox"> All</label><label class="check-inline"><input id="media-move-head" type="checkbox"> Head</label><label class="check-inline"><input id="media-move-arm" type="checkbox"> Arm</label><label class="check-inline"><input id="media-move-torso" type="checkbox"> Torso</label><label id="media-movement-activity-setting" class="movement-activity-setting" hidden><span>Movement activity</span><select id="media-movement-activity"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select><small class="help-copy">Controls how often selected movements retrigger while Pi Media plays.</small></label></fieldset>
             <fieldset class="media-eye-picker"><legend>Eye</legend><input id="media-edit-eye" type="hidden" value="1"><div id="media-edit-eye-choices" class="media-eye-choices" role="group" aria-label="Preset eye"></div></fieldset>
           </div>
-          <label id="media-edit-jaw-setting" class="check-setting" hidden><input id="media-edit-jaw-sync" type="checkbox" checked><span><strong>Jaw sync</strong><small class="help-copy">Drive Skelly's jaw from this Pi audio file using the same playback path as AI speech.</small></span></label>
+          <label id="media-edit-jaw-setting" class="check-setting" hidden><input id="media-edit-jaw-sync" type="checkbox" checked><span><strong>Jaw sync</strong><small class="help-copy">Drive Skelly's jaw from this Pi audio file using the same playback path as AI speech.</small></span></label><label id="media-edit-jaw-timing-setting" hidden>Jaw movement timing <strong id="media-edit-jaw-timing-value">0 ms</strong><input id="media-edit-jaw-timing" type="range" min="-5000" max="5000" step="25" value="0"><small>Earlier ← · 0 matches the singing track · → Later. Only changes this track.</small></label>
           <div class="light-control-grid">
             <fieldset class="light-control" data-edit-light="head"><legend>Head light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
             <fieldset class="light-control" data-edit-light="torso"><legend>Torso light</legend><label>Color <input class="edit-light-color" type="color"></label><label>Brightness <input class="edit-light-brightness" type="range" min="0" max="255"></label><label>Effect <select class="edit-light-mode"><option value="1">Static</option><option value="2">Strobe</option><option value="3">Pulsing</option></select></label><label class="check-inline"><input class="edit-light-cycle" type="checkbox"> Color cycle</label></fieldset>
@@ -1068,6 +1070,10 @@
     <script src="/static/core/header.js?v=0.28.5"></script>
     <script src="/static/core/audio.js?v=0.28.5"></script>
     <script src="/static/core/polling.js?v=0.28.5"></script>
-    <script src="/static/app.js?v=0.28.5"></script>
+    <script>document.documentElement.dataset.setupWizard="true";</script>
+    <script src="/static/app.js?v=030-rc1"></script>
+    <script src="/static/features.js?v=030-rc1"></script>
+    <script src="/static/fseq.js?v=030-rc1-clean1"></script>
+    <script src="/static/setup-wizard.js?v=030-rc1"></script>
   </body>
 </html>

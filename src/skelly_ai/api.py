@@ -42,6 +42,7 @@ from .classic_audio import (
     SimulatedClassicAudio,
 )
 from .config import Settings
+from .fpp_sync import MediaTimeline, MultiSyncListener, FppPlayback, FppSettings, FppSettingsStore
 from .credentials import (
     CredentialStore,
     CredentialStoreError,
@@ -255,6 +256,7 @@ class PiMediaEditRequest(BaseModel):
     head_light: LightSettings = Field(default_factory=LightSettings)
     torso_light: LightSettings = Field(default_factory=LightSettings)
     jaw_sync: bool = True
+    jaw_timing_offset_ms: int = Field(default=0, ge=-5000, le=5000)
     movement_activity: Literal["low", "normal", "high"] = "normal"
     nag_response: bool = False
 
@@ -432,6 +434,164 @@ def create_app(
         temporary.replace(elevenlabs_cache_path)
         elevenlabs_cache_path.chmod(0o600)
 
+    fpp_store = FppSettingsStore(app_settings.data_dir, FppSettings(
+        enabled=app_settings.fpp_sync_enabled,
+        master_ip=app_settings.fpp_master_ip,
+        interface_ip=app_settings.fpp_sync_interface_ip,
+    ))
+    fpp_settings = fpp_store.load()
+    fpp_timeline = None
+    fpp_listener = None
+    fpp_playback = None
+    fpp_poll_task = None
+    fpp_connected = False
+    fpp_config_lock = asyncio.Lock()
+    application_started = False
+
+    async def poll_fpp_connection():
+        nonlocal fpp_connected
+        try:
+            async with httpx.AsyncClient(timeout=2, follow_redirects=False) as client:
+                while True:
+                    try:
+                        response = await client.get(f"http://{fpp_settings.master_ip}/api/system/status")
+                        body = response.json()
+                        fpp_connected = response.status_code == 200 and isinstance(body, dict) and "fppd" in body and "mode_name" in body
+                    except (httpx.HTTPError, ValueError):
+                        fpp_connected = False
+                    await asyncio.sleep(5)
+        finally:
+            fpp_connected = False
+
+    async def stop_fpp():
+        nonlocal fpp_poll_task, fpp_listener, fpp_playback, fpp_connected
+        if fpp_poll_task:
+            fpp_poll_task.cancel()
+            try:
+                await fpp_poll_task
+            except asyncio.CancelledError:
+                pass
+            fpp_poll_task = None
+        if fpp_playback:
+            await fpp_playback.close()
+            fpp_playback = None
+        if fpp_listener:
+            fpp_listener.close()
+            fpp_listener = None
+        fpp_connected = False
+
+    fpp_saved_prop_volume = None
+
+    def fpp_stock_target():
+        speaker = classic_audio.snapshot()
+        if not speaker.connected or not speaker.sink_ready:
+            raise SpeechUnavailable("Skelly Bluetooth audio is not ready")
+        target = speaker.sink_name or speaker.sink_id
+        if not target:
+            raise SpeechUnavailable("Skelly Bluetooth audio has no playback target")
+        return str(target)
+
+    async def mute_for_fpp():
+        nonlocal fpp_saved_prop_volume
+        fpp_stock_target()
+        fpp_saved_prop_volume = int(hardware.media_status().get("volume", 100))
+        await hardware.set_volume(0)
+
+    async def restore_after_fpp():
+        nonlocal fpp_saved_prop_volume
+        if fpp_saved_prop_volume is not None:
+            saved = fpp_saved_prop_volume
+            fpp_saved_prop_volume = None
+            await hardware.set_volume(saved)
+
+    def fpp_output_ready():
+        prop = hardware.snapshot()
+        if not dac.snapshot().armed or fpp_settings.play_audio:
+            speaker = classic_audio.snapshot()
+            if not speaker.connected or not speaker.sink_ready:
+                return False
+        return (prop.connected and prop.live_mode
+                and hardware.media_status().get("playing_serial") is None
+                and pi_media_playing_name is None
+                and operator_gesture_task is None
+                and not perception.status().get("session_active"))
+
+    async def update_fpp_priority(eligible):
+        await perception.set_fpp_pause(bool(eligible and fpp_settings.override_ai), resume=application_started)
+
+    def fpp_file_settings(path):
+        try:
+            return pi_media.get(path.name)
+        except PiMediaError:
+            return {}
+
+    def fpp_timing_offset():
+        path = fpp_timeline.local_file() if fpp_timeline else None
+        extra = int(fpp_file_settings(path).get('jaw_timing_offset_ms', 0)) if path else 0
+        return -(operation_store.load().jaw_sync_offset_ms + extra) / 1000
+
+    fpp_movement_task = None
+
+    async def apply_fpp_preset(path):
+        nonlocal fpp_movement_task
+        entry = fpp_file_settings(path)
+        if not entry:
+            return
+        await hardware.set_eye_index(int(entry.get('eye', 1)))
+        for channel, light in enumerate(entry.get('lights') or []):
+            if channel > 1:
+                break
+            await hardware.set_lighting(channel, int(light.get('brightness', 255)), int(light.get('r', 255)), int(light.get('g', 0)), int(light.get('b', 0)), int(light.get('effect_mode', 1)), bool(light.get('cycle', False)))
+        action = int(entry.get('action', 0))
+        if pi_media_movement_bits(action):
+            fpp_movement_task = asyncio.create_task(run_pi_media_movement(action, str(entry.get('movement_activity', 'normal'))))
+
+    async def clear_fpp_preset():
+        nonlocal fpp_movement_task
+        if fpp_movement_task is not None:
+            fpp_movement_task.cancel()
+            try:
+                await fpp_movement_task
+            except asyncio.CancelledError:
+                pass
+            fpp_movement_task = None
+        try:
+            await hardware.stop()
+        except HardwareUnavailable:
+            pass
+
+    async def configure_fpp():
+        nonlocal fpp_timeline, fpp_listener, fpp_playback, fpp_poll_task
+        await stop_fpp()
+        fpp_timeline = (MediaTimeline(app_settings.data_dir / "media", str(fpp_settings.master_ip))
+                        if fpp_settings.master_ip else None)
+        if not fpp_settings.enabled or fpp_timeline is None or not application_started:
+            return
+        fpp_listener = MultiSyncListener(fpp_timeline)
+        fpp_playback = FppPlayback(fpp_timeline, local_speech, dac,
+                                  silent=not fpp_settings.play_audio,
+                                  stock_before=mute_for_fpp, stock_after=restore_after_fpp, stock_target=fpp_stock_target,
+                                  offset_seconds=fpp_timing_offset,
+                                  priority_update=update_fpp_priority, preset_before=apply_fpp_preset, preset_after=clear_fpp_preset, file_settings=fpp_file_settings,
+                                  ready=fpp_output_ready)
+        try:
+            await fpp_listener.start(str(fpp_settings.interface_ip))
+            await fpp_playback.start()
+        except OSError as exc:
+            fpp_timeline.listener_error = str(exc)
+        fpp_poll_task = asyncio.create_task(poll_fpp_connection())
+
+    def fpp_sync_status() -> dict[str, object]:
+        return {
+            "enabled": fpp_settings.enabled,
+            "configured": bool(fpp_settings.master_ip),
+            "override_ai": fpp_settings.override_ai,
+            "connected": fpp_connected,
+            "listening": bool(fpp_listener and fpp_listener.transport),
+            **(fpp_timeline.snapshot() if fpp_timeline else {}),
+            **(fpp_playback.status() if fpp_playback else {}),
+        }
+
     operation_store = OperationSettingsStore(
         app_settings.data_dir,
         defaults=OperationSettings(
@@ -444,6 +604,9 @@ def create_app(
     speaker_repair_state = {"state": "idle", "message": ""}
     nag_media_path = app_settings.data_dir / "nag-media.json"
     pi_media = PiMediaLibrary(app_settings.data_dir)
+    from .fseq_import import SequenceLibrary, basename as sequence_basename
+    sequence_library = SequenceLibrary(app_settings.data_dir)
+    sequence_import_lock = asyncio.Lock()
     tts_previews = TTSPreviewManager(app_settings.data_dir)
     tts_generation_lock = asyncio.Lock()
     pi_media_task: asyncio.Task | None = None
@@ -1118,10 +1281,14 @@ def create_app(
             else:
                 await hardware.stop()
             await prepare_pi_media_audio_output()
+            offset = int(entry.get('jaw_timing_offset_ms', 0))
+            if offset > 0:
+                await asyncio.sleep(offset / 1000)
             return await local_speech.play_audio_file(
                 pi_media.path_for(name),
                 dac,
                 engine=f"pi-media:{name}",
+                start_seconds=max(0.0, -offset / 1000),
                 jaw_follow=bool(entry.get("jaw_sync", True)),
             )
         finally:
@@ -1233,7 +1400,8 @@ def create_app(
                 setattr(perform_visitor_nag, "_last_media_key", key)
                 return {"performed": True, "mode": "media", "source": "pi", "name": name}
             serial = int(selected["serial"])
-            await hardware.play_media(serial, True)
+            async with local_speech._lock:
+                await hardware.play_media(serial, True)
             key = f"skelly:{serial}"
             setattr(perform_visitor_nag, "_last_media_key", key)
             return {"performed": True, "mode": "media", "source": "skelly", "serial": serial}
@@ -1405,6 +1573,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         nonlocal auto_start_task, external_audio_reconnect_task
+        nonlocal application_started
+        application_started = True
+        await configure_fpp()
         await controller.ready()
         if operation_store.load().device_configured:
             try:
@@ -1427,7 +1598,8 @@ def create_app(
                     await ensure_skelly_fallback_audio_ready(boot_settings)
             apply_audio_output_settings()
         external_audio_reconnect_task = asyncio.create_task(maintain_external_audio_connection())
-        if operation_store.load().auto_start:
+        startup_settings = operation_store.load()
+        if startup_settings.auto_start and startup_settings.device_configured:
             auto_start_task = asyncio.create_task(auto_start_saved_mode())
         yield
         if auto_start_task is not None and not auto_start_task.done():
@@ -1442,6 +1614,8 @@ def create_app(
                 await external_audio_reconnect_task
             except asyncio.CancelledError:
                 pass
+        application_started = False
+        await stop_fpp()
         await perception.stop()
         await dac.close()
         await hardware.disconnect()
@@ -1522,6 +1696,7 @@ def create_app(
             "audio": classic_audio.snapshot().to_dict(),
             "external_audio": external_audio.snapshot().to_dict(),
             "audio_route": audio_route_state(),
+            "fpp_sync": fpp_sync_status(),
             "dac": dac.snapshot().to_dict(),
             "operation": {
                 **operation_state,
@@ -1701,14 +1876,16 @@ def create_app(
                     audio_result["source"] = f"cloud_{settings.voice_provider}"
                 except SpeechUnavailable:
                     if laugh_file is not None:
-                        await hardware.play_media(int(laugh_file["serial"]), True)
+                        async with local_speech._lock:
+                            await hardware.play_media(int(laugh_file["serial"]), True)
                         audio_result = {"source": "skelly_media", "name": str(laugh_file.get("name") or "Laugh")}
                     else:
                         apply_local_voice_settings(settings)
                         audio_result = await local_speech.speak("Ha! Ha! Ha! Ha!", dac)
                         audio_result["source"] = "offline_local"
             elif laugh_file is not None:
-                await hardware.play_media(int(laugh_file["serial"]), True)
+                async with local_speech._lock:
+                    await hardware.play_media(int(laugh_file["serial"]), True)
                 audio_result = {
                     "source": "skelly_media",
                     "name": str(laugh_file.get("name") or "Laugh"),
@@ -1881,6 +2058,21 @@ def create_app(
         return onboarding.public_status(
             prop_configured=operation_store.load().device_configured
         )
+
+    @app.post("/api/onboarding/progress")
+    async def onboarding_progress(request: Request):
+        require_local_operator(request)
+        body = await request.json()
+        step = body.get("step") if isinstance(body, dict) else None
+        if type(step) is not int or not 0 <= step <= 6:
+            raise HTTPException(422, "Invalid setup step")
+        state = onboarding.load()
+        state.wizard_step = step
+        state.wizard_complete = body.get("complete") is True
+        if state.wizard_complete and step != 6:
+            raise HTTPException(422, "Finish setup from the Ready screen")
+        onboarding.save(state)
+        return onboarding.public_status(prop_configured=operation_store.load().device_configured)
 
     @app.get("/api/onboarding/wifi")
     async def onboarding_wifi_scan(request: Request) -> dict[str, object]:
@@ -2215,10 +2407,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="Select a nonempty file")
 
     @app.get("/api/backup/inventory")
-    async def backup_inventory(request: Request, media: bool = False):
+    async def backup_inventory(request: Request, media: bool = False, generated: bool | None = None):
         maintenance_access(request)
         try:
-            return backups.inventory(media)
+            return backups.inventory(media, generated)
         except BackupError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
 
@@ -2262,12 +2454,12 @@ def create_app(
         return overrides
 
     @app.post("/api/backup/download")
-    async def backup_download(request: Request, media: bool = False):
+    async def backup_download(request: Request, media: bool = False, generated: bool | None = None):
         maintenance_access(request)
         async with maintenance_lock:
             try:
                 overrides = effective_backup_settings()
-                payload = await asyncio.to_thread(backups.create, backup_password(request), media, overrides)
+                payload = await asyncio.to_thread(backups.create, backup_password(request), media, overrides, generated)
                 return Response(payload, media_type="application/octet-stream", headers={"Content-Disposition": 'attachment; filename="usa-backup.usabackup"', "Cache-Control": "no-store"})
             except (BackupError, OSError):
                 raise HTTPException(status_code=422, detail="Could not create backup. Check password length, size and storage.") from None
@@ -2420,6 +2612,245 @@ def create_app(
     @app.get("/api/status")
     async def get_status() -> dict[str, object]:
         return state_response()
+
+    def require_local_operator(request: Request) -> None:
+        require_local_setup(request)
+        if request.headers.get("X-USA-Interactive-Auth") != "1":
+            raise HTTPException(status_code=403, detail="Use the USA operator interface")
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            raise HTTPException(status_code=403, detail="Cross-origin changes are not allowed")
+
+    @app.post("/api/fpp/resolve")
+    async def resolve_fpp(request: Request):
+        require_local_operator(request)
+        body = await request.json()
+        host = body.get("host", "") if isinstance(body, dict) else ""
+        if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host):
+            raise HTTPException(422, "Enter an FPP IP address or hostname without a URL or port")
+        import socket
+        try:
+            answers = await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, host, None, socket.AF_INET, socket.SOCK_DGRAM), timeout=4)
+            addresses = sorted({str(ipaddress.IPv4Address(a[4][0])) for a in answers})
+            addresses = [a for a in addresses if ipaddress.IPv4Address(a).is_private and not ipaddress.IPv4Address(a).is_loopback and not ipaddress.IPv4Address(a).is_unspecified and not ipaddress.IPv4Address(a).is_multicast]
+            if len(addresses) != 1:
+                raise ValueError()
+            return {"address": addresses[0]}
+        except (OSError, ValueError, asyncio.TimeoutError):
+            raise HTTPException(422, "Could not resolve one local FPP IPv4 address; enter its IP address") from None
+
+    @app.get("/api/fpp/discover")
+    async def discover_fpp(request: Request):
+        require_local_operator(request)
+        async with fpp_config_lock:
+            temporary = None
+            listener = fpp_listener
+            try:
+                if listener is None or listener.transport is None:
+                    temporary = MultiSyncListener(MediaTimeline(app_settings.data_dir / "media", "127.0.0.1"))
+                    listener = temporary
+                    await listener.start()
+                return {"players": await listener.discover()}
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(503, "FPP discovery unavailable; enter the address manually") from exc
+            finally:
+                if temporary:
+                    temporary.close()
+
+    @app.get("/api/fpp/settings")
+    async def get_fpp_settings(request: Request) -> dict[str, object]:
+        require_local_setup(request)
+        return fpp_settings.model_dump(mode="json")
+
+    @app.post("/api/fpp/settings")
+    async def set_fpp_settings(settings: FppSettings, request: Request) -> dict[str, object]:
+        nonlocal fpp_settings
+        require_local_operator(request)
+        if settings.enabled and not settings.play_audio and operation_store.load().hardware_profile != 'dac':
+            raise HTTPException(422, "Silent stock FPP singing failed hardware validation. Enable audible playback for stock Skelly.")
+        async with fpp_config_lock:
+            reconfigure = settings.model_dump(exclude={'override_ai'}) != fpp_settings.model_dump(exclude={'override_ai'})
+            fpp_store.save(settings)
+            fpp_settings = settings
+            if reconfigure:
+                await configure_fpp()
+            return fpp_settings.model_dump(mode="json")
+
+    @app.get("/api/fpp/status")
+    async def get_fpp_status() -> dict[str, object]:
+        return fpp_sync_status()
+
+    async def sequence_body(request: Request):
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 65536:
+                raise ValueError("Sequence settings request is too large")
+        try:
+            result = json.loads(raw)
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError("Invalid sequence settings JSON") from exc
+        if not isinstance(result, dict):
+            raise ValueError("Sequence settings must be an object")
+        return result
+
+    def sequence_change_allowed():
+        if sequence_import_lock.locked():
+            raise HTTPException(409, "Another sequence import or preparation is already running")
+
+    @app.get("/api/fpp/sequences")
+    async def list_fpp_sequences(request: Request):
+        require_local_setup(request)
+        if not fpp_settings.master_ip:
+            raise HTTPException(422, "Set the Main FPP address first")
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                async with client.stream('GET', f"http://{fpp_settings.master_ip}/api/files/sequences?nameOnly=1") as response:
+                    response.raise_for_status()
+                    raw = bytearray()
+                    async with asyncio.timeout(20):
+                        async for chunk in response.aiter_bytes():
+                            raw.extend(chunk)
+                            if len(raw) > 1024 * 1024:
+                                raise ValueError("FPP sequence list exceeds its supported size")
+                    data = json.loads(raw)
+            if not isinstance(data, list):
+                raise ValueError("FPP did not return a sequence list")
+            return {"files": [n for n in data if isinstance(n, str) and n.lower().endswith('.fseq') and '/' not in n and chr(92) not in n]}
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
+            raise HTTPException(422, "Unable to list sequences from Main FPP") from exc
+
+    @app.post("/api/fpp/sequence/import")
+    async def import_fpp_sequence(request: Request, filename: str | None = None):
+        require_local_operator(request)
+        sequence_change_allowed()
+        async with sequence_import_lock:
+            try:
+                if filename is None:
+                    async with asyncio.timeout(120):
+                        return await sequence_library.receive(request.stream())
+                sequence_basename(filename)
+                if not filename.lower().endswith('.fseq') or not fpp_settings.master_ip:
+                    raise ValueError("Choose an FSEQ from the configured Main FPP")
+                from urllib.parse import quote
+                async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
+                    async with client.stream('GET', f"http://{fpp_settings.master_ip}/api/file/sequences/{quote(filename, safe='')}") as response:
+                        response.raise_for_status()
+                        async with asyncio.timeout(120):
+                            return await sequence_library.receive(response.aiter_bytes())
+            except (ValueError, httpx.HTTPError, TimeoutError, OSError) as exc:
+                raise HTTPException(422, str(exc) or "Sequence import timed out or storage is unavailable") from exc
+
+    @app.get("/api/fpp/sequence/links")
+    async def sequence_links(request: Request):
+        require_local_setup(request)
+        try:
+            return sequence_library.mapping()
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/fpp/sequence/prepare")
+    async def prepare_fpp_sequence(request: Request):
+        require_local_operator(request)
+        sequence_change_allowed()
+        async with sequence_import_lock:
+            temporary = None
+            try:
+                body = await sequence_body(request)
+                if fpp_sync_status().get('playing'):
+                    raise ValueError('Stop FPP playback before preparing a different singing part')
+                info = sequence_library.load(body.get('id', ''))
+                media = sequence_basename(body.get('media_name', ''))
+                if Path(media).suffix.lower() not in {'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'}:
+                    raise ValueError("Enter the audio filename played by FPP, including its extension")
+                track = body.get('track', '')
+                offset = body.get('offset_ms', 0)
+                if not isinstance(track, str) or not any(t['name'] == track for t in info['tracks']):
+                    raise ValueError("Choose one of the available phoneme tracks")
+                if type(offset) is not int or not -5000 <= offset <= 5000:
+                    raise ValueError("Timing adjustment must be between -5000 and 5000 ms")
+                import hashlib
+                identity = json.dumps({'version': 1, 'info': info, 'track': track, 'offset': offset}, sort_keys=True)
+                name = 'fseq-' + hashlib.sha256(identity.encode()).hexdigest()[:32] + '.wav'
+                from .fseq_worker import run_worker
+                created = False
+                try:
+                    pi_media.path_for(name)
+                except PiMediaError:
+                    space = pi_media.status()
+                    output_bytes = round(info['duration_ms'] * 44.1) + 44
+                    if output_bytes > space['quota_remaining_bytes'] or output_bytes * 2 > space['safe_upload_bytes']:
+                        raise ValueError("Not enough Pi Media space to prepare this track")
+                    temporary = sequence_library.root / (name + '.tmp')
+                    await run_worker('render', str(sequence_library.info_path(body['id'])), track, str(offset), str(temporary))
+                    async def chunks():
+                        with temporary.open('rb') as source:
+                            while chunk := source.read(65536):
+                                yield chunk
+                    await pi_media.add_stream(name, chunks(), display_name=(Path(media).stem + ' — ' + track)[:120])
+                    created = True
+                try:
+                    if fpp_sync_status().get('playing'):
+                        raise ValueError("FPP started during preparation; stop it and prepare again")
+                    sequence_library.link(media, name, track)
+                except BaseException:
+                    if created:
+                        pi_media.delete(name)
+                    raise
+                return {"media_name": media, "track": track, "file": name, "offset_ms": offset}
+            except (ValueError, PiMediaError, OSError, TimeoutError) as exc:
+                raise HTTPException(422, str(exc) or "Sequence processing timed out or storage is unavailable") from exc
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+
+    @app.post("/api/fpp/sequence/source")
+    async def choose_fpp_source(request: Request):
+        require_local_operator(request)
+        sequence_change_allowed()
+        async with sequence_import_lock:
+            try:
+                body = await sequence_body(request)
+                if fpp_sync_status().get('playing'):
+                    raise ValueError("Stop FPP before changing the singing source")
+                media = sequence_basename(body.get('media_name', ''))
+                mapping = sequence_library.mapping()
+                previous = mapping.get(media)
+                if not previous:
+                    raise ValueError("Prepare a singing track for this song first")
+                if body.get('source') == 'sequence':
+                    name = previous.get('sequence_file') or previous['file']
+                    entry = pi_media.get(name)
+                    if not entry.get('generated_fseq'):
+                        raise ValueError("The original sequence track is unavailable; prepare it again")
+                    mapping[media] = {'file': name, 'track': previous.get('sequence_track') or previous['track'], 'source': 'sequence'}
+                elif body.get('source') == 'audio':
+                    name = sequence_basename(body.get('file', ''))
+                    entry = pi_media.get(name)
+                    if entry.get('generated_fseq') or not entry.get('enabled', True):
+                        raise ValueError("Choose an enabled vocal recording from Pi Media")
+                    mapping[media] = {'file': name, 'track': entry.get('display_name') or name, 'source': 'audio', 'sequence_file': previous.get('sequence_file') or previous['file'], 'sequence_track': previous.get('sequence_track') or previous['track']}
+                else:
+                    raise ValueError("Choose a recording or the sequence track")
+                sequence_library.save_mapping(mapping)
+                return mapping[media]
+            except (ValueError, PiMediaError, OSError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/fpp/sequence/unlink")
+    async def unlink_fpp_sequence(request: Request):
+        require_local_operator(request)
+        sequence_change_allowed()
+        async with sequence_import_lock:
+            try:
+                body = await sequence_body(request)
+                if fpp_sync_status().get('playing'):
+                    raise ValueError("Stop FPP before changing the singing source")
+                media = sequence_basename(body.get('media_name', ''))
+                sequence_library.unlink(media)
+                return {"media_name": media, "source": "audio"}
+            except (ValueError, AttributeError, OSError) as exc:
+                raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/config/public")
     async def public_config() -> dict[str, object]:
@@ -3169,34 +3600,36 @@ def create_app(
     async def media_play(request: MediaPlayRequest) -> dict[str, object]:
         require_manual_hardware_access()
         try:
-            return enrich_media_status(await hardware.play_media(request.serial, request.enabled))
+            async with local_speech._lock:
+                return enrich_media_status(await hardware.play_media(request.serial, request.enabled))
         except HardwareUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/media/volume")
     async def media_volume(request: MediaVolumeRequest) -> dict[str, object]:
         require_manual_hardware_access()
-        settings = operation_store.load()
-        try:
-            if settings.audio_output == "external_bluetooth" and settings.mute_skelly_speaker_on_external:
-                operation_store.save(
-                    settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
-                )
-                status = hardware.media_status()
-                if int(status.get("volume", 0) or 0) != 0:
-                    status = await hardware.set_volume(0)
-                result = enrich_media_status(status)
-                result["external_auto_muted"] = True
-                result["restore_volume"] = request.volume
-                return result
-            status = await hardware.set_volume(request.volume)
-            if request.volume > 0:
-                operation_store.save(
-                    settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
-                )
-            return enrich_media_status(status)
-        except HardwareUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        async with local_speech._lock:
+            settings = operation_store.load()
+            try:
+                if settings.audio_output == "external_bluetooth" and settings.mute_skelly_speaker_on_external:
+                    operation_store.save(
+                        settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
+                    )
+                    status = hardware.media_status()
+                    if int(status.get("volume", 0) or 0) != 0:
+                        status = await hardware.set_volume(0)
+                    result = enrich_media_status(status)
+                    result["external_auto_muted"] = True
+                    result["restore_volume"] = request.volume
+                    return result
+                status = await hardware.set_volume(request.volume)
+                if request.volume > 0:
+                    operation_store.save(
+                        settings.model_copy(update={"skelly_speaker_restore_volume": request.volume})
+                    )
+                return enrich_media_status(status)
+            except HardwareUnavailable as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/hardware/lighting")
     async def hardware_lighting(request: LightingRequest) -> dict[str, object]:
@@ -3485,6 +3918,7 @@ def create_app(
                         request.head_light.model_dump(),
                     ],
                     "jaw_sync": request.jaw_sync,
+                    "jaw_timing_offset_ms": request.jaw_timing_offset_ms,
                     "movement_activity": request.movement_activity,
                     **({"display_name": request.display_name} if request.display_name is not None else {}),
                     "nag_response": request.nag_response,

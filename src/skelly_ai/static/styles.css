@@ -808,3 +808,17 @@ body.help-mode-off .help-copy { display:none !important; }
 .speaker-pin-settings input { flex: 1; min-width: 80px; }
 .tools-card > summary.status-summary { position: relative; padding-right: 100px; }
 .tools-card > summary.status-summary > .driver-badge { position: absolute; right: 16px; top: 14px; margin: 0; font-weight: 700; }
+
+/* Compact connection status and foldable Setup cards. */
+.header-wifi-icon{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;min-width:40px;padding:7px;background:transparent;border:1px solid #344757;border-radius:10px;box-shadow:none!important;color:var(--muted)}
+.header-wifi-icon.ok{color:var(--green)}.header-wifi-icon.caution{color:var(--orange-bright)}.header-wifi-icon.error{color:var(--red)}
+.setup-fold>summary{font-weight:750;font-size:1.06rem;cursor:pointer}.setup-fold-content{padding-top:24px}.setup-fold-content .section-kicker{display:none}.setup-fold-content h2{font-size:1rem}.advanced-motor-settings{grid-column:1/-1;padding:12px 0}.advanced-motor-settings>summary{color:var(--muted);cursor:pointer}.advanced-motor-settings label{margin-top:16px}
+#generated-fseq-media{margin-top:20px}#generated-fseq-media>summary{cursor:pointer}.generated-fseq-table .media-actions{white-space:normal}.generated-fseq-table strong{overflow-wrap:anywhere}.fpp-song-library{margin:20px 0;padding:16px;border:1px solid #344757;border-radius:12px}.fpp-song-library>summary{cursor:pointer;font-weight:750}
+/* Standard Skelly is the current public workflow; park advanced controls. */
+.advanced-motor-settings,#dac-controller-section,.gesture-dac,.head-direction-pad,#fpp-override-setting{display:none!important}
+.header-actions{grid-template-columns:auto minmax(190px,250px)}.header-wifi-icon{order:2}.header-connection-group #top-connect-skelly{order:3}
+@media(max-width:700px){.header-actions{grid-template-columns:1fr}.dashboard-tabs button{font-size:.8rem;padding:10px 7px}}
+.header-connection-group #top-connect-skelly{order:2}.header-connection-group .header-wifi-icon{order:3}
+.generated-fseq-table td:first-child{text-align:left}.generated-fseq-table strong,.generated-fseq-table small{display:block}.generated-fseq-table .media-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.generated-fseq-table .media-actions button{width:auto;flex:0 1 auto}.fpp-song-link{flex-wrap:wrap}.fpp-recording-picker{display:flex;gap:10px;align-items:end;flex-wrap:wrap;width:100%}.fpp-recording-picker label{flex:1;min-width:180px}
+.generated-fseq-table th:first-child,.generated-fseq-table td:first-child{width:auto;min-width:180px;text-align:left}.generated-fseq-table th:last-child,.generated-fseq-table td:last-child{width:auto;min-width:180px;text-align:left}
+.generated-fseq-table{min-width:0;width:100%}.generated-fseq-table td.media-actions{display:flex;flex-direction:row;gap:8px;flex-wrap:wrap;align-items:center}.generated-fseq-table td.media-actions button{min-width:0;width:auto;flex:0 1 auto}

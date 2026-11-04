@@ -12,6 +12,8 @@ class OnboardingState(BaseModel):
     network_choice_made: bool = False
     network_mode: Literal["hotspot", "home"] = "hotspot"
     disclaimer_accepted: bool = False
+    wizard_step: int | None = None
+    wizard_complete: bool = False
 
 
 class OnboardingStore:
@@ -51,6 +53,8 @@ class OnboardingStore:
             phase = "complete"
         return {
             "enabled": self.enabled,
+            "wizard_step": state.wizard_step,
+            "wizard_complete": state.wizard_complete,
             "phase": phase,
             "network_mode": state.network_mode,
             "network_choice_made": state.network_choice_made,

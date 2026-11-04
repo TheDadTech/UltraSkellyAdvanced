@@ -65,7 +65,7 @@ def test_finished_product_banner_and_blue_orange_brand_theme_are_packaged() -> N
     banner = STATIC / "ultra-skelly-banner.png"
 
     assert 'class="product-header"' in html
-    assert 'src="/static/ultra-skelly-banner.png"' in html
+    assert 'src="/static/ultra-skelly-holiday-banner.png"' in html
     assert "ULTRASKELLYADVANCED · A THEDADTECH PROJECT" in html
     assert banner.is_file()
     assert banner.stat().st_size > 1_000_000
@@ -155,7 +155,7 @@ def test_guided_operation_interface_is_present() -> None:
     assert 'request("/api/operation/start"' in script
     assert 'request("/api/setup/forget-skelly"' in script
     assert 'request("/api/media/refresh"' in script
-    assert 'if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }' in script
+    assert 'if (selectedMode === "classic") { selectDashboardTab("operate"); selectMediaSource("pi"); }' in script
     assert 'request(check ? "/api/update/check" : "/api/update/status"' in script
     assert 'request("/api/update/install", { method: "POST" })' in script
     assert 'request("/api/update/rollback", { method: "POST" })' in script

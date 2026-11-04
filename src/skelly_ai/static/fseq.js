@@ -1,0 +1,43 @@
+/* FSEQ singing import: metadata stays local, FPP access is read-only. */
+(() => {
+  const host=document.querySelector('#pi-media-panel');
+  if(!host)return;
+  const box=document.createElement('details');box.id='fpp-song-library';box.className='operator-subsection fpp-song-library';box.hidden=true;
+  box.innerHTML=`<summary>FPP singing · song library</summary><div class="fpp-library-content">
+    <h3>Add a singing part</h3><p class="muted">Choose a sequence, then choose who Skelly sings. USA prepares the jaw track and follows FPP automatically.</p>
+    <div class="controls"><button type="button" id="fseq-list">Choose from Main FPP</button><button type="button" id="fseq-upload-button" class="secondary">Upload FSEQ</button><input id="fseq-upload" type="file" accept=".fseq" hidden></div>
+    <div id="fseq-remote" hidden><label>1. Sequence<select id="fseq-files"></select></label><button type="button" id="fseq-import" class="secondary">Read singing parts</button></div>
+    <form id="fseq-prepare" hidden><label>2. Singing part<select id="fseq-track" required></select></label><p id="fseq-summary" class="muted"></p>
+    <input id="fseq-media" type="hidden"><input id="fseq-offset" type="hidden" value="0">
+    <button>3. Create singing track</button></form>
+    <p id="fseq-result" class="result" role="status"></p><details id="fseq-links" class="operator-subsection" hidden><summary>Songs ready for FPP</summary><div id="fseq-link-rows"></div></details></div>`;
+  const css=document.createElement('style');css.textContent='#fseq-prepare{display:block;margin-top:20px}#fseq-prepare[hidden]{display:none}#fseq-prepare .setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:16px 0}#fseq-prepare label,#fseq-remote label{display:flex;flex-direction:column;gap:8px;min-width:0}#fseq-prepare input,#fseq-prepare select,#fseq-files{width:100%;min-width:0}#fseq-prepare p{margin:16px 0}#fseq-remote{margin-top:16px}#fseq-remote button{margin-top:12px}.fpp-library-content{padding:12px 0}.fpp-song-link{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--border-strong)}.fpp-song-link span{min-width:0;overflow-wrap:anywhere}.fpp-song-link button{flex-shrink:0}@media(max-width:600px){#fseq-prepare .setting-grid{grid-template-columns:1fr}.fpp-song-link{align-items:flex-start;flex-direction:column}}';document.head.append(css);
+  host.insertBefore(box,document.querySelector('#pi-media-library'));
+  const $=id=>box.querySelector('#'+id);let imported=null;let busy=false;
+  const api=async(path,options={})=>{const response=await fetch(path,{...options,headers:{'X-USA-Interactive-Auth':'1',...options.headers}});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Unable to complete sequence request');return data;};
+  const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  async function run(message,fn){if(busy)return;busy=true;$('fseq-result').textContent=message;box.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);try{await fn();}catch(e){$('fseq-result').textContent=e.message;}finally{busy=false;box.querySelectorAll('button,input,select').forEach(b=>b.disabled=false);}}
+  function resetImport(){imported=null;$('fseq-prepare').hidden=true;$('fseq-track').replaceChildren();$('fseq-media').value='';$('fseq-offset').value=0;$('fseq-summary').textContent='';}
+  function show(data){imported=data;$('fseq-track').replaceChildren(new Option('Choose a singing part',''),...data.tracks.map(t=>new Option(`${t.name} · ${t.cue_count} phonemes`,t.name)));$('fseq-media').value=data.media_name||'';$('fseq-offset').value=0;$('fseq-summary').textContent=`${(data.duration_ms/1000).toFixed(1)} seconds · ${data.tracks.length} singing parts found`;$('fseq-prepare').hidden=false;$('fseq-result').textContent='Choose a singing part, then create its jaw track.';}
+  async function links(){
+    const data=await api('/api/fpp/sequence/links');const list=$('fseq-link-rows');list.replaceChildren();$('fseq-links').hidden=!Object.keys(data).length;box.querySelector('#fseq-links>summary').textContent=`Songs ready for FPP (${Object.keys(data).length})`;
+    for(const [media,entry] of Object.entries(data)){
+      const row=document.createElement('div');row.className='fpp-song-link';const text=document.createElement('span');text.textContent=`${media.replace(/\.[^.]+$/,'')} — ${entry.track}`;const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=entry.source==='audio'?'Use sequence track':'Choose vocal recording';
+      button.onclick=()=>run('Reading available recordings…',async()=>{
+        if(entry.source==='audio'){await post('/api/fpp/sequence/source',{media_name:media,source:'sequence'});await links();$('fseq-result').textContent='Sequence singing restored. Your recording is still saved.';return;}
+        const status=await api('/api/pi-media/status');const recordings=status.files.filter(f=>!f.generated_fseq&&!/^fseq-[a-f0-9]{32}\.wav$/i.test(f.name)&&f.enabled!==false);
+        if(!recordings.length){$('fseq-result').textContent='Add a vocal recording to Pi Media first. Your current singing track is still linked.';return;}
+        const picker=document.createElement('div');picker.className='fpp-recording-picker';const label=document.createElement('label');label.textContent='Vocal recording';const select=document.createElement('select');select.replaceChildren(...recordings.map(f=>new Option(f.display_name||f.name,f.name)));label.append(select);const use=document.createElement('button');use.type='button';use.textContent='Use this recording';use.onclick=()=>run('Linking recording…',async()=>{await post('/api/fpp/sequence/source',{media_name:media,source:'audio',file:select.value});await links();$('fseq-result').textContent='Recording linked. The generated sequence track is preserved.';});const cancel=document.createElement('button');cancel.type='button';cancel.className='secondary';cancel.textContent='Cancel';cancel.onclick=()=>picker.remove();picker.append(label,use,cancel);row.append(picker);$('fseq-result').textContent='Choose the recording for this song. Nothing changes until you confirm.';
+      });row.append(text,button);list.append(row);
+    }
+  }
+  $('fseq-track').onchange=()=>{if(!imported)return;const t=imported.tracks.find(t=>t.name===$('fseq-track').value);$('fseq-summary').textContent=`${(imported.duration_ms/1000).toFixed(1)} seconds · ${imported.tracks.length} singing parts found`+(t?.adjusted_cues?` · ${t.adjusted_cues} duplicate/one-frame overlaps normalized`:'');};
+  $('fseq-list').onclick=()=>run('Reading Main FPP sequence list…',async()=>{resetImport();const data=await api('/api/fpp/sequences');$('fseq-files').replaceChildren(...data.files.map(n=>new Option(n,n)));$('fseq-remote').hidden=false;$('fseq-result').textContent=data.files.length?'Choose a sequence to import.':'No FSEQ files found on Main FPP.';});
+  $('fseq-files').onchange=()=>{resetImport();$('fseq-result').textContent='Read singing parts for the selected sequence.';};
+  $('fseq-import').onclick=()=>run('Importing and reading sequence…',async()=>{resetImport();show(await api('/api/fpp/sequence/import?filename='+encodeURIComponent($('fseq-files').value),{method:'POST'}));});
+  $('fseq-upload-button').onclick=()=>$('fseq-upload').click();
+  $('fseq-upload').onchange=e=>{const file=e.target.files[0];if(!file)return;run('Uploading and reading sequence…',async()=>{resetImport();$('fseq-remote').hidden=true;if(file.size>512*1024*1024)throw Error('FSEQ exceeds 512 MB');show(await api('/api/fpp/sequence/import',{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream'}}));});};
+  $('fseq-prepare').onsubmit=e=>{e.preventDefault();if(!imported)return;run('Preparing jaw audio on USA…',async()=>{if(!$('fseq-media').value.trim())throw Error('This sequence has no song filename. Choose a sequence saved with its audio file in xLights.');const result=await post('/api/fpp/sequence/prepare',{id:imported.id,track:$('fseq-track').value,media_name:$('fseq-media').value.trim(),offset_ms:Number($('fseq-offset').value)});resetImport();await links();if(typeof refreshPiMediaStatus==='function')await refreshPiMediaStatus();$('fseq-result').textContent=`Ready: ${result.track} is linked to ${result.media_name}. Start that song from the beginning on FPP.`;});};
+  api('/api/fpp/settings').then(s=>box.hidden=!s.enabled).catch(()=>{});
+  links().catch(e=>$('fseq-result').textContent=e.message);
+})();

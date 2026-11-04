@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from ipaddress import IPv4Address
 from typing import Literal
 
 from pydantic import Field, SecretStr
@@ -81,6 +82,10 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     tts_username: str = "operator"
     tts_password: SecretStr | None = Field(default=None, min_length=12)
+    # Optional read-only MultiSync receiver; no FPP commands are accepted.
+    fpp_sync_enabled: bool = False
+    fpp_master_ip: IPv4Address | None = None
+    fpp_sync_interface_ip: IPv4Address = IPv4Address("0.0.0.0")
     fpp_token: SecretStr | None = Field(default=None)
 
     def public_dict(self) -> dict[str, object]:

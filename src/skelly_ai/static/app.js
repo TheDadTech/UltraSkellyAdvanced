@@ -492,7 +492,7 @@ function updateModeVisibility(activeMode, profile) {
   document.querySelector(".perception-monitor").hidden = readyMode !== "ai";
   localBrainSection.hidden = readyMode !== "manual";
   manualPropControls.hidden = readyMode !== "manual";
-  dacControllerSection.hidden = profile !== "dac";
+  dacControllerSection.hidden = true;
   document.querySelectorAll("[data-start-operation]").forEach((button) => {
     const selected = button.dataset.startOperation === activeMode;
     button.closest(".mode-card")?.classList.toggle("active", selected);
@@ -605,8 +605,8 @@ function renderOperation(operation) {
   nagUnattendedIntervalValue.textContent = formatLureInterval(nagUnattendedInterval.value);
   brainVoiceButton.disabled = !manualMicrophoneEnabled.checked;
   operationProfileState.textContent = settings.hardware_profile === "dac"
-    ? "Advanced: DAC + ESP32"
-    : "Stock: no DAC required";
+    ? "Standard Skelly"
+    : "Standard Skelly";
   operationProfileState.classList.toggle("neutral", settings.hardware_profile !== "dac");
   document.querySelectorAll("[data-mode-card]").forEach((card) => {
     card.classList.toggle("featured", card.dataset.modeCard === settings.default_mode);
@@ -687,8 +687,8 @@ function renderStatus(body) {
     renderOperation(body.operation);
     const configured = body.operation.settings.device_configured !== false;
     const profileName = body.operation.settings.hardware_profile === "dac"
-      ? "Advanced hardware · DAC + ESP32"
-      : "Standard hardware · no DAC";
+      ? "Standard Skelly"
+      : "Standard Skelly";
     setupDeviceName.textContent = configured
       ? body.hardware.device_name || body.device.name || "Saved Skelly"
       : "No Skelly configured";
@@ -741,8 +741,8 @@ function renderStatus(body) {
   const advancedGestures = profile === "dac";
   operatorListenGestureAvailable = advancedGestures && dac.armed && currentOperationMode === "manual";
   gestureCapability.textContent = advancedGestures
-    ? dac.armed ? "advanced puppeteering ready" : "DAC profile · start Operator Mode"
-    : "No DAC · Laugh Available";
+    ? dac.armed ? "advanced puppeteering ready" : "Start Operator Mode"
+    : "Laugh available";
   gestureCapability.classList.toggle("neutral", !advancedGestures || !dac.armed);
   document.querySelectorAll(".gesture-dac").forEach((button) => {
     button.disabled = !advancedGestures || !dac.armed || currentOperationMode !== "manual";
@@ -938,6 +938,7 @@ function renderPerceptionStatus(body) {
     no_speech: ["error", "I DIDN'T HEAR THAT", "Wait for green eyes, then speak clearly."],
     confirming_departure: ["idle", "WAITING FOR VISITOR", "The current visitor may have stepped away."],
     rearmed: ["idle", "READY FOR A NEW VISITOR", "Skelly is watching again."],
+    paused_for_fpp: ["thinking", "FPP SONG PLAYING", "AI listening and lures will resume when the song stops."],
     paused_for_show: ["thinking", "SHOW MODE ACTIVE", "Visitor listening is paused until the show ends."],
     sensor_error: ["error", "SENSOR NEEDS ATTENTION", body.last_error || "Check the camera and microphone."],
   };
@@ -1495,7 +1496,7 @@ async function startSelectedOperation(selectedMode, button, resultElement = oper
     resultElement.textContent = selectedMode === "idle"
       ? "Skelly is safely in standby."
       : `${modeName} is ready.`;
-    if (selectedMode === "classic") { selectDashboardTab("operate"); await refreshMediaFromSkelly(); }
+    if (selectedMode === "classic") { selectDashboardTab("operate"); selectMediaSource("pi"); }
     if (selectedMode === "ai") await refreshPerceptionStatus();
   } catch (error) {
     resultElement.textContent = error.message;
@@ -1792,6 +1793,7 @@ function formatBytes(value) {
   return `${Math.round(bytes)} B`;
 }
 
+let generatedFseqExpanded = false;
 function renderPiMediaStatus(body) {
   currentPiMediaStatus = body;
   piMediaLibrary.replaceChildren();
@@ -1801,7 +1803,7 @@ function renderPiMediaStatus(body) {
   piStorageFree.textContent = `${formatBytes(body.filesystem_free_bytes)} Pi storage free · 10 GB safety reserve`;
   piMediaQuotaGb.value = String(Math.max(1, Math.round(quota / 1024 ** 3)));
   const filter = piMediaFilter.value.trim().toLowerCase();
-  const files = (body.files || []).filter((file) => !filter || String(file.name || "").toLowerCase().includes(filter));
+  const files = (body.files || []).filter((file) => !filter || `${file.name || ""} ${file.display_name || ""}`.toLowerCase().includes(filter));
   if (!files.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -1814,15 +1816,21 @@ function renderPiMediaStatus(body) {
   const head = document.createElement("thead");
   head.innerHTML = "<tr><th>Lure</th><th>Name</th><th>Head light</th><th>Torso light</th><th>Movement</th><th>Eye</th><th>Jaw</th><th>Actions</th></tr>";
   const rows = document.createElement("tbody");
+  const generatedRows = document.createElement("tbody");
   const movementNames = { 0: "None", 1: "Head", 2: "Arm", 3: "Head + arm", 4: "Torso", 5: "Head + torso", 6: "Torso + arm", 7: "All", 255: "All" };
   files.forEach((file) => {
+    const generated = file.generated_fseq === true || /^fseq-[a-f0-9]{32}\.wav$/i.test(file.name);
     const row = document.createElement("tr");
     const nameCell = document.createElement("td");
     const title = document.createElement("strong");
     title.textContent = file.display_name || file.name;
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
+    if (generated) {
+      meta.textContent = `${formatBytes(file.size)} · Jaw movement track`;
+    } else {
+      meta.textContent = `${formatBytes(file.size)} · ${file.movement_activity || "normal"} movement${file.nag_response ? " · lure" : ""}`;
+    }
     nameCell.append(title, meta);
     const lightCell = (light) => {
       const cell = document.createElement("td");
@@ -1886,7 +1894,7 @@ function renderPiMediaStatus(body) {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: file.name, enabled: !playing }),
         }));
-        piMediaResult.textContent = playing ? "Pi Media playback stopped." : `${file.name} is playing from the Pi.`;
+        piMediaResult.textContent = playing ? "Pi Media playback stopped." : `${file.display_name || file.name} is playing from the Pi.`;
       } catch (error) {
         piMediaResult.textContent = error.message;
       } finally {
@@ -1899,21 +1907,46 @@ function renderPiMediaStatus(body) {
     const remove = document.createElement("button");
     remove.type = "button"; remove.className = "warning"; remove.textContent = "Delete";
     remove.addEventListener("click", async () => {
-      if (!window.confirm(`Delete ${file.name} from Pi Media? This cannot be undone.`)) return;
+      if (!window.confirm(`Delete ${file.display_name || file.name} from Pi Media? This cannot be undone.`)) return;
       try {
         renderPiMediaStatus(await request("/api/pi-media/delete", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: file.name }),
         }));
-        piMediaResult.textContent = `${file.name} was deleted from Pi Media.`;
+        piMediaResult.textContent = `${file.display_name || file.name} was deleted from Pi Media.`;
       } catch (error) { piMediaResult.textContent = error.message; }
     });
-    actions.append(play, edit, remove);
-    row.append(lureCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
-    rows.append(row);
+    if (generated) {
+      play.textContent = playing ? "■ Stop" : "Preview Jaw Movement";
+      actions.append(play, edit, remove);
+      row.append(nameCell, actions);
+      generatedRows.append(row);
+    } else {
+      actions.append(play, edit, remove);
+      row.append(lureCell, nameCell, lightCell(file.lights?.[1]), lightCell(file.lights?.[0]), movement, eye, jaw, actions);
+      rows.append(row);
+    }
   });
-  table.append(head, rows);
-  piMediaLibrary.append(table);
+  if (rows.children.length) {
+    table.append(head, rows);
+    piMediaLibrary.append(table);
+  } else {
+    const empty=document.createElement("p");empty.className="muted";
+    empty.textContent=filter?"No regular audio files match this filter.":"Your uploaded sounds and speech clips appear here.";
+    piMediaLibrary.append(empty);
+  }
+  if (generatedRows.children.length) {
+    generatedRows.append(...Array.from(generatedRows.children).sort((a, b) =>
+      a.querySelector("strong").textContent.localeCompare(b.querySelector("strong").textContent,
+        undefined, { sensitivity: "base", numeric: true })));
+    const details=document.createElement("details");details.id="generated-fseq-media";details.className="operator-subsection";details.open=generatedFseqExpanded;
+    const summary=document.createElement("summary");summary.textContent=`Generated FPP jaw tracks (${generatedRows.children.length})`;
+    const help=document.createElement("p");help.className="muted";help.textContent="Timing audio created from FSEQ singing parts. FPP plays these automatically for linked songs; previews produce audible tones.";
+    const generatedTable=document.createElement("table");generatedTable.className="media-table pi-media-table generated-fseq-table";
+    const generatedHead=document.createElement("thead");generatedHead.innerHTML="<tr><th>Singing track</th><th>Actions</th></tr>";
+    generatedTable.append(generatedHead,generatedRows);details.append(summary,help,generatedTable);
+    details.addEventListener("toggle",()=>{generatedFseqExpanded=details.open;});piMediaLibrary.append(details);
+  }
 }
 
 async function refreshPiMediaStatus() {
@@ -1941,7 +1974,7 @@ function selectMediaSource(source, { persist = true } = {}) {
 }
 
 function restoreMediaSource() {
-  let source = "skelly";
+  let source = "pi";
   try {
     const saved = window.localStorage.getItem(MEDIA_SOURCE_STORAGE_KEY);
     if (saved === "pi" || saved === "skelly") source = saved;
@@ -2138,7 +2171,11 @@ function openMediaEditor(file, source = "skelly") {
   document.querySelector("#pi-media-display-name").value =
     file.display_name || file.name || "";
   document.querySelector("#media-editor-kicker").textContent = isPi ? "PI MEDIA PRESET" : "CLASSIC PRESET";
-  document.querySelector("#media-edit-jaw-setting").hidden = !isPi;
+  const generated=isPi&&(file.generated_fseq===true||/^fseq-[a-f0-9]{32}\.wav$/i.test(file.name));
+  document.querySelector("#media-edit-jaw-setting").hidden = !isPi||generated;
+  document.querySelector("#media-edit-jaw-timing-setting").hidden = !generated;
+  document.querySelector("#media-edit-jaw-timing").value = file.jaw_timing_offset_ms||0;
+  document.querySelector("#media-edit-jaw-timing-value").textContent = `${file.jaw_timing_offset_ms||0} ms`;
   document.querySelector("#media-edit-jaw-sync").checked = file.jaw_sync !== false;
   document.querySelector("#media-movement-activity-setting").hidden = !isPi;
   document.querySelector("#media-movement-activity").value = file.movement_activity || "normal";
@@ -2201,7 +2238,8 @@ mediaEditorForm.addEventListener("submit", async (event) => {
           display_name: document.querySelector("#pi-media-display-name").value.trim(),
           enabled: file?.enabled !== false,
           nag_response: file?.nag_response === true,
-          jaw_sync: document.querySelector("#media-edit-jaw-sync").checked,
+          jaw_sync: file?.generated_fseq?true:document.querySelector("#media-edit-jaw-sync").checked,
+          jaw_timing_offset_ms: Number(document.querySelector("#media-edit-jaw-timing").value),
           movement_activity: document.querySelector("#media-movement-activity").value,
         }),
       });
@@ -3474,6 +3512,7 @@ document.querySelector("#shutdown-controller").addEventListener("click", () => r
 ));
 
 function showOnboardingPhase(phase) {
+  if(document.documentElement.dataset.setupWizard) return;
   onboardingNetworkStep.hidden = phase !== "network";
   onboardingDisclaimerStep.hidden = phase !== "disclaimer";
   if (phase === "pairing") {
@@ -3541,7 +3580,7 @@ async function refreshWifiStatus() {
     }
 
     const signal = Number(body.signal_percent);
-    const hasSignal = Number.isFinite(signal);
+    const hasSignal = body.signal_percent != null && Number.isFinite(signal);
     const label = wifiSignalLabel(signal);
 
     if (wifiSummary) {
@@ -3576,16 +3615,21 @@ async function refreshWifiStatus() {
       }
     }
 
-    if (!internet) {
+    if (transport === "offline" && body.mode !== "hotspot") {
       setStatusLight(wifiStatusLight, "error");
     } else if (transport === "wifi" && hasSignal && signal < 30) {
       setStatusLight(wifiStatusLight, "error");
-    } else if (transport === "wifi" && hasSignal && signal < 50) {
+    } else if (body.mode === "hotspot" || (transport === "wifi" && hasSignal && signal < 50)) {
       setStatusLight(wifiStatusLight, "caution");
     } else {
       setStatusLight(wifiStatusLight, "ok");
     }
 
+    if (wifiStatusLight) {
+      const description = `${headerNetworkLabel?.textContent || "Network"}: ${transport === "wifi" && hasSignal ? signal + "% " + label : headerWifiStatus?.textContent || "checking"}${internet ? "" : " · No Internet"}`;
+      wifiStatusLight.title = description;
+      wifiStatusLight.setAttribute("aria-label", description + ". Open Wi-Fi settings");
+    }
     if (wifiSettingsDetails && body.mode !== "hotspot" && !wifiSettingsDetails.dataset.userOpened) wifiSettingsDetails.open = false;
     if (body.last_result?.message) setupWifiResult.textContent = body.last_result.message;
   } catch {
@@ -3593,8 +3637,10 @@ async function refreshWifiStatus() {
     if (headerNetworkLabel) headerNetworkLabel.textContent = "NETWORK";
     if (headerWifiStatus) headerWifiStatus.textContent = "unavailable";
     setStatusLight(wifiStatusLight, "error");
+    if(wifiStatusLight){wifiStatusLight.title="Network unavailable";wifiStatusLight.setAttribute("aria-label","Network unavailable. Open Wi-Fi settings");}
   }
 }
+if(wifiStatusLight)wifiStatusLight.addEventListener("click",()=>{selectDashboardTab("setup");wifiSettingsDetails.open=true;wifiSettingsDetails.dataset.userOpened="true";wifiSettingsDetails.scrollIntoView({behavior:"smooth",block:"center"});});
 
 [skellyConnectionsDetails, wifiSettingsDetails].filter(Boolean).forEach((details) => {
   details.addEventListener("toggle", () => { if (details.open) details.dataset.userOpened = "true"; });
@@ -4043,7 +4089,7 @@ async function backupAction(action) {
 }
 document.querySelector("#backup-size").addEventListener("click", async () => {
   try {
-    const payload = await request(`/api/backup/inventory?media=${document.querySelector("#backup-include-media").checked}`);
+    const payload = await request(`/api/backup/inventory?media=${document.querySelector("#backup-include-media").checked}&generated=${document.querySelector("#backup-include-generated").checked}`);
     document.querySelector("#backup-result").textContent = `${(payload.bytes / 1048576).toFixed(1)} MiB before compression; limit 128 MiB. ${payload.fits ? "Fits." : "Omit audio files to continue."}`;
   } catch (error) { document.querySelector("#backup-result").textContent = error.message; }
 });
@@ -4051,7 +4097,7 @@ document.querySelector("#download-settings-backup").addEventListener("click", as
   const button = event.currentTarget; button.disabled = true;
   const result = document.querySelector("#backup-result");
   try {
-    const response = await fetchWithOperatorAuth(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}`, {method: "POST", headers: backupHeaders()});
+    const response = await fetchWithOperatorAuth(`/api/backup/download?media=${document.querySelector("#backup-include-media").checked}&generated=${document.querySelector("#backup-include-generated").checked}`, {method: "POST", headers: backupHeaders()});
     if (!response.ok) throw new Error((await response.json()).detail || "Backup failed");
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a"); link.href = url; link.download = "usa-backup.usabackup"; link.click();
@@ -4164,3 +4210,5 @@ for (const id of ["manual-update-file", "manual-update-version", "manual-update-
     install.disabled = true; delete install.dataset.token;
   });
 }
+
+document.querySelector('#media-edit-jaw-timing').addEventListener('input',e=>{document.querySelector('#media-edit-jaw-timing-value').textContent=`${e.target.value} ms`;});

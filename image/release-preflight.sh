@@ -12,8 +12,9 @@ python_version="$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' src/skelly_ai/__ini
   exit 1
 }
 
-grep -q 'configure_headless_audio_user skelly-ai' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
-grep -q 'configure_headless_audio_user dadtech' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -Fq 'runuser -u skelly-ai -- python3 - owner < /root/usa-audio-session-policy.py' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -Fq 'runuser -u dadtech -- python3 - fresh-secondary < /root/usa-audio-session-policy.py' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
+grep -Fq 'monitor.bluez = disabled' deploy/audio-session-policy.py
 grep -Fq 's/@SUPPORT_UID@/${SUPPORT_UID}/g' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -q 'touch /var/lib/systemd/linger/skelly-ai' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
 grep -q 'touch /var/lib/systemd/linger/dadtech' image/pi-gen-stage/00-install-skelly-ai/files/install-chroot.sh
@@ -51,4 +52,4 @@ PY
 
 bash scripts/test-dev.sh -q
 
-echo "PASS: ${version} source, dual audio-session image wiring, versioning, and release tests are ready."
+echo "PASS: ${version} source, single Bluetooth-owner image wiring, versioning, and release tests are ready."

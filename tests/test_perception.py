@@ -678,3 +678,45 @@ async def test_filtered_movement_cannot_become_arrival_when_settling_ends():
         await wait_until(lambda: engine.status()['session_active'])
     finally:
         await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_private_turn_redacts_names_and_does_not_enter_ai_history():
+    sensors = FakeSensors([True] * 100)
+    async def responder(transcript,history):
+        return {'spoken_response':'Welcome, Zara!', 'private_interaction':True,
+                'speech':{'spoken':True}}
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,responder=responder,
+                            camera_interval_seconds=.01,presence_confirmations=1,
+                            record_seconds=5,listen_retry_seconds=.01)
+    await engine.start()
+    await wait_until(lambda:engine.status()['event_count']>=1)
+    status=await engine.stop()
+    assert status['events'][0]['transcript']=='[Private interaction]'
+    assert status['events'][0]['ai_response']=='[Private response]'
+    assert engine._history == []
+
+
+@pytest.mark.asyncio
+async def test_fpp_pause_cancels_listening_and_resumes_without_restarting_mode():
+    sensors=FakeSensors([False]*1000)
+    engine=PerceptionEngine(sensors,show_locked=lambda:False,camera_interval_seconds=.005)
+    await engine.start();await asyncio.sleep(.02)
+    await engine.set_fpp_pause(True)
+    before=(sensors.camera_calls,sensors.transcription_calls)
+    assert engine.status()['phase']=='paused_for_fpp' and engine.status()['enabled']
+    assert not engine.status()['running']
+    await asyncio.sleep(.03);assert (sensors.camera_calls,sensors.transcription_calls)==before
+    await engine.set_fpp_pause(False);await asyncio.sleep(.02)
+    assert engine.status()['running'] and sensors.camera_calls>before[0]
+    await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_user_stop_during_override_is_not_undone_when_song_ends():
+    engine=PerceptionEngine(FakeSensors([False]*100),show_locked=lambda:False,camera_interval_seconds=.005)
+    await engine.set_fpp_pause(True)
+    await engine.start()
+    assert engine.status()['phase']=='paused_for_fpp'
+    await engine.stop();await engine.set_fpp_pause(False)
+    assert not engine.status()['enabled'] and not engine.status()['running']

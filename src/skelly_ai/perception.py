@@ -93,6 +93,7 @@ class PerceptionEngine:
         show_locked: Callable[[], bool],
         *,
         responder: Responder | None = None,
+        short_replies_expected: Callable[[], bool] | None = None,
         session_ended: SessionEnded | None = None,
         phase_cue: PhaseCue | None = None,
         nagger: Nagger | None = None,
@@ -115,6 +116,7 @@ class PerceptionEngine:
         self._sensors = sensors
         self._show_locked = show_locked
         self._responder = responder
+        self._short_replies_expected = short_replies_expected or (lambda: False)
         self._session_ended = session_ended
         self._phase_cue = phase_cue
         self._nagger = nagger
@@ -139,6 +141,7 @@ class PerceptionEngine:
         self._control_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._enabled = False
+        self._fpp_paused = False
         self._phase = "stopped"
         self._armed = True
         self._session_active = False
@@ -207,6 +210,9 @@ class PerceptionEngine:
                 await prepare_transcription()
 
             self._enabled = True
+            if self._fpp_paused:
+                self._phase = "paused_for_fpp"
+                return self.status()
             self._phase = "starting"
             self._reset_session()
             self._last_error = None
@@ -234,6 +240,29 @@ class PerceptionEngine:
             self._reset_session()
             self._phase = "stopped"
             return self.status()
+
+    async def set_fpp_pause(self, paused: bool, *, resume: bool = True) -> None:
+        async with self._control_lock:
+            if self._fpp_paused == paused:
+                return
+            self._fpp_paused = paused
+            if paused:
+                task = self._task
+                self._task = None
+                if task and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                if self._session_active:
+                    await self._notify_session_ended()
+                self._reset_session()
+                if self._enabled:
+                    self._phase = "paused_for_fpp"
+            elif self._enabled and resume:
+                self._phase = "starting"
+                self._task = asyncio.create_task(self._run(), name="skelly-perception-monitor")
 
     def clear_events(self) -> dict[str, object]:
         self._events.clear()
@@ -512,6 +541,7 @@ class PerceptionEngine:
                     transcript = str(microphone.get("transcript") or "").strip()
                     single_word_without_visual_confirmation = (
                         len(transcript.split()) == 1
+                        and not self._short_replies_expected()
                         and not int(camera.get("face_count") or 0)
                         and not int(camera.get("person_count") or 0)
                     )
@@ -578,7 +608,7 @@ class PerceptionEngine:
                         session_id=self._session_id,
                         turn_number=self._turn_count,
                         occurred_at=_now(),
-                        transcript=transcript,
+                        transcript="[Private interaction]" if ai_result.get("private_interaction") else transcript,
                         voice_level_dbfs=microphone.get("level_dbfs"),
                         person_count=int(camera.get("person_count") or 0),
                         face_count=int(camera.get("face_count") or 0),
@@ -594,7 +624,7 @@ class PerceptionEngine:
                             if microphone.get("transcription_mode")
                             else None
                         ),
-                        ai_response=spoken_response or None,
+                        ai_response="[Private response]" if ai_result.get("private_interaction") else spoken_response or None,
                         eye_icon=(str(ai_result.get("eye_icon")) if ai_result.get("eye_icon") else None),
                         movement=(str(ai_result.get("movement")) if ai_result.get("movement") else None),
                         ai_generation_seconds=ai_result.get("generation_seconds"),
@@ -652,12 +682,15 @@ class PerceptionEngine:
                     )
                     self._next_event_id += 1
                     self._events.append(event)
-                    self._history.append({"role": "user", "content": transcript})
-                    if spoken_response:
-                        self._history.append(
-                            {"role": "assistant", "content": spoken_response}
-                        )
-                    self._history = self._history[-4:]
+                    if ai_result.get("private_interaction"):
+                        self._history.clear()
+                    else:
+                        self._history.append({"role": "user", "content": transcript})
+                        if spoken_response:
+                            self._history.append(
+                                {"role": "assistant", "content": spoken_response}
+                            )
+                        self._history = self._history[-4:]
                     self._phase = "response_ready" if spoken_response else "transcript_captured"
                     if ai_error is None:
                         self._last_error = None

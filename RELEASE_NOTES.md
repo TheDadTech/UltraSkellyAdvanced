@@ -1,3 +1,18 @@
+# 0.30.0 — FPP singing and guided setup
+
+Unpublished image candidate. Fresh-image boot verification remains required before publication.
+
+- Guided first-run setup with saved progress, WiFi handoff, existing pairing controls, optional AI/voice and FPP steps, and restore access.
+- Native FPP discovery and explicit Main-player selection. No FPP plugins or configuration rewrites.
+- FPP settings/song links included in encrypted backups; uploaded audio and generated jaw tracks selected independently.
+- The import flow automatically matches the embedded song filename; timing adjustments remain in track Edit. Duplicate song links remain one active track per song; selection improvements are deferred.
+- The Lab opens Pi Media by default; sequence forms clear stale state; generated tracks sort by friendly name.
+- Holiday Skelly banner included.
+- Stock FPP singing remains audible: silent stock playback failed physical jaw testing and is unavailable. DAC and deferred holiday interaction are not part of this user-facing release.
+
+
+---
+
 # UltraSkellyAdvanced 0.28.6 Beta 1
 
 - Improves Bluetooth speaker audio ownership and reconnection.

@@ -17,7 +17,7 @@ class OperationSettings(BaseModel):
     custom_personality: str = Field(default="", max_length=500)
     hardware_profile: Literal["stock", "dac"] = "stock"
     default_mode: Literal["classic", "ai", "manual", "idle"] = "ai"
-    auto_start: bool = False
+    auto_start: bool = True
     # A clean installation must stay inert until its owner completes Setup.
     device_configured: bool = False
     control_address: str | None = None

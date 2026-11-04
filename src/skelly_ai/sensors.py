@@ -55,6 +55,13 @@ def _tracking_target(
 class SensorLab:
     """On-device camera and microphone analysis with no cloud connections."""
 
+    def clear_private_audio(self) -> None:
+        """Discard transient private recognition audio and text after use."""
+        with self._state_lock:
+            self._last_audio_wav = None
+            self._last_audio_pcm = None
+            self._last_microphone["transcript"] = None
+
     def __init__(
         self,
         camera_device: str = "/dev/video0",

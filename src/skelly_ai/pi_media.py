@@ -113,6 +113,11 @@ class PiMediaLibrary:
         present: set[str] = set()
         if not self.media_dir.exists():
             return result
+        try:
+            links = json.loads((self.media_dir.parent/'fpp-sequence-map.json').read_text())
+            friendly = {entry['file']: Path(song).stem+' — '+entry['track'] for song,entry in links.items()}
+        except (OSError,ValueError,TypeError,KeyError,AttributeError):
+            friendly = {}
         for path in sorted(self.media_dir.iterdir(), key=lambda item: item.name.casefold()):
             if not path.is_file() or path.name.startswith("."):
                 continue
@@ -120,6 +125,17 @@ class PiMediaLibrary:
             entry = dict(saved.get(path.name) or self._default_entry(path.name, path.stat().st_size))
             entry["name"] = path.name
             entry["size"] = path.stat().st_size
+            # Generated timing files are jaw assets, never body-motion/lure clips.
+            import re
+            generated = bool(re.fullmatch(r"fseq-[a-f0-9]{32}\.wav", path.name, re.IGNORECASE)) or entry.get("generated_fseq") is True
+            if generated and str(entry.get('display_name','')).startswith('FSEQ · ') and path.name in friendly:
+                entry['display_name']=friendly[path.name][:120]
+                changed=True
+            if generated:
+                for key, value in ({"generated_fseq": True, "action": 0, "nag_response": False} if not entry.get("generated_fseq") else {"generated_fseq": True}).items():
+                    if entry.get(key) != value:
+                        entry[key] = value
+                        changed = True
 
             # Migrate existing clips without changing their filename,
             # settings, or playback references.

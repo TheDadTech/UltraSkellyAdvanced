@@ -100,3 +100,25 @@ def test_metadata_only_restore_survives_until_audio_is_copied(tmp_path, monkeypa
     assert library.status()['file_count'] == 0
     clip = library.add('later.wav', b'RIFF' + b'x' * 96)
     assert clip['id'] == entry['id'] and clip['eye'] == 18
+
+@pytest.mark.parametrize('audio,jaw,expected', [
+    (False, False, set()), (True, False, {'clip.wav'}),
+    (False, True, {'legacy.wav', 'fseq-' + 'a' * 32 + '.wav'}),
+    (True, True, {'clip.wav', 'legacy.wav', 'fseq-' + 'a' * 32 + '.wav'}),
+])
+def test_separate_audio_and_generated_backup_options(tmp_path, audio, jaw, expected):
+    media = tmp_path / 'media'; media.mkdir()
+    for name in ('clip.wav', 'legacy.wav', 'fseq-' + 'a' * 32 + '.wav'):
+        (media / name).write_bytes(b'RIFFtest')
+    (tmp_path / 'pi-media.json').write_text(json.dumps({
+        'quota_bytes': 3 * 1024**3,
+        'files': {'legacy.wav': {'generated_fseq': True}},
+    }))
+    manager = BackupManager(tmp_path)
+    inventory = manager.inventory(audio, jaw)
+    files = manager.inspect(manager.create(PASSWORD, audio, include_generated=jaw), PASSWORD)
+    assert {n.removeprefix('media/') for n in files if n.startswith('media/')} == expected
+    assert set(inventory['files']) == set(files)
+    assert inventory['includes_generated'] is jaw
+    # Existing clients selecting all media retain their prior behavior.
+    assert len([n for n in manager.inventory(True)['files'] if n.startswith('media/')]) == 3

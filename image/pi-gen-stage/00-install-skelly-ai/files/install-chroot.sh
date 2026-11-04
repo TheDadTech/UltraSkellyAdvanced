@@ -13,6 +13,7 @@ apt-get install -y --no-install-recommends \
   curl \
   dnsmasq-base \
   espeak-ng \
+  libzstd1 \
   firmware-brcm80211 \
   libspa-0.2-bluetooth \
   network-manager \

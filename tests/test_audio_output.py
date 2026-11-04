@@ -382,4 +382,7 @@ def test_status_reports_preferred_and_active_audio_route(tmp_path) -> None:
 
 def test_runtime_version_matches_release() -> None:
     from skelly_ai import __version__
-    assert __version__ == "0.28.6-beta1"
+    import tomllib
+    from pathlib import Path
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert __version__ == project["project"]["version"]
