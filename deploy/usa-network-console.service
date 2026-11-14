@@ -1,0 +1,29 @@
+[Unit]
+Description=USA experimental local network setup and status screen
+After=local-fs.target systemd-user-sessions.service
+ConditionPathExists=/dev/tty1
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=usa-console
+Group=usa-console
+ExecStartPre=+/bin/sh -c 'test ! -f /usr/share/consolefonts/Lat15-TerminusBold32x16.psf.gz || /usr/bin/setfont -C /dev/tty1 /usr/share/consolefonts/Lat15-TerminusBold32x16.psf.gz || true'
+ExecStart=/usr/bin/python3 /usr/local/libexec/usa-network-console
+Restart=on-failure
+RestartSec=5
+Environment=TERM=linux
+Environment=PYTHONUNBUFFERED=1
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

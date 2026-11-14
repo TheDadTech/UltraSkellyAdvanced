@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep the USA setup hotspot available alongside Ethernet
+After=NetworkManager.service usa-network.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/usa-system-helper network-setup-check
+TimeoutStartSec=300

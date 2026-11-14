@@ -1,13 +1,15 @@
 [Unit]
 Description=UltraSkellyAdvanced first-boot network
-After=NetworkManager.service hciuart.service bluetooth.service
-Wants=NetworkManager.service hciuart.service bluetooth.service
-Before=skelly-ai.service
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/libexec/usa-system-helper network-boot
 RemainAfterExit=yes
+Restart=on-failure
+RestartSec=15s
+TimeoutStartSec=240
 
 [Install]
 WantedBy=multi-user.target

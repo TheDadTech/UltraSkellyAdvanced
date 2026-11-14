@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture experimental USA beta diagnostics for end-user support
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/usa-beta-diagnostics
+TimeoutStartSec=60
+UMask=0077
+Nice=10

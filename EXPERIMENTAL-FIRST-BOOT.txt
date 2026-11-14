@@ -1,0 +1,14 @@
+UltraSkellyAdvanced 0.30.1-beta1 - EXPERIMENTAL Pi 3B support
+Hardware validation is pending. This is not the stable image.
+
+Allow 5-10 minutes on the first boot. Use a spare SD card.
+Ethernet: connect to a router with DHCP, then read the monitor address.
+Wi-Fi: use the monitor/keyboard, or join UltraSkellyAdvanced-Setup
+with password dadtech1 and open http://192.168.4.1.
+After connecting to home Wi-Fi or Ethernet, open the displayed IP
+or http://usa-controller.local from your phone/computer.
+
+Local Qwen does not preload on Pi 3B/3B+. SSH remains off.
+If setup fails, save USA-BETA-DIAGNOSTICS.txt from this boot partition.
+It appears automatically after boot; review network names before sharing.
+Do not reflash before preserving that report.

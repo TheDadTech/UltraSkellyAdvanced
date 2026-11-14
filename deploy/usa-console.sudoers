@@ -1,0 +1,4 @@
+# Only fixed first-boot network actions. No shell, SSH, power or update actions.
+usa-console ALL=(root) NOPASSWD: /usr/local/libexec/usa-system-helper console-network-status
+usa-console ALL=(root) NOPASSWD: /usr/local/libexec/usa-system-helper console-wifi-scan
+usa-console ALL=(root) NOPASSWD: /usr/local/libexec/usa-system-helper console-wifi-connect

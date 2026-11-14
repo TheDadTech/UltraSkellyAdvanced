@@ -22,7 +22,7 @@ yet in the supported test matrix.
 5. Choose a home WiFi network or select **Remain on USA hotspot** for offline use.
 6. Review and accept the safety disclosure, then power on and pair the prop.
 
-After joining home WiFi, reopen `http://usa-controller:8787`. If hostnames are
+After joining home WiFi, reopen `http://usa-controller.local`. If hostnames are
 unavailable, use the address shown by the router. SSH is disabled and
 is not needed for setup or operation. A private, temporary support login can be
 enabled later from Diagnostics.

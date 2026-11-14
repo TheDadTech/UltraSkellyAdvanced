@@ -1,0 +1,15 @@
+[connection]
+id=USA-Ethernet
+uuid=b87991ac-413a-4c82-83a9-9fa0803046f0
+type=ethernet
+autoconnect=true
+autoconnect-priority=-50
+
+[ethernet]
+
+[ipv4]
+method=auto
+dhcp-timeout=30
+
+[ipv6]
+method=auto

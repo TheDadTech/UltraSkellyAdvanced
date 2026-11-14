@@ -80,6 +80,11 @@ else
     "${MODEL_DOWNLOAD}" "${MODEL_PATH}"
 fi
 
+INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+run_root install -m 0755 "${INSTALLER_DIR}/local-brain-guard.py" /usr/local/libexec/usa-local-brain-guard
+run_root install -d -m 0755 /etc/systemd/system/skelly-brain.service.d
+run_root install -m 0644 "${INSTALLER_DIR}/skelly-brain-policy.conf" /etc/systemd/system/skelly-brain.service.d/usa-policy.conf
+
 run_root tee /etc/systemd/system/skelly-brain.service >/dev/null <<EOF
 [Unit]
 Description=Skelly AI local Qwen brain

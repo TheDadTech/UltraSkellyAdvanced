@@ -98,6 +98,11 @@ install -m 0755 "${PACKAGE_ROOT}/deploy/usa-system-helper.py" \
   /usr/local/libexec/usa-system-helper
 install -m 0644 "${PACKAGE_ROOT}/deploy/usa-network.service" \
   /etc/systemd/system/usa-network.service
+for unit in usa-setup-hotspot.service usa-setup-hotspot.timer; do
+  install -m 0644 "${PACKAGE_ROOT}/deploy/${unit}" "/etc/systemd/system/${unit}"
+done
+systemctl enable usa-setup-hotspot.timer
+bash "${PACKAGE_ROOT}/deploy/install-beta-support.sh" --image
 install -m 0644 "${PACKAGE_ROOT}/deploy/usa-nginx.conf" \
   /etc/nginx/sites-available/usa
 ln -sf /etc/nginx/sites-available/usa /etc/nginx/sites-enabled/usa

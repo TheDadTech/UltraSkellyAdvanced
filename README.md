@@ -19,7 +19,7 @@ Pi, and allowing about two minutes for the first boot:
    `http://192.168.4.1` in a browser.
 3. Select a home WiFi network, or choose **Remain on USA hotspot** for fully
    local operation.
-4. After joining home WiFi, open `http://usa-controller:8787`.
+4. After joining home WiFi, open `http://usa-controller.local`.
 5. Accept the safety agreement, scan for the prop, connect it, then use
    **Prepare and connect speaker**.
 

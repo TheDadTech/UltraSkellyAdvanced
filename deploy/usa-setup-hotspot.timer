@@ -1,0 +1,11 @@
+[Unit]
+Description=Check USA setup hotspot availability without interrupting clients
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=usa-setup-hotspot.service
+
+[Install]
+WantedBy=timers.target

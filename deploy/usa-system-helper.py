@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import pathlib
 import pwd
@@ -25,6 +26,7 @@ ENV_FILE = pathlib.Path("/etc/skelly-ai/skelly-ai.env")
 STATE = DATA_DIR / "onboarding.json"
 WIFI_CACHE = DATA_DIR / "wifi-scan.json"
 WIFI_RESULT = DATA_DIR / "wifi-result.json"
+RECOVERY_STATE = DATA_DIR / "network-recovery.json"
 SELF = pathlib.Path(__file__).resolve()
 UPDATE_ROOT = DATA_DIR / "updates"
 UPDATE_STATUS = DATA_DIR / "update-status.json"
@@ -39,7 +41,7 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args, input=input_text, text=True, capture_output=True,
-        check=check, timeout=timeout,
+        check=check, timeout=timeout, env={**os.environ, "LC_ALL": "C"},
     )
 
 
@@ -62,17 +64,20 @@ def write_json(path: pathlib.Path, payload: object) -> None:
 
 
 def ensure_hotspot(device: str = "wlan0") -> None:
-    run("nmcli", "con", "delete", HOTSPOT, check=False)
-    run(
-        "nmcli", "con", "add", "type", "wifi", "ifname", device,
-        "con-name", HOTSPOT, "ssid", HOTSPOT_SSID,
-    )
+    existing = run("nmcli", "-g", "connection.uuid", "con", "show", HOTSPOT, check=False)
+    if existing.returncode:
+        run(
+            "nmcli", "con", "add", "type", "wifi", "ifname", device,
+            "con-name", HOTSPOT, "ssid", HOTSPOT_SSID,
+            "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", "dadtech1",
+        )
     run(
         "nmcli", "con", "modify", HOTSPOT,
         "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
         "802-11-wireless.powersave", "2", "ipv4.method", "shared",
         "ipv4.addresses", "192.168.4.1/24", "ipv6.method", "disabled",
-        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", "dadtech1",
+        "wifi-sec.key-mgmt", "wpa-psk",
+        "wifi-sec.wps-method", "disabled",
         "connection.autoconnect", "yes", "connection.autoconnect-priority", "-20",
     )
 
@@ -135,12 +140,12 @@ def scan_and_cache(device: str, attempts: int = 5) -> list[dict[str, object]]:
     """Scan with retries while the single WiFi radio settles after boot/AP use."""
     networks: list[dict[str, object]] = []
     for _ in range(attempts):
-        run("nmcli", "device", "wifi", "rescan", "ifname", device, check=False)
+        run("nmcli", "device", "wifi", "rescan", "ifname", device, check=False, timeout=5)
         time.sleep(2)
         result = run(
             "nmcli", "-t", "--escape", "yes", "-f", "SSID,SIGNAL",
             "device", "wifi", "list", "ifname", device, "--rescan", "no",
-            check=False,
+            check=False, timeout=5,
         )
         networks = parse_wifi_scan(result.stdout)
         if networks:
@@ -162,11 +167,22 @@ def hotspot_active() -> bool:
     return HOTSPOT in result.stdout.splitlines()
 
 
-def start_hotspot(device: str) -> None:
+def start_hotspot(device: str, attempts: int = 5) -> None:
+    if hotspot_active():
+        return
     ensure_hotspot(device)
     last_error = "unknown NetworkManager error"
-    for _ in range(5):
-        result = run("nmcli", "con", "up", HOTSPOT, check=False)
+    for _ in range(attempts):
+        try:
+            result = run("nmcli", "--wait", "20", "con", "up", HOTSPOT,
+                         check=False, timeout=25)
+        except subprocess.TimeoutExpired:
+            # A killed nmcli client may have left NM activating the AP.
+            if hotspot_active():
+                return
+            last_error = "NetworkManager hotspot activation timed out"
+            time.sleep(2)
+            continue
         if result.returncode == 0:
             return
         last_error = error_text(result)
@@ -175,24 +191,97 @@ def start_hotspot(device: str) -> None:
 
 
 def network_boot() -> None:
-    device = prepare_wifi()
-    try:
-        prepare_bluetooth()
-    except SystemExit as exc:
-        # A Bluetooth fault must not prevent WiFi onboarding and diagnostics.
-        print(f"Bluetooth startup warning: {exc}", file=sys.stderr)
     mode = "hotspot"
     if STATE.exists():
         try:
-            mode = json.loads(STATE.read_text("utf-8")).get("network_mode", "hotspot")
+            state = json.loads(STATE.read_text("utf-8"))
+            if isinstance(state, dict):
+                mode = state.get("network_mode", "hotspot")
         except (OSError, ValueError):
             pass
-    if mode == "home" and run("nmcli", "con", "up", HOME, check=False).returncode == 0:
-        scan_and_cache(device)
+    # Ethernet/default-route state must not decide whether setup is available.
+    # Once the owner selects home WiFi, leave the existing handoff in control.
+    if hotspot_active() and mode != "home":
         return
+    if mode == "home":
+        active = run("nmcli", "-t", "-f", "NAME", "con", "show", "--active", check=False)
+        if HOME in active.stdout.splitlines():
+            return
+    identity = network_identity()
+    if any(i["type"] == "wifi" and i["connected"] and not i["hotspot"]
+           for i in identity["interfaces"]):
+        return
+    device = prepare_wifi()
+    # Bluetooth starts independently; it cannot hold up setup networking.
+    if mode == "home":
+        try:
+            result = run("nmcli", "--wait", "20", "con", "up", HOME,
+                         check=False, timeout=25)
+            if result.returncode == 0:
+                return
+        except subprocess.SubprocessError:
+            print("Home WiFi activation failed; restoring setup hotspot", file=sys.stderr)
+        try:
+            run("nmcli", "--wait", "3", "con", "down", HOME, check=False, timeout=5)
+        except subprocess.SubprocessError:
+            pass
+        state.update({"network_choice_made": False, "network_mode": "hotspot"})
+        write_json(STATE, state)
     # Scan before starting the single-radio access point. The Pi radio cannot
     # reliably rescan while it is serving the setup hotspot.
-    scan_and_cache(device)
+    try:
+        scan_and_cache(device, attempts=1)
+    except (OSError, subprocess.SubprocessError):
+        print("WiFi scan unavailable; continuing with setup hotspot", file=sys.stderr)
+    start_hotspot(device)
+
+
+def network_identity():
+    from usa_network import status
+    return status(run)
+
+
+def maintain_setup_hotspot() -> None:
+    """Restore setup without cycling a healthy AP or treating no internet as failure."""
+    try:
+        state = json.loads(STATE.read_text("utf-8"))
+    except FileNotFoundError:
+        state = {}
+    except (OSError, ValueError):
+        print("Setup hotspot check skipped: onboarding state unavailable", file=sys.stderr)
+        return
+    if not isinstance(state, dict):
+        return
+    mode = state.get("network_mode", "hotspot")
+    if mode not in {"hotspot", "home"} or hotspot_active():
+        return
+    if mode == "home":
+        identity = network_identity()
+        if any(i["type"] == "wifi" and i["connected"] and not i["hotspot"]
+               for i in identity["interfaces"]):
+            RECOVERY_STATE.unlink(missing_ok=True)
+            return
+        # Give brief link loss / an in-progress reconnect one minute to settle.
+        now = time.monotonic()
+        boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        try:
+            recovery = json.loads(RECOVERY_STATE.read_text())
+        except (OSError, ValueError):
+            recovery = {}
+        if not isinstance(recovery, dict):
+            recovery = {}
+        first = recovery.get("first_failure", now)
+        if (not isinstance(first, (int, float)) or first > now
+                or recovery.get("boot_id") != boot_id):
+            first = now
+        write_json(RECOVERY_STATE, {"first_failure": first, "boot_id": boot_id})
+        if now - first < 60:
+            return
+        state.update({"network_choice_made": False, "network_mode": "hotspot"})
+        write_json(STATE, state)
+        write_json(WIFI_RESULT, {"ok": False, "message": "Home WiFi unavailable; restoring setup hotspot"})
+    device = prepare_wifi()
+    print(f"Restoring setup hotspot on {device}; Ethernet remains unchanged")
     start_hotspot(device)
 
 
@@ -228,12 +317,13 @@ def wifi_rescan_worker() -> None:
 
 
 def wifi_connect(ssid: str, password: str) -> None:
-    if not ssid or len(ssid) > 64 or len(password) < 8:
+    if (not ssid or len(ssid.encode("utf-8")) > 32 or len(password) < 8
+            or (len(password) > 63 and not re.fullmatch(r"[0-9a-fA-F]{64}", password))):
         raise SystemExit("Enter a WiFi network name and a password of at least 8 characters")
     if any(character in ssid + password for character in "\r\n\0"):
         raise SystemExit("WiFi details contain unsupported characters")
     run("nmcli", "con", "delete", HOME, check=False)
-    run("nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", HOME, "ssid", ssid)
+    run("nmcli", "con", "add", "type", "wifi", "ifname", prepare_wifi(), "con-name", HOME, "ssid", ssid)
     run(
         "nmcli", "con", "modify", HOME,
         "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
@@ -245,22 +335,32 @@ def wifi_connect(ssid: str, password: str) -> None:
 
 def wifi_switch_worker() -> None:
     device = prepare_wifi()
-    run("nmcli", "con", "down", HOTSPOT, check=False)
-    result = run("nmcli", "con", "up", HOME, check=False, timeout=60)
-    if result.returncode == 0:
-        write_json(WIFI_RESULT, {"ok": True, "message": "Connected to home WiFi"})
-        return
-    start_hotspot(device)
+    try:
+        run("nmcli", "--wait", "3", "con", "down", HOTSPOT, check=False, timeout=5)
+        result = run("nmcli", "--wait", "20", "con", "up", HOME, check=False, timeout=25)
+        if result.returncode == 0:
+            write_json(WIFI_RESULT, {"ok": True, "message": "Connected to home WiFi"})
+            return
+        detail = error_text(result)
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = f"Home WiFi activation failed ({type(exc).__name__})"
     try:
         state = json.loads(STATE.read_text("utf-8"))
+        if not isinstance(state, dict):
+            state = {}
     except (OSError, ValueError):
         state = {}
+    # Persist fallback intent before activation so the timer can retry even if
+    # this worker is killed or the first AP activation also fails.
     state.update({"network_choice_made": False, "network_mode": "hotspot"})
     write_json(STATE, state)
-    write_json(
-        WIFI_RESULT,
-        {"ok": False, "message": f"Home WiFi failed; setup hotspot restored. {error_text(result)}"},
-    )
+    write_json(WIFI_RESULT, {"ok": False, "message": "Home WiFi failed; restoring setup hotspot"})
+    try:
+        run("nmcli", "--wait", "3", "con", "down", HOME, check=False, timeout=5)
+    except subprocess.SubprocessError:
+        pass
+    start_hotspot(device)
+    write_json(WIFI_RESULT, {"ok": False, "message": f"Setup hotspot restored. {detail}"})
 
 
 def wifi_status() -> None:
@@ -469,6 +569,29 @@ def update_install(version: str, source_text: str, current_version: str) -> None
     )
 
 
+def snapshot_hotspot_timer(backup_dir: pathlib.Path) -> None:
+    if pathlib.Path("/etc/systemd/system/usa-setup-hotspot.timer").is_file():
+        enabled = run("systemctl", "is-enabled", "--quiet", "usa-setup-hotspot.timer", check=False)
+        if enabled.returncode == 0:
+            (backup_dir / "setup-hotspot-enabled").touch()
+
+
+def restore_hotspot_timer(backup_dir: pathlib.Path) -> None:
+    # Remove newly introduced units when rolling back to a release without them.
+    # Otherwise the new timer would keep invoking the restored old helper.
+    run("systemctl", "disable", "--now", "usa-setup-hotspot.timer", check=False)
+    run("systemctl", "stop", "usa-setup-hotspot.service", check=False)
+    for name in ("usa-setup-hotspot.service", "usa-setup-hotspot.timer"):
+        path = pathlib.Path("/etc/systemd/system") / name
+        if not (backup_dir / path.relative_to("/")).is_file():
+            if name.endswith(".timer"):
+                run("systemctl", "disable", name, check=False)
+            path.unlink(missing_ok=True)
+    run("systemctl", "daemon-reload", check=False)
+    if (backup_dir / "setup-hotspot-enabled").is_file():
+        run("systemctl", "enable", "--now", "usa-setup-hotspot.timer", check=False)
+
+
 def update_install_worker(version: str, source_text: str, current_version: str) -> None:
     source = pathlib.Path(source_text).resolve()
     active_venv = pathlib.Path("/opt/skelly-ai/venv")
@@ -478,6 +601,8 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
         pathlib.Path("/usr/local/libexec/usa-system-helper"),
         pathlib.Path("/etc/systemd/system/skelly-ai.service"),
         pathlib.Path("/etc/systemd/system/usa-network.service"),
+        pathlib.Path("/etc/systemd/system/usa-setup-hotspot.service"),
+        pathlib.Path("/etc/systemd/system/usa-setup-hotspot.timer"),
         pathlib.Path("/etc/nginx/sites-available/usa"),
     )
     backup_complete = False
@@ -493,6 +618,7 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
                 target = backup_dir / path.relative_to("/")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, target)
+        snapshot_hotspot_timer(backup_dir)
         backup_complete = True
 
         environment = dict(os.environ)
@@ -579,7 +705,10 @@ def update_install_worker(version: str, source_text: str, current_version: str) 
             if backup.is_file():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(backup, path)
-        run("systemctl", "daemon-reload", check=False)
+        if backup_complete:
+            restore_hotspot_timer(backup_dir)
+        else:
+            run("systemctl", "daemon-reload", check=False)
         run("systemctl", "restart", "nginx.service", check=False)
         run("systemctl", "restart", "skelly-ai.service", check=False)
         update_status(
@@ -620,6 +749,8 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
         pathlib.Path("/usr/local/libexec/usa-system-helper"),
         pathlib.Path("/etc/systemd/system/skelly-ai.service"),
         pathlib.Path("/etc/systemd/system/usa-network.service"),
+        pathlib.Path("/etc/systemd/system/usa-setup-hotspot.service"),
+        pathlib.Path("/etc/systemd/system/usa-setup-hotspot.timer"),
         pathlib.Path("/etc/nginx/sites-available/usa"),
     )
     swapped = False
@@ -635,6 +766,7 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, target)
 
+        snapshot_hotspot_timer(forward_backup)
         run("systemctl", "stop", "skelly-ai.service", check=False)
         active_venv.rename(forward_venv)
         rollback_venv.rename(active_venv)
@@ -644,7 +776,7 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
             if backup.is_file():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(backup, path)
-        run("systemctl", "daemon-reload", check=False)
+        restore_hotspot_timer(backup_dir)
         run("systemctl", "restart", "nginx.service", check=False)
         run("systemctl", "restart", "skelly-ai.service", check=False)
 
@@ -692,7 +824,10 @@ def update_rollback_worker(current_version: str, previous_version: str) -> None:
             if forward.is_file():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(forward, path)
-        run("systemctl", "daemon-reload", check=False)
+        if swapped:
+            restore_hotspot_timer(forward_backup)
+        else:
+            run("systemctl", "daemon-reload", check=False)
         run("systemctl", "restart", "nginx.service", check=False)
         run("systemctl", "restart", "skelly-ai.service", check=False)
         update_status(
@@ -868,7 +1003,7 @@ def audio_session_exec(program: str, arguments: list[str]) -> None:
     env += [program, *arguments]
     os.execvp("runuser", ["runuser", "-u", session_user, "--", *env])
 
-def main() -> None:
+def dispatch_action() -> None:
     if len(sys.argv) < 2:
         raise SystemExit("Missing action")
     action = sys.argv[1]
@@ -898,7 +1033,46 @@ def main() -> None:
             audio_session_resume_competitor(args[1])
     elif action == "audio-wpctl": audio_session_exec("wpctl", sys.argv[2:])
     elif action == "audio-pw-play": audio_session_exec("pw-play", sys.argv[2:])
+    elif action == "console-network-status" and len(sys.argv) == 2:
+        from usa_network import status
+        payload = status(run)
+        try:
+            state = json.loads(STATE.read_text("utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        payload["setup_complete"] = isinstance(state, dict) and state.get("wizard_complete") is True
+        payload["networks"] = cached_networks()
+        print(json.dumps(payload))
+    elif action in {"console-wifi-scan", "console-wifi-connect"} and len(sys.argv) == 2:
+        try:
+            state = json.loads(STATE.read_text("utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        if not isinstance(state, dict):
+            raise SystemExit("Setup state unavailable; use the dashboard")
+        if state.get("wizard_complete") is True:
+            raise SystemExit("Setup is complete; use the dashboard to change networking")
+        if action == "console-wifi-scan":
+            device = prepare_wifi()
+            was_hotspot = hotspot_active()
+            try:
+                if was_hotspot:
+                    run("nmcli", "--wait", "3", "con", "down", HOTSPOT, check=False, timeout=5)
+                networks = scan_and_cache(device, attempts=1)
+            finally:
+                if was_hotspot:
+                    start_hotspot(device, attempts=1)
+            print(json.dumps({"networks": networks}))
+        else:
+            payload = json.loads(sys.stdin.readline(2048))
+            if not isinstance(payload, dict) or not isinstance(payload.get("ssid"), str) or not isinstance(payload.get("password"), str):
+                raise SystemExit("Invalid Wi-Fi setup request")
+            wifi_connect(payload["ssid"], payload["password"])
+            state.update({"network_choice_made": True, "network_mode": "home"})
+            write_json(STATE, state)
+            print(json.dumps({"scheduled": True}))
     elif action == "network-boot": network_boot()
+    elif action == "network-setup-check" and len(sys.argv) == 2: maintain_setup_hotspot()
     elif action == "bluetooth-prepare": prepare_bluetooth()
     elif action == "wifi-list": wifi_list()
     elif action == "wifi-refresh": wifi_refresh()
@@ -937,10 +1111,36 @@ def main() -> None:
         raise SystemExit("Unsupported action")
 
 
+def main() -> None:
+    network_actions = {
+        "network-boot", "network-setup-check", "console-wifi-connect", "console-wifi-scan",
+        "wifi-connect", "wifi-switch-worker",
+        "wifi-hotspot-worker", "wifi-rescan-worker", "first-boot-reset-worker",
+    }
+    action = sys.argv[1] if len(sys.argv) > 1 else ""
+    if action not in network_actions:
+        dispatch_action()
+        return
+    # Serialize the timer with intentional handoffs/rescans on the single radio.
+    with open("/run/lock/usa-network.lock", "a") as lock:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if action == "network-setup-check":
+                    return
+                if time.monotonic() >= deadline:
+                    raise SystemExit("Network setup is busy; retry shortly")
+                time.sleep(0.1)
+        dispatch_action()
+
+
 if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as exc:
         raise SystemExit(error_text(exc)) from None
     except subprocess.TimeoutExpired as exc:
-        raise SystemExit(f"System command timed out: {' '.join(exc.cmd)}") from None
+        raise SystemExit("System command timed out; retry or inspect the beta report") from None

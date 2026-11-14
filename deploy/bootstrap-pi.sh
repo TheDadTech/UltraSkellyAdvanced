@@ -96,6 +96,15 @@ sudo install -m 0755 "${PROJECT_DIR}/deploy/usa-system-helper.py" \
   /usr/local/libexec/usa-system-helper
 sudo install -m 0644 "${PROJECT_DIR}/deploy/usa-network.service" \
   /etc/systemd/system/usa-network.service
+for unit in usa-setup-hotspot.service usa-setup-hotspot.timer; do
+  sudo install -m 0644 "${PROJECT_DIR}/deploy/${unit}" "/etc/systemd/system/${unit}"
+done
+if sudo nmcli con show USA-Setup >/dev/null 2>&1; then
+  sudo nmcli con modify USA-Setup wifi-sec.wps-method disabled
+fi
+sudo install -m 0755 "${PROJECT_DIR}/deploy/local-brain-guard.py" /usr/local/libexec/usa-local-brain-guard
+sudo install -d -m 0755 /etc/systemd/system/skelly-brain.service.d
+sudo install -m 0644 "${PROJECT_DIR}/deploy/skelly-brain-policy.conf" /etc/systemd/system/skelly-brain.service.d/usa-policy.conf
 sudo install -m 0644 "${PROJECT_DIR}/deploy/usa-nginx.conf" \
   /etc/nginx/sites-available/usa
 sudo ln -sf /etc/nginx/sites-available/usa /etc/nginx/sites-enabled/usa
@@ -154,6 +163,8 @@ sudo systemctl enable --now nginx
 sudo nginx -t
 sudo systemctl restart nginx
 sudo systemctl enable usa-network
+sudo systemctl enable --now usa-setup-hotspot.timer
+sudo bash "${PROJECT_DIR}/deploy/install-beta-support.sh"
 sudo systemctl enable hciuart.service 2>/dev/null || true
 sudo systemctl enable skelly-ai
 
@@ -179,9 +190,9 @@ sudo systemctl restart skelly-ai
 echo
 PI_ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "UltraSkellyAdvanced is installed."
-echo "Try: http://$(hostname):8787"
+echo "Try: http://$(hostname).local"
 if [[ -n "${PI_ADDRESS}" ]]; then
-  echo "IP fallback: http://${PI_ADDRESS}:8787"
+  echo "IP fallback: http://${PI_ADDRESS}"
 fi
 echo "Service status: sudo systemctl status skelly-ai"
 echo "Live logs: sudo journalctl -u skelly-ai -f"
